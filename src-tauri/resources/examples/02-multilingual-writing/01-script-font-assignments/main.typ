@@ -92,4 +92,4 @@ Latin uses its assigned family: Multilingual documents should remain readable.
 Script-font assignments do not control the source-editor font, spellcheck,
 completion, Typst `lang`, or text direction. Generated scaled fonts stay in
 Typsastra's private global cache and never enter `.typsastra`, a copied project,
-or its exports. Advanced cache management is planned for v0.5.2.
+or its exports. Advanced cache management is planned for v0.6.0.

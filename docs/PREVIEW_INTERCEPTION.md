@@ -80,7 +80,7 @@ The previous PDF text-matching fallback was removed. It was not deterministic en
 
 ## Render modes
 
-v0.5.2 supports both PDF render modes:
+v0.5.3 supports both PDF render modes:
 
 - `on-type` keeps edits in memory and updates the PDF after the configured
   debounce interval. It is intended for responsive iteration on short
@@ -94,10 +94,11 @@ of the v0.x release path.
 
 Imported files currently preview through their configured main document. Independent standalone roots remain disabled pending the portable v0.8.0 Full Document/Active File implementation plan; `V1X-P.1` owns later qualification and hardening.
 
-The experimental decoded-image preflight remains disabled in v0.5.2 while its
-format probing and dependency discovery are corrected and qualified. Typsastra
-does not automatically hide, downsample, convert, or block source images.
-Non-destructive detection and author confirmation are planned for v0.5.3.
+v0.5.3 profiles statically discoverable supported raster references without
+decoding or changing them. It reports aggregate image pressure and navigable
+per-image optimization guidance without blocking compilation. Typsastra does
+not automatically hide, downsample, convert, or rewrite source images.
+Dynamic paths and unsupported formats fail open without a recommendation.
 
 PDF forward and inverse sync use one hidden Tinymist web-preview task solely for its source-map data plane. The task ID ends in `-source-map`; Typsastra serializes concurrent startup requests and calls `tinymist.doKillPreview` before replacing a stale task. Do not start a normal-task fallback: Tinymist can reject a second registration against the same compiler instance with `cannot register preview to the compiler instance`.
 

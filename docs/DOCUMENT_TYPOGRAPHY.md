@@ -165,7 +165,7 @@ Reusing an existing variant never prompts. When a main-file change, toolbar
 edit, or direct typography-directive edit would create an additional variant
 after that limit, Typsastra asks for confirmation first. It does not delete an
 existing variant automatically. Advanced controls for viewing, deleting, and
-renewing global variants are planned for v0.5.2.
+renewing global variants are planned for v0.6.0.
 
 ### Known Typst PDF limitation
 

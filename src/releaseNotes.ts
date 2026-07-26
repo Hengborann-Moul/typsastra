@@ -6,6 +6,17 @@ export type ReleaseSummary = {
 };
 
 const releaseSummaries: Record<string, ReleaseSummary> = {
+  "0.5.3": {
+    version: "0.5.3",
+    title: "Reliable previews and safer image-heavy workflows",
+    highlights: [
+      "File-backed PDF transport and cache-confined artifacts reduce preview memory pressure and protect workspace files.",
+      "Source synchronization now recovers more reliably after external edits, cache migration, and system resume.",
+      "Large direct PDFs require confirmation and remain visually and behaviorally distinct from live Typst previews.",
+      "Image-heavy documents receive non-blocking, navigable optimization guidance without changing source assets."
+    ],
+    detailsUrl: "https://github.com/Sovichea/typsastra/releases/tag/v0.5.3"
+  },
   "0.5.2": {
     version: "0.5.2",
     title: "Responsive previews and safer editing workflows",

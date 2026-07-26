@@ -73,7 +73,9 @@ Released July 23, 2026.
 - Documented and tested unsigned macOS distribution without weakening
   Gatekeeper globally.
 
-## v0.5.3 — preview reliability and safeguards
+## v0.5.3 — preview reliability and safeguards (released)
+
+Released July 26, 2026.
 
 - Recover the preview source-map connection and any interrupted pane-resize
   presentation after Windows hibernate or sleep. Continue monitoring this as an
@@ -313,8 +315,7 @@ The long-term research tasks and gates are in the [v2 implementation plan](./V2_
 
 ## Current release status
 
-Typsastra is beta software. The latest release is v0.5.2; see the
-[release notes](./RELEASE_NOTES_V0.5.2.md). Planned development continues with
-the focused v0.5.3 preview-reliability release, followed by v0.6.0 Draft
-Preview and font management, v0.7.0 resource-aware authoring, v0.8.0 portable
-preview scopes, and v0.9.0 prerelease RTL hardening.
+Typsastra is beta software. The latest release is v0.5.3; see the
+[release notes](./RELEASE_NOTES_V0.5.3.md). Planned development continues with
+v0.6.0 Draft Preview and font management, v0.7.0 resource-aware authoring,
+v0.8.0 portable preview scopes, and v0.9.0 prerelease RTL hardening.

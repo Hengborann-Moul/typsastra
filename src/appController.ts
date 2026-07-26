@@ -3329,7 +3329,7 @@ export class TypsastraWorkspaceController {
       `${warning.family}: ${warning.cachedVariants} cached variants; requested ${warning.requestedScale}×`
     ).join("\n");
     const limit = Math.min(...status.variantLimitWarnings.map(warning => warning.recommendedLimit));
-    return `Typsastra recommends keeping no more than ${limit} scaled variants per font face. This change would add another variant for:\n\n${variants}\n\nExisting variants will not be deleted automatically. Advanced font-variant management is planned for v0.5.2, where variants can be deleted or renewed.\n\nCreate the additional variant anyway?`;
+    return `Typsastra recommends keeping no more than ${limit} scaled variants per font face. This change would add another variant for:\n\n${variants}\n\nExisting variants will not be deleted automatically. Advanced font-variant management is planned for v0.6.0, where variants can be deleted or renewed.\n\nCreate the additional variant anyway?`;
   }
 
   private async confirmTypographyVariantLimit(config: DocumentTypography): Promise<boolean> {
