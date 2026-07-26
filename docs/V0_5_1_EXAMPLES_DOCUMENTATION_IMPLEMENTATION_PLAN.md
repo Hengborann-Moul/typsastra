@@ -8,7 +8,8 @@ learning path and add task-oriented tutorials that match the released user
 interface and current product boundaries.
 
 This is a documentation and maintenance milestone. It does not pull the
-research builders planned for v0.6.0 or first-class RTL editing planned for
+incremental research builders planned across future updates or first-class RTL
+editing planned for
 v0.9.0 into v0.5.1.
 
 ## Completion rule

@@ -4,7 +4,7 @@ Typsastra v0.5.2 is a maintenance, responsiveness, and workflow-safety update.
 It restores the improved PDF render-on-type path for short documents, tightens
 project and LSP lifecycle boundaries, and adds focused editing and file
 management refinements without introducing the larger Active File preview
-architecture planned for v0.6.0.
+architecture now planned for v0.8.0.
 
 Released July 23, 2026.
 
@@ -110,10 +110,10 @@ continue to default to **On save**.
   implementation passes malformed-file, dependency-discovery, and
   cross-platform qualification.
 - Advanced inspection, deletion, and renewal of globally cached scaled-font
-  variants has moved to v0.6.0. The existing 10-variant recommendation and
+  variants is planned for v0.6.0. The existing 10-variant recommendation and
   explicit confirmation remain in effect.
 - Portable **Full Document** and **Active File** preview modes remain planned
-  for v0.5.3.
+  for v0.8.0.
 - First-class RTL editing remains planned for the v0.9.0 prerelease.
 - The experimental macOS build remains unsigned and unnotarized.
 - Fonts remain external dependencies and are never included in project exports.

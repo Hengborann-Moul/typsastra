@@ -61,7 +61,7 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib khmer_reference_provider_f
 
 Each preview root has a uniquely identified Tinymist task whose iframe is cached across tab switches. Imported files normally preview through the top-level `main.typ` and update on save.
 
-Imported chapters currently use the configured main document's preview. The former `// @standalone-preview` directive remains disabled because independent preview roots made source synchronization unreliable. A portable Full Document/Active File replacement is planned for v0.6.0, with v1.x hardening tracked as `V1X-P.1`.
+Imported chapters currently use the configured main document's preview. The former `// @standalone-preview` directive remains disabled because independent preview roots made source synchronization unreliable. A portable Full Document/Active File replacement is planned for v0.8.0, with v1.x hardening tracked as `V1X-P.1`.
 
 PDF preview and source-map synchronization are documented in [PREVIEW_INTERCEPTION.md](./PREVIEW_INTERCEPTION.md).
 

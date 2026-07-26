@@ -115,9 +115,98 @@ Released July 23, 2026.
 - Distinguish direct PDF viewing from live Typst preview: disable source
   synchronization for direct PDFs and use a separate gray viewer surface.
 
-## v0.6.0 — research productivity and discoverability
+## Incremental research-productivity additions
 
-Make Typsastra's document-engineering strengths easier to discover while adding broadly useful research-authoring tools. This milestone does not expand into discipline-specific computation or visual tooling.
+Research-authoring tools are a rolling workstream rather than one release
+milestone. Add them individually between the primary roadmap releases when a
+tool is small, portable, tested, and does not delay the release's main goal.
+No single release is expected to deliver the complete set.
+
+Candidate additions, introduced one at a time, include:
+
+- figure and caption insertion;
+- a table builder;
+- equation and matrix insertion;
+- bibliography entry management with ordinary `.bib` output;
+- template discovery with clear bundled, local, and Typst Universe ownership;
+- project-outline restructuring;
+- focused feature demonstrations and onboarding improvements.
+
+Each addition must produce clean, editable Typst source and remain useful
+without Typsastra. Discipline-specific computation and feature-count
+competition remain out of scope. Unfinished productivity tools must move to a
+later update rather than block Draft Preview, font management, resource
+workflows, portable preview scopes, RTL work, or v1.0 stability.
+
+## v0.6.0 — draft preview and font management
+
+Make image-heavy authoring more responsive and make private font dependencies
+manageable without changing the portable Typst source model.
+
+- Add **Draft Preview**, a preview-only render mode that replaces statically
+  resolvable image calls in Typsastra's private render mirror with lightweight
+  layout-preserving placeholders. Preserve explicit dimensions or derive
+  intrinsic dimensions from image metadata so omitted images do not
+  unnecessarily reflow the draft. Hovering a placeholder may load the real
+  image as a temporary UI overlay on demand, without changing source or
+  including the image in the compiled draft. Dynamic and unresolved image
+  expressions must remain explicit limitations. Draft Preview must be clearly
+  labeled, explicitly selected, and never used for final PDF export.
+- Preserve and clearly communicate the last successful preview across normal
+  and draft-preview compilation failures.
+- Add advanced management for the private global scaled-font cache: inspect
+  variants by face, scale, disk usage, and last use; delete selected or unused
+  variants; and renew stale variants under explicit user control.
+- Add private local font folders to Document Typography for fonts that users
+  do not want to install system-wide. Store absolute paths only in ignored
+  machine-local workspace state, show each font's origin, reject ambiguous
+  family collisions, restart Tinymist when paths change, and apply the same
+  paths to diagnostics, preview, source mapping, and PDF export. Never copy,
+  archive, redistribute, or write these font binaries into the project.
+- Add font-dependency health reporting for missing, moved, ambiguous, and
+  unavailable system/private fonts without silently substituting or installing
+  a replacement.
+- Publish Draft Preview and font-management qualification results covering
+  compilation latency, memory bounds, hover overlays, cache operations,
+  private-font discovery, toolchain restarts, and cross-platform behavior.
+
+## v0.7.0 — resource-aware authoring and secondary previews
+
+Make local images, language tools, and non-Typst previews manageable without
+weakening project portability or silently modifying source assets.
+
+- Add an explicit, user-invoked **Image Optimizer** from the Images Problems
+  category, image-path context menu, and image viewer. Support downscaling and
+  re-encoding statically resolved local raster images after showing original
+  dimensions, decoded-memory estimate, source size, target format, quality,
+  transparency/color-profile implications, and an output-size preview.
+- Default image optimization to **Save Optimized Copy**. Replacing an original
+  must require separate confirmation and an atomic, recoverable write. Never
+  overwrite source merely because a warning exists, never process package,
+  remote, plugin, dynamic, or unresolved resources, and never imply that
+  compression alone reduces decoded-memory pressure.
+- When saving an optimized copy, offer to update only the selected static
+  `#image` reference or every exact reference to that asset. Keep unrelated
+  source untouched, preserve Unicode paths, and make the edit undoable.
+- Revisit document-language configuration so project inheritance and provider
+  assignment are easier to understand without weakening deterministic routing.
+- Add a separate, sanitized Markdown live-preview renderer for `.md` files,
+  with debounced updates, theme-aware typography, local images, common
+  GitHub-Flavored Markdown constructs, link navigation, and preserved scroll
+  position. Markdown preview must not start Tinymist, compile Typst, or discard
+  the existing PDF session when switching tabs.
+- Add a toolchain health panel showing active Typst/Tinymist versions,
+  provenance, validation state, download status, and recovery actions.
+- Publish resource-workflow benchmarks for image inspection/optimization,
+  language configuration, toolchain health, and Markdown preview.
+
+The Markdown scope, security boundaries, lifecycle, and release gates are in
+the [v0.7.0 Markdown live preview implementation plan](./V0_7_0_MARKDOWN_LIVE_PREVIEW_IMPLEMENTATION_PLAN.md).
+
+## v0.8.0 — portable full and active-file preview
+
+Build the portable preview architecture needed for responsive work on both
+individual chapters and complete long documents.
 
 - Add explicit **Full Document** and **Active File** preview modes.
 - Restrict Active File preview to the configured main file and documents
@@ -134,55 +223,14 @@ Make Typsastra's document-engineering strengths easier to discover while adding 
   navigation in isolated previews.
 - Render known cross-chapter references as portable placeholders while keeping
   unknown or misspelled labels as errors.
-- Qualify debounced PDF render-on-type with representative text,
-  complex-script, image, and vector documents on Windows WebView2, Linux
-  WebKitGTK, and macOS WKWebView.
-- Decide from measured latency and memory whether a bounded SVG live-preview
-  experiment is still necessary. Do not introduce a second renderer merely
-  because SVG can update differently.
-- If an SVG experiment proceeds, qualify it only for documents within measured
-  page-count, output-size, and memory budgets; retain PDF-on-save as the bounded
-  path for larger output and never keep both complete representations alive.
-- Add **Draft Preview**, a preview-only render mode that replaces statically
-  resolvable image calls in Typsastra's private render mirror with lightweight
-  layout-preserving placeholders. Preserve explicit dimensions or derive
-  intrinsic dimensions from image metadata so omitted images do not
-  unnecessarily reflow the draft. Hovering a placeholder may load the real
-  image as a temporary UI overlay on demand, without changing source or
-  including the image in the compiled draft. Dynamic and unresolved image
-  expressions must remain explicit limitations. Draft Preview must be clearly
-  labeled, explicitly selected, and never used for final PDF export.
-- Revisit document-language configuration so project inheritance and provider
-  assignment are easier to understand without weakening deterministic routing.
-- Add advanced management for the private global scaled-font cache: inspect
-  variants by face, scale, disk usage, and last use; delete selected or unused
-  variants; and renew stale variants under explicit user control.
-- Add private local font folders to Document Typography for fonts that users
-  do not want to install system-wide. Store absolute paths only in ignored
-  machine-local workspace state, show each font's origin, reject ambiguous
-  family collisions, restart Tinymist when paths change, and apply the same
-  paths to diagnostics, preview, source mapping, and PDF export. Never copy,
-  archive, redistribute, or write these font binaries into the project.
-- Add a separate, sanitized Markdown live-preview renderer for `.md` files,
-  with debounced updates, theme-aware typography, local images, common
-  GitHub-Flavored Markdown constructs, link navigation, and preserved scroll
-  position. Markdown preview must not start Tinymist, compile Typst, or discard
-  the existing PDF session when switching tabs.
-- Add table, figure, caption, equation, and matrix builders that produce clean, editable, portable Typst source.
-- Add bibliography entry management with DOI/arXiv-assisted metadata retrieval, duplicate detection, citation-key control, and ordinary `.bib` output.
-- Add a template browser with rendered previews, compatibility metadata, and a clear distinction between bundled, local, and Typst Universe templates.
-- Add project-outline restructuring for moving headings or chapters while preserving explicit file ownership, labels, references, and main-document preview context.
-- Preserve and clearly communicate the last successful preview across main-document and standalone-preview compilation failures.
-- Add a toolchain health panel showing active Typst/Tinymist versions, provenance, validation state, download status, and recovery actions.
-- Publish reproducible benchmark reports covering startup, compilation, long-document preview, project indexing/search, memory boundaries, installer size, and enabled language-provider cost.
-- Improve feature visibility with short demonstrations of complex-script editing, included-file preview ownership, source synchronization, language installation, long-document virtualization, and compiler-failure recovery.
-- Add an onboarding project that deliberately demonstrates Khmer and mixed-script editing, Unicode-safe navigation, project structure, bibliography/figure relationships, and preview behavior.
+- Preserve and clearly communicate the last successful preview when switching
+  preview scope or when an isolated preview fails to compile.
+- Publish qualification results for migration, source synchronization,
+  reference behavior, repeated scope switching, compilation latency, and
+  bounded memory.
 
-The Markdown scope, security boundaries, lifecycle, and release gates are in
-the [v0.6.0 Markdown live preview implementation plan](./V0_6_0_MARKDOWN_LIVE_PREVIEW_IMPLEMENTATION_PLAN.md).
-The Full Document/Active File architecture, migration, reference, memory, and
-qualification work is in the
-[v0.6.0 Active File preview implementation plan](./V0_6_0_ACTIVE_FILE_PREVIEW_IMPLEMENTATION_PLAN.md).
+The architecture, migration, reference, memory, and qualification work is in
+the [v0.8.0 Active File preview implementation plan](./V0_8_0_ACTIVE_FILE_PREVIEW_IMPLEMENTATION_PLAN.md).
 
 ## v0.9.0 — pre-release hardening and right-to-left writing
 
@@ -247,7 +295,12 @@ The trackable post-release work is in the [v1.x implementation plan](./V1X_IMPLE
 - **v1.3 — Git workflows:** repository status, Unicode-safe diffs, staging, commits, branches, history, and safe conflict handling before remote hosting integration. AI may explain user-selected diffs but cannot perform Git mutations implicitly.
 - **Across v1.x — Khmer workflow:** revisit Khmer project presets, typography, editing, language tools, source navigation, preview/export, and experimental render preparation using representative documents and native-speaker review. Render preparation remains default-off unless it safely outperforms tuned ordinary Typst justification.
 - **Across v1.x — indexed forward sync:** eliminate whole-document source-position scans so exact reveals from included files remain responsive in 500- to 1,500-page projects without loading Tinymist's full vector preview.
-- **Later v1.x:** global project search, package/dependency inventory, bibliography improvements, support bundles, and additional stable complex-script providers.
+- **Later v1.x — optional SVG preview research:** reconsider a bounded SVG
+  live-preview path only after v1.0, using measured page-count, output-size,
+  latency, and memory budgets. PDF preview remains authoritative, and
+  Typsastra must never retain both complete representations.
+- **Later v1.x:** global project search, package/dependency inventory, support
+  bundles, and additional stable complex-script providers.
 
 ## Deferred to v2.x
 
@@ -262,5 +315,6 @@ The long-term research tasks and gates are in the [v2 implementation plan](./V2_
 
 Typsastra is beta software. The latest release is v0.5.2; see the
 [release notes](./RELEASE_NOTES_V0.5.2.md). Planned development continues with
-the focused v0.5.3 preview-reliability release before the larger v0.6.0
-Active File preview and research-productivity milestone.
+the focused v0.5.3 preview-reliability release, followed by v0.6.0 Draft
+Preview and font management, v0.7.0 resource-aware authoring, v0.8.0 portable
+preview scopes, and v0.9.0 prerelease RTL hardening.

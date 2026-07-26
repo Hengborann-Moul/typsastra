@@ -1,4 +1,4 @@
-# Typsastra v0.6.0 Markdown Live Preview Implementation Plan
+# Typsastra v0.7.0 Markdown Live Preview Implementation Plan
 
 ## Objective
 
@@ -36,7 +36,7 @@ than implied from the parser name.
 
 ## Explicit exclusions
 
-v0.6.0 does not include:
+v0.7.0 does not include:
 
 - Markdown-to-Typst or Typst-to-Markdown conversion;
 - Markdown forward or inverse source synchronization;

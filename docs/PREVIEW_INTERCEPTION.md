@@ -88,11 +88,11 @@ v0.5.2 supports both PDF render modes:
 - `on-save` updates only after a successful save and remains preferable for
   long or resource-intensive documents.
 
-Typsastra will continue qualifying the current PDF-on-type implementation before
-deciding whether a separate bounded SVG renderer provides enough additional
-value. SVG preview is an experiment, not a committed v0.5.3 replacement.
+Typsastra will continue qualifying the current PDF-on-type implementation.
+Separate SVG live-preview research is deferred until after v1.0 and is not part
+of the v0.x release path.
 
-Imported files currently preview through their configured main document. Independent standalone roots remain disabled pending the portable v0.6.0 Full Document/Active File implementation plan; `V1X-P.1` owns later qualification and hardening.
+Imported files currently preview through their configured main document. Independent standalone roots remain disabled pending the portable v0.8.0 Full Document/Active File implementation plan; `V1X-P.1` owns later qualification and hardening.
 
 The experimental decoded-image preflight remains disabled in v0.5.2 while its
 format probing and dependency discovery are corrected and qualified. Typsastra

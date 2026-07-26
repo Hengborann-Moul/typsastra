@@ -1,10 +1,11 @@
-# Typsastra v0.6.0 Active File Preview Implementation Plan
+# Typsastra v0.8.0 Active File Preview Implementation Plan
 
 ## Objective
 
 Add a portable, memory-bounded preview workflow for authors who split long
-documents into included files. This milestone begins after the focused v0.5.3
-preview-reliability and safeguards release is complete.
+documents into included files. This milestone begins after the v0.6.0 Draft
+Preview and font-management work and the v0.7.0 resource-authoring work are
+complete.
 
 Typsastra exposes exactly two preview modes:
 
@@ -27,11 +28,9 @@ short responsive document     -> PDF after typing pauses
 long/resource-heavy document  -> PDF on save
 ```
 
-v0.6.0 must qualify that implementation before deciding whether a separate SVG
-live renderer is justified. If an SVG experiment proceeds, qualification must
-use measured compiled output and runtime resource budgets, not source-file size
-alone. Typsastra must never retain both complete document representations and
-must preserve PDF export regardless of the interactive renderer.
+v0.8.0 retains the qualified PDF renderer for both preview scopes. A separate
+SVG live renderer is outside this milestone and may be reconsidered only after
+v1.0 using measured compiled-output and runtime-resource budgets.
 
 ### Decoded-image preflight dependency
 
