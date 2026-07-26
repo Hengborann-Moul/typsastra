@@ -61,7 +61,7 @@ after a successful save. Both modes compile from a private mirror under
 Use on-save for long or resource-intensive documents.
 Imported files continue to preview through their configured main document. The
 former standalone-preview directive remains disabled; its portable replacement
-is planned for v0.5.3 and hardened in v1.x.
+is planned for v0.6.0 and hardened in v1.x.
 
 `syncDebounceMs` controls how long on-type mode waits after the latest edit
 before starting a preview update. It does not affect on-save mode.

@@ -1,10 +1,10 @@
-# Typsastra v0.5.3 Active File Preview Implementation Plan
+# Typsastra v0.6.0 Active File Preview Implementation Plan
 
 ## Objective
 
 Add a portable, memory-bounded preview workflow for authors who split long
-documents into included files. This milestone begins after the v0.5.2 bug-fix
-and font-variant-cache release is complete.
+documents into included files. This milestone begins after the focused v0.5.3
+preview-reliability and safeguards release is complete.
 
 Typsastra exposes exactly two preview modes:
 
@@ -27,31 +27,18 @@ short responsive document     -> PDF after typing pauses
 long/resource-heavy document  -> PDF on save
 ```
 
-v0.5.3 must qualify that implementation before deciding whether a separate SVG
+v0.6.0 must qualify that implementation before deciding whether a separate SVG
 live renderer is justified. If an SVG experiment proceeds, qualification must
 use measured compiled output and runtime resource budgets, not source-file size
 alone. Typsastra must never retain both complete document representations and
 must preserve PDF export regardless of the interactive renderer.
 
-### Decoded-image preflight
+### Decoded-image preflight dependency
 
-The experimental v0.5.2 detector remains disabled until this milestone. Before
-enabling it:
-
-- verify PNG, JPEG, GIF, BMP, and WebP metadata parsing with malformed,
-  truncated, animated, high-bit-depth, and unusually encoded fixtures;
-- traverse statically reachable local Typst dependencies without treating
-  comments, raw blocks, strings, package paths, URLs, or dynamic expressions as
-  direct image references;
-- estimate preview pressure from decoded pixel area, not compressed file size;
-- warn before compilation when detection is reliable, preserve the last
-  successful preview, and require explicit **Render Anyway** approval;
-- invalidate approval when the source asset changes;
-- fail open and document the limitation when dimensions or ownership cannot be
-  established safely.
-
-Typsastra must never automatically downsample, convert, replace, hide, or
-rewrite the author's source image.
+The focused v0.5.3 release owns correction and qualification of the
+non-destructive decoded-image preflight. Active File mode must reuse that
+approved policy without introducing a second detector or changing its
+author-consent and source-preservation guarantees.
 
 ## Product contract
 
@@ -244,8 +231,6 @@ its portable entry point plus Typsastra's lightweight reference catalog.
 
 - Add multi-file fixtures covering direct, nested, repeated, cyclic, dynamic,
   import-only, page-broken, and continuous includes.
-- Add malformed and representative raster-header fixtures and lock the
-  non-destructive decoded-image warning contract.
 - Record baseline Tinymist memory and switch latency.
 
 ### Phase 1 — modes and eligibility
@@ -272,9 +257,6 @@ its portable entry point plus Typsastra's lightweight reference catalog.
 ### Phase 5 — qualification and documentation
 
 - Update examples and tutorials.
-- Qualify decoded-image warnings across supported formats and platforms,
-  including false positives, false negatives, approval invalidation, and
-  preservation of the last successful preview.
 - Test source sync, recovery, renames, unsaved changes, project export, and
   compilation outside Typsastra.
 

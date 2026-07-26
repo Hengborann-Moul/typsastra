@@ -73,7 +73,7 @@ Released July 23, 2026.
 - Documented and tested unsigned macOS distribution without weakening
   Gatekeeper globally.
 
-## v0.5.3 — portable active-file preview
+## v0.5.3 — preview reliability and safeguards
 
 - Recover the preview source-map connection and any interrupted pane-resize
   presentation after Windows hibernate or sleep. Continue monitoring this as an
@@ -95,6 +95,37 @@ Released July 23, 2026.
   preserving the small position messages required by forward and inverse sync.
 - Decouple source-map warm-up from the active cursor so blank lines, comments,
   directives, and other non-rendered source positions cannot cause a timeout.
+- Correct and qualify the decoded-raster-image preflight before enabling it.
+  Inspect statically discoverable assets without decoding them, warn from
+  decoded pixel area rather than compressed size, preserve the last successful
+  preview, and require explicit **Render Anyway** approval.
+- Never hide, downsample, convert, replace, or otherwise rewrite a source image.
+  Dynamic paths, package resources, plugins, unsupported containers, and
+  uncertain metadata must fail open with a documented detection limitation.
+- Require confirmation before decoding large direct PDFs, reject startup and
+  refresh paths that bypass that approval, and cancel stale PDF loads.
+- Distinguish direct PDF viewing from live Typst preview: disable source
+  synchronization for direct PDFs and use a separate gray viewer surface.
+
+## v0.6.0 — research productivity and discoverability
+
+Make Typsastra's document-engineering strengths easier to discover while adding broadly useful research-authoring tools. This milestone does not expand into discipline-specific computation or visual tooling.
+
+- Add explicit **Full Document** and **Active File** preview modes.
+- Restrict Active File preview to the configured main file and documents
+  directly or transitively reachable through `#include`.
+- Replace the preview with an unavailable-state message for import-only,
+  unrelated, and unsupported files instead of showing stale output.
+- Create visible, standard Typst preview entry points backed by a common
+  template; never require hidden `.typsastra` source to compile them.
+- Warn when an included file has no common formatting entry point or no
+  explicit preceding page break, while allowing intentional continuous flow.
+- Replace rather than retain the full-document Tinymist context so Active File
+  mode delivers a measurable, bounded memory reduction.
+- Provide a lightweight project reference catalog for completion and source
+  navigation in isolated previews.
+- Render known cross-chapter references as portable placeholders while keeping
+  unknown or misspelled labels as errors.
 - Qualify debounced PDF render-on-type with representative text,
   complex-script, image, and vector documents on Windows WebView2, Linux
   WebKitGTK, and macOS WKWebView.
@@ -104,41 +135,17 @@ Released July 23, 2026.
 - If an SVG experiment proceeds, qualify it only for documents within measured
   page-count, output-size, and memory budgets; retain PDF-on-save as the bounded
   path for larger output and never keep both complete representations alive.
-- Correct and qualify the decoded-raster-image preflight before enabling it.
-  Inspect statically discoverable assets without decoding them, warn from
-  decoded pixel area rather than compressed size, preserve the last successful
-  preview, and require explicit **Render Anyway** approval.
-- Never hide, downsample, convert, replace, or otherwise rewrite a source image.
-  Dynamic paths, package resources, plugins, unsupported containers, and
-  uncertain metadata must fail open with a documented detection limitation.
-- Add explicit **Full Document** and **Active File** preview modes.
-- Restrict Active File preview to the configured main file and documents
-  directly or transitively reachable through `#include`.
-- Replace the preview with an unavailable-state message for import-only,
-  unrelated, and unsupported files instead of showing stale output.
-- Create visible, standard Typst preview entry points backed by a common
-  template; never require hidden `.typsastra` source to compile them.
-- Warn when an included file has no common formatting entry point or no explicit
-  preceding page break, while allowing intentional continuous flow.
-- Provide a lightweight project reference catalog for completion and source
-  navigation in isolated previews.
-- Render known cross-chapter references as portable placeholders while keeping
-  unknown or misspelled labels as errors.
-- Replace rather than retain the full-document Tinymist context so Active File
-  mode delivers a measurable, bounded memory reduction.
-
-The detailed tasks and acceptance criteria are in the
-[v0.5.3 Active File preview implementation plan](./V0_5_3_ACTIVE_FILE_PREVIEW_IMPLEMENTATION_PLAN.md).
-
-## v0.6.0 — research productivity and discoverability
-
-Make Typsastra's document-engineering strengths easier to discover while adding broadly useful research-authoring tools. This milestone does not expand into discipline-specific computation or visual tooling.
-
 - Revisit document-language configuration so project inheritance and provider
   assignment are easier to understand without weakening deterministic routing.
 - Add advanced management for the private global scaled-font cache: inspect
   variants by face, scale, disk usage, and last use; delete selected or unused
   variants; and renew stale variants under explicit user control.
+- Add private local font folders to Document Typography for fonts that users
+  do not want to install system-wide. Store absolute paths only in ignored
+  machine-local workspace state, show each font's origin, reject ambiguous
+  family collisions, restart Tinymist when paths change, and apply the same
+  paths to diagnostics, preview, source mapping, and PDF export. Never copy,
+  archive, redistribute, or write these font binaries into the project.
 - Add a separate, sanitized Markdown live-preview renderer for `.md` files,
   with debounced updates, theme-aware typography, local images, common
   GitHub-Flavored Markdown constructs, link navigation, and preserved scroll
@@ -156,6 +163,9 @@ Make Typsastra's document-engineering strengths easier to discover while adding 
 
 The Markdown scope, security boundaries, lifecycle, and release gates are in
 the [v0.6.0 Markdown live preview implementation plan](./V0_6_0_MARKDOWN_LIVE_PREVIEW_IMPLEMENTATION_PLAN.md).
+The Full Document/Active File architecture, migration, reference, memory, and
+qualification work is in the
+[v0.6.0 Active File preview implementation plan](./V0_6_0_ACTIVE_FILE_PREVIEW_IMPLEMENTATION_PLAN.md).
 
 ## v0.9.0 — pre-release hardening and right-to-left writing
 
@@ -235,5 +245,5 @@ The long-term research tasks and gates are in the [v2 implementation plan](./V2_
 
 Typsastra is beta software. The latest release is v0.5.2; see the
 [release notes](./RELEASE_NOTES_V0.5.2.md). Planned development continues with
-the v0.5.3 portable Active File preview before the v0.6.0
-research-productivity milestone.
+the focused v0.5.3 preview-reliability release before the larger v0.6.0
+Active File preview and research-productivity milestone.

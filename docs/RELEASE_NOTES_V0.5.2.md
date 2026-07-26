@@ -4,7 +4,7 @@ Typsastra v0.5.2 is a maintenance, responsiveness, and workflow-safety update.
 It restores the improved PDF render-on-type path for short documents, tightens
 project and LSP lifecycle boundaries, and adds focused editing and file
 management refinements without introducing the larger Active File preview
-architecture planned for v0.5.3.
+architecture planned for v0.6.0.
 
 Released July 23, 2026.
 
