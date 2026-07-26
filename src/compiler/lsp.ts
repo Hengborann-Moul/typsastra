@@ -30,6 +30,11 @@ export type LspStatus = {
   message: string;
 };
 
+export function isTinymistStoppedRequestError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("Tinymist stopped before the LSP request completed.");
+}
+
 type ScrollPreviewRequest = {
   event: "panelScrollTo" | "changeCursorPosition";
   filepath: string;

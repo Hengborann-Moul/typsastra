@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { isTinymistStoppedRequestError } from "../src/compiler/lsp";
 
 describe("Tinymist workspace lifecycle", () => {
   test("exposes an explicit native process stop boundary", async () => {
@@ -72,5 +73,22 @@ describe("Tinymist workspace lifecycle", () => {
     expect(closeClear).toBeGreaterThan(closeProject);
     expect(restartClear).toBeGreaterThan(manualRestart);
     expect(restartClear).toBeLessThan(restartCall);
+  });
+
+  test("restarts and requeues a preview interrupted by an unexpected Tinymist stop", async () => {
+    const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
+
+    expect(isTinymistStoppedRequestError(
+      new Error("Tinymist stopped before the LSP request completed.")
+    )).toBe(true);
+    expect(isTinymistStoppedRequestError(new Error("Typst compilation failed."))).toBe(false);
+    expect(source).toContain("private recoverTinymistPreviewAfterUnexpectedStop");
+    expect(source).toContain("this.tinymistPreviewRecoveryAttempts >= 1");
+    expect(source).toContain('restartTinymistSession("Recovering interrupted preview..."');
+    expect(source).toContain("await this.restoreActiveDocumentAfterTinymistRestart(false)");
+    expect(source).toContain("this.queuedPdfPreviewContents ??= contents");
+    expect(source).toContain("this.queuedPdfPreviewForced = true");
+    expect(source).toContain("isTinymistStoppedRequestError(error)");
+    expect(source).toContain("this.tinymistPreviewRecoveryAttempts = 0");
   });
 });

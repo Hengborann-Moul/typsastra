@@ -19,7 +19,7 @@ import { looksLikeStalePrefixDiagnostic, setEditorDiagnosticsEffect } from "./ed
 import type { EditorDiagnostic, EditorDiagnosticSeverity } from "./editor/diagnostics";
 import { WorkspaceExplorer } from "./components/explorer";
 import { TinymistLspClient } from "./compiler/lsp";
-import type { EditorTextEdit, LspDiagnostic, LspInverseSyncResult, LspLogEntry, LspSourcePosition, LspStatus, PreviewDocumentPosition } from "./compiler/lsp";
+import { isTinymistStoppedRequestError, type EditorTextEdit, type LspDiagnostic, type LspInverseSyncResult, type LspLogEntry, type LspSourcePosition, type LspStatus, type PreviewDocumentPosition } from "./compiler/lsp";
 import type { AppSettings, DeveloperLogCategory } from "./settings";
 import { SettingsController } from "./settingsController";
 import { fileNameFromPath, filePathFromUri, filePathKey, filePathToUri, nativeFilePath, relativeFilePath, remapFilePath } from "./platform/paths";
@@ -405,6 +405,8 @@ export class TypsastraWorkspaceController {
   private lastPdfSessionKey = "";
   private lastPdfSurface: PreviewSurface = "live";
   private pdfPreviewFailureAt: number | null = null;
+  private tinymistPreviewRecoveryAttempts = 0;
+  private tinymistPreviewRecovery: Promise<boolean> | null = null;
   private memoryDiagnosticSequence = 0;
   private saveMemoryDiagnosticGeneration = 0;
   private previousMemoryDiagnostic: MemoryDiagnosticTotals | null = null;
@@ -2686,6 +2688,75 @@ export class TypsastraWorkspaceController {
     });
   }
 
+  private recoverTinymistPreviewAfterUnexpectedStop(
+    contents: string,
+    failedGeneration: number
+  ): Promise<boolean> {
+    if (this.tinymistPreviewRecovery) return this.tinymistPreviewRecovery;
+    if (
+      this.tinymistPreviewRecoveryAttempts >= 1
+      || !this.workspaceRootPath
+      || !this.activeFilePath
+      || !this.lspClient
+    ) {
+      return Promise.resolve(false);
+    }
+
+    const workspacePath = this.workspaceRootPath;
+    const activePath = this.activeFilePath;
+    this.tinymistPreviewRecoveryAttempts += 1;
+    this.appendDeveloperLog({
+      kind: "warning",
+      source: "lsp lifecycle",
+      message: `Render generation ${failedGeneration} was interrupted because Tinymist stopped; attempting one automatic recovery.`
+    });
+    this.setLspStatus({ kind: "starting", message: "Recovering preview compiler" });
+    if (!this.previewFrame.currentUrl) {
+      this.previewFrame.setLoading("Recovering PDF preview...");
+    }
+
+    const recovery = (async () => {
+      try {
+        await this.restartTinymistSession("Recovering interrupted preview...");
+        if (
+          this.workspaceRootPath !== workspacePath
+          || filePathKey(this.activeFilePath ?? "") !== filePathKey(activePath)
+        ) {
+          return false;
+        }
+        await this.restoreActiveDocumentAfterTinymistRestart(false);
+        if (!this.lspReady) return false;
+
+        // A newer external edit may already be waiting behind the failed
+        // generation. Preserve it; otherwise retry the accepted revision that
+        // was interrupted. The render scheduler remains the sole serialization
+        // point for compilation and presentation.
+        this.queuedPdfPreviewContents ??= contents;
+        this.queuedPdfPreviewForced = true;
+        this.appendDeveloperLog({
+          kind: "info",
+          source: "lsp lifecycle",
+          message: `Tinymist recovered after render generation ${failedGeneration}; the latest preview revision was requeued.`
+        });
+        return true;
+      } catch (recoveryError) {
+        this.appendDeveloperLog({
+          kind: "error",
+          source: "lsp lifecycle",
+          message: `Automatic Tinymist recovery failed after render generation ${failedGeneration}: ${String(recoveryError)}`
+        });
+        return false;
+      }
+    })();
+    this.tinymistPreviewRecovery = recovery;
+    void recovery.finally(() => {
+      if (this.tinymistPreviewRecovery === recovery) {
+        this.tinymistPreviewRecovery = null;
+      }
+    });
+    return recovery;
+  }
+
   private handlePreviewStartupFailure(context: {
     path: string;
     taskId: string;
@@ -3778,6 +3849,7 @@ export class TypsastraWorkspaceController {
         this.setLspStatus({ kind: "preview-ready", message: "Preview ready" });
       }
       this.appendDeveloperLog({ kind: "info", source: "preview scheduler", message: `Render generation ${generation}: PDF presentation complete.` });
+      this.tinymistPreviewRecoveryAttempts = 0;
       this.schedulePdfSourceMapWarmup(generation);
       await this.logMemoryDiagnostics(`render ${generation}: after PDF presentation`);
       window.setTimeout(() => {
@@ -3831,6 +3903,12 @@ export class TypsastraWorkspaceController {
           source: "preview scheduler",
           message: `Render generation ${generation} failed after becoming stale: ${String(error)}`
         });
+        return;
+      }
+      if (
+        isTinymistStoppedRequestError(error)
+        && await this.recoverTinymistPreviewAfterUnexpectedStop(contents, generation)
+      ) {
         return;
       }
       console.error("PDF Preview compilation failed:", JSON.stringify(error, null, 2));
@@ -7531,6 +7609,8 @@ export class TypsastraWorkspaceController {
     this.lastTypographyInternalScaleError = "";
     this.pdfPreviewGeneration += 1;
     this.pdfForwardSyncGeneration += 1;
+    this.tinymistPreviewRecoveryAttempts = 0;
+    this.tinymistPreviewRecovery = null;
     this.queuedPdfPreviewContents = null;
     this.queuedPdfPreviewForced = false;
     this.pendingPdfForwardSync = null;
@@ -8091,6 +8171,7 @@ export class TypsastraWorkspaceController {
 
     document.getElementById("action-restart-lsp")?.addEventListener("click", async () => {
       const activePath = this.activeFilePath;
+      this.tinymistPreviewRecoveryAttempts = 0;
       this.logConsoleController.clearLogs();
       this.previewFrame.clear();
       try {
