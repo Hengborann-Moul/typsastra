@@ -41,6 +41,7 @@ import { showInvisibleCharacters } from "./invisibles";
 import { TYPSASTRA_GREEN, TYPSASTRA_GREEN_GLOW } from "../ui/brandColors";
 import { wrappedLineIndentation } from "./wrappedIndent";
 import { contextualDoubleQuoteExtension } from "./quoteEditing";
+import { imageOptimizationWarningsExtension } from "./imageWarnings";
 
 export const themeCompartment = new Compartment();
 export const wrapCompartment = new Compartment();
@@ -597,6 +598,7 @@ export function getEditorExtensions(
       placeholderDOM: foldedTypstPlaceholderDOM
     }),
     editorDiagnosticsExtension,
+    imageOptimizationWarningsExtension,
     indentationGuidesCompartment.of(visibleIndentationMarkers()),
     tabSizeCompartment.of([EditorState.tabSize.of(2), indentUnit.of("  ")]),
     wrapCompartment.of(EditorView.lineWrapping),

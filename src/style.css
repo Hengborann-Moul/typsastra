@@ -3554,6 +3554,28 @@ button.welcome-item:disabled {
   background: var(--ui-header-text);
 }
 
+.cm-image-optimization-marker {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  box-sizing: border-box;
+  color: var(--ui-bg);
+  background: var(--ui-warning-color);
+  font: 800 10px/16px var(--font-family-sans);
+  cursor: help;
+}
+
+.cm-lineNumbers .cm-gutterElement:has(> .cm-image-optimization-marker) {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+}
+
+.cm-lineNumbers .cm-gutterElement > .cm-image-optimization-marker {
+  margin-top: max(0px, calc((var(--editor-line-height-px, 23.8px) - 16px) / 2));
+}
+
 .settings-language-provider-controls {
   display: grid;
   grid-template-columns: auto auto;

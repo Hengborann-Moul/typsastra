@@ -95,13 +95,21 @@ Released July 23, 2026.
   preserving the small position messages required by forward and inverse sync.
 - Decouple source-map warm-up from the active cursor so blank lines, comments,
   directives, and other non-rendered source positions cannot cause a timeout.
-- Correct and qualify the decoded-raster-image preflight before enabling it.
-  Inspect statically discoverable assets without decoding them, warn from
-  decoded pixel area rather than compressed size, preserve the last successful
-  preview, and require explicit **Render Anyway** approval.
-- Never hide, downsample, convert, replace, or otherwise rewrite a source image.
-  Dynamic paths, package resources, plugins, unsupported containers, and
-  uncertain metadata must fail open with a documented detection limitation.
+- Detect statically discoverable oversized raster images without decoding them.
+  When the document uses render-on-type, recommend switching to render-on-save
+  while allowing the author to keep the current mode for that asset revision.
+  Base the recommendation on individual and aggregate decoded pixel area,
+  aggregate source size, and unique image count rather than compressed size
+  alone. Mark individually oversized static `#image` calls in the line-number
+  gutter and publish the same navigable warnings under a dedicated **Images**
+  category in Problems. Guidance must distinguish downscaling for
+  decoded-memory and compile pressure from compression for source and
+  exported-PDF size. Continue expanding malformed and uncommon-format
+  qualification.
+- In normal live preview and PDF export, never hide, downsample, convert,
+  replace, or otherwise rewrite a source image. Dynamic paths, package
+  resources, plugins, unsupported containers, and uncertain metadata must fail
+  open with a documented detection limitation.
 - Require confirmation before decoding large direct PDFs, reject startup and
   refresh paths that bypass that approval, and cancel stale PDF loads.
 - Distinguish direct PDF viewing from live Typst preview: disable source
@@ -135,6 +143,15 @@ Make Typsastra's document-engineering strengths easier to discover while adding 
 - If an SVG experiment proceeds, qualify it only for documents within measured
   page-count, output-size, and memory budgets; retain PDF-on-save as the bounded
   path for larger output and never keep both complete representations alive.
+- Add **Draft Preview**, a preview-only render mode that replaces statically
+  resolvable image calls in Typsastra's private render mirror with lightweight
+  layout-preserving placeholders. Preserve explicit dimensions or derive
+  intrinsic dimensions from image metadata so omitted images do not
+  unnecessarily reflow the draft. Hovering a placeholder may load the real
+  image as a temporary UI overlay on demand, without changing source or
+  including the image in the compiled draft. Dynamic and unresolved image
+  expressions must remain explicit limitations. Draft Preview must be clearly
+  labeled, explicitly selected, and never used for final PDF export.
 - Revisit document-language configuration so project inheritance and provider
   assignment are easier to understand without weakening deterministic routing.
 - Add advanced management for the private global scaled-font cache: inspect

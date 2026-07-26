@@ -1251,7 +1251,15 @@ fn local_typst_dependencies(contents: &str, parent: &std::path::Path) -> Vec<std
     dependencies
 }
 
-fn local_typst_images(contents: &str, parent: &std::path::Path) -> Vec<std::path::PathBuf> {
+#[derive(Debug, PartialEq)]
+struct StaticTypstImageReference {
+    path: std::path::PathBuf,
+    from_byte: usize,
+    from_utf16: usize,
+    to_utf16: usize,
+}
+
+fn local_typst_images(contents: &str, parent: &std::path::Path) -> Vec<StaticTypstImageReference> {
     let bytes = contents.as_bytes();
     let mut images = Vec::new();
     let mut index = 0;
@@ -1322,6 +1330,11 @@ fn local_typst_images(contents: &str, parent: &std::path::Path) -> Vec<std::path
             index += 1;
             continue;
         }
+        let call_start = if index > 0 && bytes[index - 1] == b'#' {
+            index - 1
+        } else {
+            index
+        };
         let mut cursor = index + 5;
         if cursor < bytes.len() && (bytes[cursor].is_ascii_alphanumeric() || bytes[cursor] == b'_')
         {
@@ -1351,7 +1364,12 @@ fn local_typst_images(contents: &str, parent: &std::path::Path) -> Vec<std::path
             if byte == b'"' && !escaped {
                 let raw = &contents[start..cursor];
                 if !raw.starts_with('@') && !raw.contains("://") && !raw.contains('\\') {
-                    images.push(normalized_existing_path(&parent.join(raw)));
+                    images.push(StaticTypstImageReference {
+                        path: normalized_existing_path(&parent.join(raw)),
+                        from_byte: call_start,
+                        from_utf16: contents[..call_start].encode_utf16().count(),
+                        to_utf16: contents[..cursor + 1].encode_utf16().count(),
+                    });
                 }
                 cursor += 1;
                 break;
@@ -1452,7 +1470,17 @@ fn read_raster_dimensions(path: &std::path::Path) -> Option<(u32, u32, &'static 
 
 #[derive(serde::Serialize, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
-struct OversizedPreviewImage {
+struct PreviewImageReference {
+    source_path: String,
+    from_utf16: usize,
+    to_utf16: usize,
+    line: usize,
+    column: usize,
+}
+
+#[derive(serde::Serialize, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct PreviewImageAsset {
     path: String,
     width: u32,
     height: u32,
@@ -1460,42 +1488,69 @@ struct OversizedPreviewImage {
     estimated_decoded_bytes: u64,
     format: String,
     modified_ms: u64,
+    references: Vec<PreviewImageReference>,
 }
 
-fn collect_oversized_preview_images(
+#[derive(serde::Serialize, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct PreviewImageProfile {
+    images: Vec<PreviewImageAsset>,
+    unique_image_count: usize,
+    reference_count: usize,
+    total_source_bytes: u64,
+    estimated_total_decoded_bytes: u64,
+}
+
+fn collect_preview_image_profile_with_override(
     root_path: &std::path::Path,
-    max_decoded_bytes: u64,
-) -> Vec<OversizedPreviewImage> {
-    use std::collections::{HashSet, VecDeque};
+    active_source: Option<(&std::path::Path, &str)>,
+) -> PreviewImageProfile {
+    use std::collections::{HashMap, HashSet, VecDeque};
     use std::time::UNIX_EPOCH;
 
     let mut visited_sources = HashSet::new();
-    let mut visited_images = HashSet::new();
     let mut pending = VecDeque::from([normalized_existing_path(root_path)]);
-    let mut oversized = Vec::new();
+    let mut images_by_path: HashMap<std::path::PathBuf, PreviewImageAsset> = HashMap::new();
     while let Some(path) = pending.pop_front() {
         if !visited_sources.insert(path.clone()) {
             continue;
         }
-        let Ok(contents) = std::fs::read_to_string(&path) else {
-            continue;
+        let contents = if active_source
+            .is_some_and(|(active_path, _)| normalized_existing_path(active_path) == path)
+        {
+            active_source
+                .map(|(_, contents)| contents.to_string())
+                .unwrap_or_default()
+        } else {
+            let Ok(contents) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            contents
         };
         let parent = path.parent().unwrap_or(std::path::Path::new(""));
         pending.extend(local_typst_dependencies(&contents, parent));
-        for image_path in local_typst_images(&contents, parent) {
-            if !visited_images.insert(image_path.clone()) {
+        for image_reference in local_typst_images(&contents, parent) {
+            let source_prefix = &contents[..image_reference.from_byte];
+            let line_start = source_prefix.rfind('\n').map_or(0, |index| index + 1);
+            let reference = PreviewImageReference {
+                source_path: path.to_string_lossy().to_string(),
+                from_utf16: image_reference.from_utf16,
+                to_utf16: image_reference.to_utf16,
+                line: source_prefix.bytes().filter(|byte| *byte == b'\n').count() + 1,
+                column: source_prefix[line_start..].encode_utf16().count() + 1,
+            };
+            if let Some(image) = images_by_path.get_mut(&image_reference.path) {
+                image.references.push(reference);
                 continue;
             }
-            let Some((width, height, format)) = read_raster_dimensions(&image_path) else {
+            let Some((width, height, format)) = read_raster_dimensions(&image_reference.path)
+            else {
                 continue;
             };
             let estimated_decoded_bytes = u64::from(width)
                 .saturating_mul(u64::from(height))
                 .saturating_mul(4);
-            if estimated_decoded_bytes <= max_decoded_bytes {
-                continue;
-            }
-            let Ok(metadata) = std::fs::metadata(&image_path) else {
+            let Ok(metadata) = std::fs::metadata(&image_reference.path) else {
                 continue;
             };
             let modified_ms = metadata
@@ -1504,24 +1559,39 @@ fn collect_oversized_preview_images(
                 .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
                 .map(|value| value.as_millis().min(u128::from(u64::MAX)) as u64)
                 .unwrap_or_default();
-            oversized.push(OversizedPreviewImage {
-                path: image_path.to_string_lossy().to_string(),
-                width,
-                height,
-                source_bytes: metadata.len(),
-                estimated_decoded_bytes,
-                format: format.to_string(),
-                modified_ms,
-            });
+            images_by_path.insert(
+                image_reference.path.clone(),
+                PreviewImageAsset {
+                    path: image_reference.path.to_string_lossy().to_string(),
+                    width,
+                    height,
+                    source_bytes: metadata.len(),
+                    estimated_decoded_bytes,
+                    format: format.to_string(),
+                    modified_ms,
+                    references: vec![reference],
+                },
+            );
         }
     }
-    oversized.sort_by(|left, right| {
+    let mut images = images_by_path.into_values().collect::<Vec<_>>();
+    images.sort_by(|left, right| {
         right
             .estimated_decoded_bytes
             .cmp(&left.estimated_decoded_bytes)
             .then_with(|| left.path.cmp(&right.path))
     });
-    oversized
+    PreviewImageProfile {
+        unique_image_count: images.len(),
+        reference_count: images.iter().map(|image| image.references.len()).sum(),
+        total_source_bytes: images.iter().fold(0u64, |total, image| {
+            total.saturating_add(image.source_bytes)
+        }),
+        estimated_total_decoded_bytes: images.iter().fold(0u64, |total, image| {
+            total.saturating_add(image.estimated_decoded_bytes)
+        }),
+        images,
+    }
 }
 
 #[derive(serde::Serialize, Debug, PartialEq)]
@@ -1569,16 +1639,15 @@ fn typst_preview_source_stats(root_path: String) -> TypstPreviewSourceStats {
     collect_typst_preview_source_stats(std::path::Path::new(&root_path))
 }
 
-// TODO(v0.5.3): Restore the Tauri command registration only after the
-// experimental decoded-image detector passes its format and project-graph
-// qualification. Keeping the implementation here preserves the experiment
-// without exposing it in the v0.5.2 application.
-#[allow(dead_code)]
-fn typst_preview_oversized_images(
+#[tauri::command]
+fn typst_preview_image_profile(
     root_path: String,
-    max_decoded_bytes: u64,
-) -> Vec<OversizedPreviewImage> {
-    collect_oversized_preview_images(std::path::Path::new(&root_path), max_decoded_bytes)
+    active_source_path: Option<String>,
+    active_source_contents: Option<String>,
+) -> PreviewImageProfile {
+    let active_source_path = active_source_path.as_deref().map(std::path::Path::new);
+    let active_source = active_source_path.zip(active_source_contents.as_deref());
+    collect_preview_image_profile_with_override(std::path::Path::new(&root_path), active_source)
 }
 
 fn collect_typst_files(root: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
@@ -2172,7 +2241,7 @@ async fn compile_typst_pdf_preview(
 #[cfg(test)]
 mod preview_main_tests {
     use super::{
-        cleanup_workspace_preview_files, collect_oversized_preview_images,
+        cleanup_workspace_preview_files, collect_preview_image_profile_with_override,
         collect_typst_preview_source_stats, local_typst_images, read_raster_dimensions,
         resolve_preview_target, TypstPreviewSourceStats,
     };
@@ -2214,7 +2283,9 @@ mod preview_main_tests {
             "#image(\"hero.png\")\n// #image(\"ignored.png\")\n#let sample = \"image(\\\"also-ignored.png\\\")\"\n",
             parent,
         );
-        assert_eq!(paths, vec![parent.join("hero.png")]);
+        assert_eq!(paths.len(), 1);
+        assert_eq!(paths[0].path, parent.join("hero.png"));
+        assert_eq!(paths[0].from_utf16, 0);
     }
 
     #[test]
@@ -2224,7 +2295,8 @@ mod preview_main_tests {
         let chapter_path = workspace.path().join("chapter.typ");
         let image_path = workspace.path().join("large.png");
         std::fs::write(&main_path, "#include \"chapter.typ\"\n").expect("write main");
-        std::fs::write(&chapter_path, "#image(\"large.png\")\n").expect("write chapter");
+        let chapter_source = "ខ្មែរ\n#image(\"large.png\")\n";
+        std::fs::write(&chapter_path, chapter_source).expect("write chapter");
         let mut png = vec![0u8; 24];
         png[..8].copy_from_slice(b"\x89PNG\r\n\x1a\n");
         png[16..20].copy_from_slice(&5000u32.to_be_bytes());
@@ -2235,11 +2307,69 @@ mod preview_main_tests {
             read_raster_dimensions(&image_path),
             Some((5000, 4000, "PNG"))
         );
-        let images = collect_oversized_preview_images(&main_path, 64 * 1024 * 1024);
-        assert_eq!(images.len(), 1);
-        assert_eq!(images[0].width, 5000);
-        assert_eq!(images[0].height, 4000);
-        assert_eq!(images[0].estimated_decoded_bytes, 80_000_000);
+        let profile = collect_preview_image_profile_with_override(&main_path, None);
+        assert_eq!(profile.unique_image_count, 1);
+        assert_eq!(profile.reference_count, 1);
+        assert_eq!(profile.estimated_total_decoded_bytes, 80_000_000);
+        assert_eq!(profile.images[0].width, 5000);
+        assert_eq!(profile.images[0].height, 4000);
+        assert_eq!(profile.images[0].estimated_decoded_bytes, 80_000_000);
+        assert_eq!(
+            profile.images[0].references[0].source_path,
+            chapter_path.to_string_lossy()
+        );
+        assert_eq!(
+            profile.images[0].references[0].from_utf16,
+            "ខ្មែរ\n".encode_utf16().count()
+        );
+        assert_eq!(profile.images[0].references[0].line, 2);
+        assert_eq!(profile.images[0].references[0].column, 1);
+    }
+
+    #[test]
+    fn aggregates_many_individually_small_raster_images() {
+        let workspace = tempfile::tempdir().expect("create workspace");
+        let main_path = workspace.path().join("main.typ");
+        let mut source = String::new();
+        for index in 0..70 {
+            let name = format!("small-{index}.png");
+            source.push_str(&format!("#image(\"{name}\")\n"));
+            let mut png = vec![0u8; 24];
+            png[..8].copy_from_slice(b"\x89PNG\r\n\x1a\n");
+            png[16..20].copy_from_slice(&1000u32.to_be_bytes());
+            png[20..24].copy_from_slice(&1000u32.to_be_bytes());
+            std::fs::write(workspace.path().join(name), png).expect("write png");
+        }
+        std::fs::write(&main_path, source).expect("write main");
+
+        let profile = collect_preview_image_profile_with_override(&main_path, None);
+        assert_eq!(profile.unique_image_count, 70);
+        assert_eq!(profile.reference_count, 70);
+        assert_eq!(profile.estimated_total_decoded_bytes, 280_000_000);
+        assert!(profile
+            .images
+            .iter()
+            .all(|image| image.estimated_decoded_bytes == 4_000_000));
+    }
+
+    #[test]
+    fn image_profile_uses_unsaved_active_source_contents() {
+        let workspace = tempfile::tempdir().expect("create workspace");
+        let main_path = workspace.path().join("main.typ");
+        let image_path = workspace.path().join("draft.png");
+        std::fs::write(&main_path, "No image yet\n").expect("write main");
+        let mut png = vec![0u8; 24];
+        png[..8].copy_from_slice(b"\x89PNG\r\n\x1a\n");
+        png[16..20].copy_from_slice(&2000u32.to_be_bytes());
+        png[20..24].copy_from_slice(&1000u32.to_be_bytes());
+        std::fs::write(image_path, png).expect("write png");
+
+        let profile = collect_preview_image_profile_with_override(
+            &main_path,
+            Some((&main_path, "#image(\"draft.png\")\n")),
+        );
+        assert_eq!(profile.unique_image_count, 1);
+        assert_eq!(profile.reference_count, 1);
     }
 
     #[test]
@@ -3364,7 +3494,7 @@ pub fn run() {
             reveal_in_explorer,
             resolve_preview_main,
             typst_preview_source_stats,
-            // TODO(v0.5.3): typst_preview_oversized_images,
+            typst_preview_image_profile,
             ensure_toolchain,
             get_toolchain_status,
             list_system_fonts,
