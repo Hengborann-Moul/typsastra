@@ -1,24 +1,49 @@
 import { describe, expect, test } from "bun:test";
 
 describe("large-image preview recommendation", () => {
-  test("uses aggregate image pressure to recommend render on save", async () => {
+  test("uses aggregate image pressure without blocking preview compilation", async () => {
     const controller = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
-    const start = controller.indexOf("private async recommendOnSaveForImageHeavyPreview");
-    const end = controller.indexOf("private async showReleaseSummaryIfNeeded", start);
+    const start = controller.indexOf("private updateImageHeavyPreviewWarning");
+    const end = controller.indexOf("private async showImageHeavyPreviewDetails", start);
     const method = controller.slice(start, end);
 
-    expect(method).toContain('renderMode !== "on-type"');
     expect(method).toContain("estimatedTotalDecodedBytes > MAX_RECOMMENDED_TOTAL_DECODED_PREVIEW_IMAGE_BYTES");
     expect(method).toContain("totalSourceBytes > MAX_RECOMMENDED_PREVIEW_IMAGE_SOURCE_BYTES");
     expect(method).toContain("uniqueImageCount >= MAX_RECOMMENDED_UNIQUE_PREVIEW_IMAGES");
-    expect(method).toContain('title: "Image-heavy Live Preview"');
-    expect(method).toContain('{ id: "keep-on-type", label: "Keep On Type" }');
-    expect(method).toContain('{ id: "switch-on-save", label: "Switch to On Save", primary: true }');
-    expect(method).toContain('settings.preview.renderMode = "on-save"');
-    expect(method).toContain("Your images and source files will not be changed.");
+    expect(method).toContain('getElementById("preview-image-warning-btn")');
+    expect(method).toContain('button.dataset.active = "true"');
+    expect(method).toContain("Click for details.");
+    expect(method).toContain("Preview may take longer to update after each save.");
     expect(controller).toContain("activeSourceContents: activeSourcePath ? this.editorInstance.state.doc.toString() : null");
-    expect(method).not.toContain("Render Anyway");
-    expect(method).not.toContain("save_workspace_file");
+    expect(controller).toContain('title: "Image-heavy Document"');
+    expect(controller).toContain('{ id: "view-images", label: "View Images", primary: false }');
+    expect(controller).toContain('{ id: "switch-on-save", label: "Use On Save", primary: true }');
+    expect(controller).toContain('settings.preview.renderMode = "on-save"');
+    expect(controller).toContain("Compilation will continue normally");
+    const renderStart = controller.indexOf("private async renderPdfPreview");
+    const renderEnd = controller.indexOf("private schedulePdfPreview", renderStart);
+    const renderMethod = controller.slice(renderStart, renderEnd);
+    expect(renderMethod).toContain("this.updateImageHeavyPreviewWarning(imageProfile);");
+    expect(renderMethod).not.toContain("recommendOnSaveForImageHeavyPreview");
+    expect(renderMethod).not.toMatch(/updateImageHeavyPreviewWarning\(imageProfile\)[\s\S]{0,80}return;/);
+  });
+
+  test("recommends hard offenders and a bounded set of aggregate contributors", async () => {
+    const controller = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
+    const start = controller.indexOf("private recommendedImageOptimizationAssets");
+    const end = controller.indexOf("private imageOptimizationMessage", start);
+    const method = controller.slice(start, end);
+
+    expect(controller).toContain("const MAX_RECOMMENDED_DECODED_PREVIEW_IMAGE_BYTES = 64 * 1024 * 1024");
+    expect(controller).toContain("const AGGREGATE_IMAGE_CONTRIBUTOR_BYTES = 32 * 1024 * 1024");
+    expect(controller).toContain("const MAX_RECOMMENDED_SINGLE_IMAGE_SOURCE_BYTES = 8 * 1024 * 1024");
+    expect(controller).toContain("const MAX_AGGREGATE_IMAGE_OPTIMIZATION_SUGGESTIONS = 5");
+    expect(method).toContain("image.estimatedDecodedBytes > MAX_RECOMMENDED_DECODED_PREVIEW_IMAGE_BYTES");
+    expect(method).toContain("image.sourceBytes > MAX_RECOMMENDED_SINGLE_IMAGE_SOURCE_BYTES");
+    expect(method).toContain("profile.estimatedTotalDecodedBytes > MAX_RECOMMENDED_TOTAL_DECODED_PREVIEW_IMAGE_BYTES");
+    expect(method).toContain("image.estimatedDecodedBytes > AGGREGATE_IMAGE_CONTRIBUTOR_BYTES");
+    expect(method).toContain("MAX_AGGREGATE_IMAGE_OPTIMIZATION_SUGGESTIONS - selected.size");
+    expect(controller).toContain("this.recommendedImageOptimizationAssets(profile)");
   });
 
   test("registers the read-only raster metadata command", async () => {
@@ -35,7 +60,7 @@ describe("large-image preview recommendation", () => {
     const consoleController = await Bun.file(new URL("../src/diagnostics/logConsoleController.ts", import.meta.url)).text();
     const markup = await Bun.file(new URL("../index.html", import.meta.url)).text();
     expect(controller).toContain("setImageOptimizationWarningsEffect.of(warnings)");
-    expect(controller).toContain("setImageOptimizationIssues(oversizedImages.map");
+    expect(controller).toContain("setImageOptimizationIssues(optimizationCandidates.map");
     expect(controller).toContain('channel: "images"');
     expect(controller).toContain("Downscale its pixel dimensions");
     expect(controller).toContain("may reduce the exported PDF size");
@@ -46,6 +71,9 @@ describe("large-image preview recommendation", () => {
     expect(consoleController).toContain('entry.channel === "images" && entry.locations?.[0]');
     expect(consoleController).toContain("void this.onNavigate({ ...entry, ...first, locations: undefined })");
     expect(markup).toContain('data-log-console-tab="images"');
+    expect(markup).toContain('id="preview-image-warning-btn"');
+    expect(warnings).toContain('createAppIcon("triangleAlert", { size: 17 })');
+    expect(controller).toContain('getElementById("preview-image-warning-btn")');
   });
 
   test("plans a source-preserving draft preview for v0.6.0", async () => {

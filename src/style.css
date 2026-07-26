@@ -41,6 +41,7 @@
   --ui-accent-foreground: var(--ui-bg);
   --ui-accent-hover: color-mix(in srgb, var(--ui-accent-color) 84%, var(--ui-text));
   --ui-warning-color: #b66a00;
+  --ui-warning-icon-color: #cca700;
   --ui-scrollbar-track: transparent;
   --ui-scrollbar-thumb: color-mix(in srgb, var(--ui-header-text) 62%, var(--ui-bg));
   --ui-scrollbar-thumb-hover: color-mix(in srgb, var(--ui-accent-color) 72%, var(--ui-header-text));
@@ -1829,6 +1830,23 @@ body.typsastra-resizing #input-container-wrapper::after {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
 }
 
+.preview-image-warning-button {
+  width: 36px;
+  height: 28px;
+  margin-right: auto;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ui-warning-icon-color);
+  cursor: pointer;
+}
+
+.preview-image-warning-button:hover {
+  background: var(--ui-hover);
+  border-color: color-mix(in srgb, var(--ui-warning-icon-color) 65%, var(--ui-border));
+}
+
 .preview-page-controls {
   height: 28px;
   padding: 0 7px;
@@ -2559,7 +2577,7 @@ body.typsastra-resizing #input-container-wrapper::after {
 }
 
 .log-entry-warning .log-entry-icon {
-  color: #cca700;
+  color: var(--ui-warning-icon-color);
 }
 
 .log-entry-info .log-entry-icon,
@@ -3555,15 +3573,19 @@ button.welcome-item:disabled {
 }
 
 .cm-image-optimization-marker {
-  display: inline-grid;
-  place-items: center;
-  width: 16px;
-  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
   box-sizing: border-box;
-  color: var(--ui-bg);
-  background: var(--ui-warning-color);
-  font: 800 10px/16px var(--font-family-sans);
+  color: var(--ui-warning-icon-color);
+  background: transparent;
   cursor: help;
+}
+
+.cm-image-optimization-marker svg {
+  display: block;
 }
 
 .cm-lineNumbers .cm-gutterElement:has(> .cm-image-optimization-marker) {
@@ -3573,7 +3595,7 @@ button.welcome-item:disabled {
 }
 
 .cm-lineNumbers .cm-gutterElement > .cm-image-optimization-marker {
-  margin-top: max(0px, calc((var(--editor-line-height-px, 23.8px) - 16px) / 2));
+  margin-top: max(0px, calc((var(--editor-line-height-px, 23.8px) - 18px) / 2));
 }
 
 .settings-language-provider-controls {

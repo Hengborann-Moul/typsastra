@@ -31,6 +31,13 @@ describe("theme-aware application accents", () => {
     expect(explorer).toContain('input.style.border = "1px solid var(--ui-accent-color)"');
   });
 
+  test("keeps warning icons consistent across themes and surfaces", () => {
+    expect(style).toContain("--ui-warning-icon-color: #cca700;");
+    expect(style).toMatch(/\.preview-image-warning-button\s*\{[\s\S]*?color:\s*var\(--ui-warning-icon-color\)/);
+    expect(style).toMatch(/\.log-entry-warning \.log-entry-icon\s*\{[\s\S]*?color:\s*var\(--ui-warning-icon-color\)/);
+    expect(style).toMatch(/\.cm-image-optimization-marker\s*\{[\s\S]*?color:\s*var\(--ui-warning-icon-color\)/);
+  });
+
   test("does not use the cursor color as a generic UI accent", () => {
     expect(style).not.toMatch(/\.log-console-tab\.active\s*\{[^}]*editor-cursor-color/s);
     expect(style).toMatch(/\.workspace-loading-spinner\s*\{[^}]*var\(--ui-accent-color\)/s);

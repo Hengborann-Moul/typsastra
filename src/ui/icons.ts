@@ -194,6 +194,7 @@ export function initializeLucideIcons(): void {
   replaceSvg("#preview-recompile-btn svg", "refresh", 16);
   replaceSvg("#preview-forward-sync-btn svg", "crosshair", 16);
   replaceSvg("#preview-menu-btn svg", "ellipsisVertical", 16);
+  replaceContents("#preview-image-warning-btn", "triangleAlert", 23);
   const isPreview = new URLSearchParams(window.location.search).get("mode") === "preview";
   replaceSvg("#undock-preview-btn svg", isPreview ? "minimize2" : "externalLink", 16);
   replaceSvg("#sidebar-toggle-button svg", "panelLeft", 15);

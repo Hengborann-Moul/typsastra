@@ -212,6 +212,12 @@ export class LogConsoleController {
     if (visible && this.renderPending) this.renderNow();
   }
 
+  public showChannel(channel: LogConsoleTab): void {
+    this.activeTab = channel;
+    this.setVisible(true);
+    this.renderNow();
+  }
+
   private createEntry(entry: LogConsoleEntryInput): LogConsoleEntry {
     return { ...entry, id: this.nextEntryId++, timestamp: new Date() };
   }

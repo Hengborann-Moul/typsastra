@@ -168,6 +168,9 @@ const MAX_RECOMMENDED_DECODED_PREVIEW_IMAGE_BYTES = 64 * 1024 * 1024;
 const MAX_RECOMMENDED_TOTAL_DECODED_PREVIEW_IMAGE_BYTES = 256 * 1024 * 1024;
 const MAX_RECOMMENDED_PREVIEW_IMAGE_SOURCE_BYTES = 64 * 1024 * 1024;
 const MAX_RECOMMENDED_UNIQUE_PREVIEW_IMAGES = 50;
+const AGGREGATE_IMAGE_CONTRIBUTOR_BYTES = 32 * 1024 * 1024;
+const MAX_RECOMMENDED_SINGLE_IMAGE_SOURCE_BYTES = 8 * 1024 * 1024;
+const MAX_AGGREGATE_IMAGE_OPTIMIZATION_SUGGESTIONS = 5;
 
 class PreviewPreparationInterrupted extends Error {
   constructor() {
@@ -317,8 +320,6 @@ export class TypsastraWorkspaceController {
   private readonly approvedLargePreviewRoots = new Set<string>();
   private readonly inspectedPreviewRoots = new Set<string>();
   private blockedLargePreviewRoot: string | null = null;
-  private readonly acknowledgedLargeImageRecommendations = new Set<string>();
-  private largeImageRecommendationInProgress: string | null = null;
   private previewImageProfile: PreviewImageProfile | null = null;
   private wordWrapDeferredForResize = false;
   private recommendedWorkspaceToolchain: { tinymistVersion: string; typstVersion: string } | null = null;
@@ -2002,37 +2003,73 @@ export class TypsastraWorkspaceController {
     return false;
   }
 
-  private previewImageKey(image: PreviewImageAsset): string {
-    return [
-      filePathKey(image.path),
-      image.width,
-      image.height,
-      image.sourceBytes,
-      image.modifiedMs
-    ].join(":");
+  private recommendedImageOptimizationAssets(profile: PreviewImageProfile): PreviewImageAsset[] {
+    const selected = new Map<string, PreviewImageAsset>();
+    const select = (image: PreviewImageAsset) => selected.set(filePathKey(image.path), image);
+
+    for (const image of profile.images) {
+      if (
+        image.estimatedDecodedBytes > MAX_RECOMMENDED_DECODED_PREVIEW_IMAGE_BYTES
+        || image.sourceBytes > MAX_RECOMMENDED_SINGLE_IMAGE_SOURCE_BYTES
+      ) {
+        select(image);
+      }
+    }
+
+    if (profile.estimatedTotalDecodedBytes > MAX_RECOMMENDED_TOTAL_DECODED_PREVIEW_IMAGE_BYTES) {
+      const remaining = Math.max(0, MAX_AGGREGATE_IMAGE_OPTIMIZATION_SUGGESTIONS - selected.size);
+      profile.images
+        .filter(image =>
+          image.estimatedDecodedBytes > AGGREGATE_IMAGE_CONTRIBUTOR_BYTES
+          && !selected.has(filePathKey(image.path))
+        )
+        .sort((left, right) => right.estimatedDecodedBytes - left.estimatedDecodedBytes)
+        .slice(0, remaining)
+        .forEach(select);
+    }
+
+    return [...selected.values()].sort(
+      (left, right) => right.estimatedDecodedBytes - left.estimatedDecodedBytes
+    );
   }
 
-  private imageOptimizationMessage(image: PreviewImageAsset): string {
+  private imageOptimizationMessage(
+    image: PreviewImageAsset,
+    profile: PreviewImageProfile
+  ): string {
+    const reasons: string[] = [];
+    if (image.estimatedDecodedBytes > MAX_RECOMMENDED_DECODED_PREVIEW_IMAGE_BYTES) {
+      reasons.push("Its decoded size exceeds the recommended per-image preview budget.");
+    } else if (
+      profile.estimatedTotalDecodedBytes > MAX_RECOMMENDED_TOTAL_DECODED_PREVIEW_IMAGE_BYTES
+      && image.estimatedDecodedBytes > AGGREGATE_IMAGE_CONTRIBUTOR_BYTES
+    ) {
+      reasons.push(`It is a major contributor to the document's estimated ${formatFileSize(profile.estimatedTotalDecodedBytes)} decoded image total.`);
+    }
+    if (image.sourceBytes > MAX_RECOMMENDED_SINGLE_IMAGE_SOURCE_BYTES) {
+      reasons.push(`Its ${formatFileSize(image.sourceBytes)} source file is unusually large.`);
+    }
     return [
       `${fileNameFromPath(image.path)} is ${image.width.toLocaleString()} × ${image.height.toLocaleString()} pixels`,
       `and may require about ${formatFileSize(image.estimatedDecodedBytes)} when decoded.`,
+      ...reasons,
       "Downscale its pixel dimensions to reduce live-preview memory and compilation work.",
       "Compressing or re-encoding it can reduce the source file and may reduce the exported PDF size."
     ].join(" ");
   }
 
   private publishImageOptimizationWarnings(profile = this.previewImageProfile): void {
-    const oversizedImages = profile?.images.filter(
-      image => image.estimatedDecodedBytes > MAX_RECOMMENDED_DECODED_PREVIEW_IMAGE_BYTES
-    ) ?? [];
-    this.logConsoleController.setImageOptimizationIssues(oversizedImages.map(image => ({
+    const optimizationCandidates = profile
+      ? this.recommendedImageOptimizationAssets(profile)
+      : [];
+    this.logConsoleController.setImageOptimizationIssues(optimizationCandidates.map(image => ({
       kind: "warning",
       channel: "images",
       counted: true,
       source: "image optimization",
       filePath: image.path,
       fileName: fileNameFromPath(image.path),
-      message: this.imageOptimizationMessage(image),
+      message: this.imageOptimizationMessage(image, profile!),
       locations: image.references.map(reference => ({
         filePath: reference.sourcePath,
         fileName: fileNameFromPath(reference.sourcePath),
@@ -2051,8 +2088,8 @@ export class TypsastraWorkspaceController {
     }
     const activeKey = filePathKey(activePath);
     const warnings: ImageOptimizationWarning[] = [];
-    for (const image of oversizedImages) {
-      const message = this.imageOptimizationMessage(image);
+    for (const image of optimizationCandidates) {
+      const message = this.imageOptimizationMessage(image, profile);
       for (const reference of image.references) {
         if (filePathKey(reference.sourcePath) !== activeKey) continue;
         warnings.push({
@@ -2095,72 +2132,75 @@ export class TypsastraWorkspaceController {
     }
   }
 
-  private async recommendOnSaveForImageHeavyPreview(profile: PreviewImageProfile | null): Promise<boolean> {
-    if (
-      !profile
-      || this.settingsController.value.preview.renderMode !== "on-type"
-    ) return true;
-    const individuallyLarge = profile.images.filter(
-      image => image.estimatedDecodedBytes > MAX_RECOMMENDED_DECODED_PREVIEW_IMAGE_BYTES
-    );
-    const imageHeavy = individuallyLarge.length > 0
+  private updateImageHeavyPreviewWarning(profile: PreviewImageProfile | null): void {
+    const button = document.getElementById("preview-image-warning-btn") as HTMLButtonElement | null;
+    if (!button) return;
+    if (!profile) {
+      button.dataset.active = "false";
+      button.classList.add("hidden");
+      return;
+    }
+    const optimizationCandidates = this.recommendedImageOptimizationAssets(profile);
+    const imageHeavy = optimizationCandidates.length > 0
       || profile.estimatedTotalDecodedBytes > MAX_RECOMMENDED_TOTAL_DECODED_PREVIEW_IMAGE_BYTES
       || profile.totalSourceBytes > MAX_RECOMMENDED_PREVIEW_IMAGE_SOURCE_BYTES
       || profile.uniqueImageCount >= MAX_RECOMMENDED_UNIQUE_PREVIEW_IMAGES;
-    if (!imageHeavy) return true;
+    if (!imageHeavy) {
+      button.dataset.active = "false";
+      button.classList.add("hidden");
+      return;
+    }
 
-    const recommendationKey = [
-      profile.uniqueImageCount,
-      profile.referenceCount,
-      profile.totalSourceBytes,
-      profile.estimatedTotalDecodedBytes,
-      ...profile.images.map(image => this.previewImageKey(image))
-    ].join("|");
-    if (this.acknowledgedLargeImageRecommendations.has(recommendationKey)) return true;
-    if (this.largeImageRecommendationInProgress === recommendationKey) return false;
-    this.largeImageRecommendationInProgress = recommendationKey;
+    const renderMode = this.settingsController.value.preview.renderMode;
+    const timing = renderMode === "on-type"
+      ? "Live preview may update slowly while typing."
+      : "Preview may take longer to update after each save.";
+    const summary = `${timing} ${profile.uniqueImageCount.toLocaleString()} raster image${profile.uniqueImageCount === 1 ? "" : "s"} may use about ${formatFileSize(profile.estimatedTotalDecodedBytes)} when decoded. Click for details.`;
+    button.dataset.active = "true";
+    button.title = summary;
+    button.setAttribute("aria-label", `Image-heavy document warning. ${summary}`);
+    button.classList.remove("hidden");
+  }
 
+  private async showImageHeavyPreviewDetails(): Promise<void> {
+    const profile = this.previewImageProfile;
+    if (!profile) return;
+    const optimizationCandidates = this.recommendedImageOptimizationAssets(profile);
     const visibleItems = profile.images.slice(0, 3).map(image =>
       `${fileNameFromPath(image.path)} (${image.width.toLocaleString()} × ${image.height.toLocaleString()}, about ${formatFileSize(image.estimatedDecodedBytes)} decoded from ${formatFileSize(image.sourceBytes)})`
     );
     const additional = profile.images.length > visibleItems.length
       ? ` and ${profile.images.length - visibleItems.length} more`
       : "";
-    let action = "keep-on-type";
-    try {
-      action = await this.appDialogController.show({
-        title: "Image-heavy Live Preview",
-        subtitle: `${profile.uniqueImageCount} raster image${profile.uniqueImageCount === 1 ? "" : "s"} · ${formatFileSize(profile.estimatedTotalDecodedBytes)} estimated decoded`,
-        description: `This document contains ${profile.referenceCount.toLocaleString()} supported raster image reference${profile.referenceCount === 1 ? "" : "s"} across ${profile.uniqueImageCount.toLocaleString()} unique file${profile.uniqueImageCount === 1 ? "" : "s"}, totaling ${formatFileSize(profile.totalSourceBytes)} on disk and about ${formatFileSize(profile.estimatedTotalDecodedBytes)} when decoded.\n\nLargest assets: ${visibleItems.join("; ")}${additional}.\n\nRender on type may repeatedly process these assets after edits. For a more responsive editor, Typsastra recommends Render on save. Your images and source files will not be changed.`,
-        actions: [
-          { id: "keep-on-type", label: "Keep On Type" },
-          { id: "switch-on-save", label: "Switch to On Save", primary: true }
-        ],
-        cancelAction: "keep-on-type"
-      });
-    } finally {
-      if (this.largeImageRecommendationInProgress === recommendationKey) {
-        this.largeImageRecommendationInProgress = null;
-      }
+    const renderMode = this.settingsController.value.preview.renderMode;
+    const actions = [{ id: "close", label: "Close", primary: false }];
+    if (optimizationCandidates.length > 0) {
+      actions.push({ id: "view-images", label: "View Images", primary: false });
     }
-    this.acknowledgedLargeImageRecommendations.add(recommendationKey);
-    if (action === "switch-on-save") {
-      this.settingsController.update(settings => {
-        settings.preview.renderMode = "on-save";
-      });
-      this.appendDeveloperLog({
-        kind: "info",
-        source: "preview scheduler",
-        message: `Switched to render on save for an image-heavy document: unique=${profile.uniqueImageCount}; references=${profile.referenceCount}; source=${formatFileSize(profile.totalSourceBytes)}; decoded=${formatFileSize(profile.estimatedTotalDecodedBytes)}.`
-      });
-      return false;
+    if (renderMode === "on-type") {
+      actions.push({ id: "switch-on-save", label: "Use On Save", primary: true });
     }
+    const action = await this.appDialogController.show({
+      title: "Image-heavy Document",
+      subtitle: `${profile.uniqueImageCount} raster image${profile.uniqueImageCount === 1 ? "" : "s"} · ${formatFileSize(profile.estimatedTotalDecodedBytes)} estimated decoded`,
+      description: `This preview references ${profile.referenceCount.toLocaleString()} supported raster image${profile.referenceCount === 1 ? "" : "s"} across ${profile.uniqueImageCount.toLocaleString()} unique file${profile.uniqueImageCount === 1 ? "" : "s"}, totaling ${formatFileSize(profile.totalSourceBytes)} on disk.\n\nLargest assets: ${visibleItems.join("; ")}${additional}.\n\n${renderMode === "on-type" ? "Repeated on-type compilation may make editing less responsive." : "The preview may take longer to update after each save."} Compilation will continue normally, and Typsastra will not modify the images.`,
+      actions,
+      cancelAction: "close"
+    });
+    if (action === "view-images") {
+      this.logConsoleController.showChannel("images");
+      return;
+    }
+    if (action !== "switch-on-save") return;
+    this.settingsController.update(settings => {
+      settings.preview.renderMode = "on-save";
+    });
+    this.updateImageHeavyPreviewWarning(profile);
     this.appendDeveloperLog({
       kind: "info",
       source: "preview scheduler",
-      message: `Kept render on type after acknowledging an image-heavy document: unique=${profile.uniqueImageCount}; references=${profile.referenceCount}; source=${formatFileSize(profile.totalSourceBytes)}; decoded=${formatFileSize(profile.estimatedTotalDecodedBytes)}.`
+      message: `Switched to render on save for an image-heavy document: unique=${profile.uniqueImageCount}; references=${profile.referenceCount}; source=${formatFileSize(profile.totalSourceBytes)}; decoded=${formatFileSize(profile.estimatedTotalDecodedBytes)}.`
     });
-    return true;
   }
 
   private async showReleaseSummaryIfNeeded(): Promise<void> {
@@ -3592,9 +3632,7 @@ export class TypsastraWorkspaceController {
       return;
     }
     const imageProfile = await this.inspectPreviewImageProfile(this.previewRootPath);
-    if (!await this.recommendOnSaveForImageHeavyPreview(imageProfile)) {
-      return;
-    }
+    this.updateImageHeavyPreviewWarning(imageProfile);
     if (this.typographyFontUpdateInProgress) {
       this.deferredTypographyPreviewContents = contents;
       this.appendDeveloperLog({
@@ -5204,6 +5242,7 @@ export class TypsastraWorkspaceController {
     const syncBtn = document.getElementById("preview-forward-sync-btn");
     const recompileBtn = document.getElementById("preview-recompile-btn");
     const menuBtn = document.getElementById("preview-menu-btn");
+    const imageWarningBtn = document.getElementById("preview-image-warning-btn");
     document.querySelector<HTMLElement>(".preview-page-controls")?.classList.toggle("hidden", isImage);
 
     if (syncBtn) {
@@ -5218,6 +5257,10 @@ export class TypsastraWorkspaceController {
       if (showTypstOnly) menuBtn.classList.remove("hidden");
       else menuBtn.classList.add("hidden");
     }
+    imageWarningBtn?.classList.toggle(
+      "hidden",
+      !showTypstOnly || imageWarningBtn.dataset.active !== "true"
+    );
   }
 
   private zoomIn(): void {
@@ -7482,9 +7525,8 @@ export class TypsastraWorkspaceController {
     this.approvedLargePreviewRoots.clear();
     this.inspectedPreviewRoots.clear();
     this.blockedLargePreviewRoot = null;
-    this.acknowledgedLargeImageRecommendations.clear();
-    this.largeImageRecommendationInProgress = null;
     this.previewImageProfile = null;
+    this.updateImageHeavyPreviewWarning(null);
     this.publishImageOptimizationWarnings(null);
     this.lastTypographyInternalScaleError = "";
     this.pdfPreviewGeneration += 1;
@@ -7747,6 +7789,10 @@ export class TypsastraWorkspaceController {
 
     document.getElementById("preview-recompile-btn")?.addEventListener("click", () => {
       this.recompilePreviewManually();
+    });
+
+    document.getElementById("preview-image-warning-btn")?.addEventListener("click", () => {
+      void this.showImageHeavyPreviewDetails();
     });
 
     const previewForwardSyncButton = document.getElementById("preview-forward-sync-btn");

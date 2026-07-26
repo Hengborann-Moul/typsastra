@@ -1,6 +1,7 @@
 import { RangeSet, RangeSetBuilder, StateEffect, StateField } from "@codemirror/state";
 import type { Extension } from "@codemirror/state";
 import { GutterMarker, lineNumberMarkers } from "@codemirror/view";
+import { createAppIcon } from "../ui/icons";
 
 export type ImageOptimizationWarning = {
   from: number;
@@ -30,7 +31,7 @@ class ImageOptimizationMarker extends GutterMarker {
   toDOM(): HTMLElement {
     const marker = document.createElement("span");
     marker.className = "cm-image-optimization-marker";
-    marker.textContent = "!";
+    marker.appendChild(createAppIcon("triangleAlert", { size: 17 }));
     marker.title = this.message;
     marker.setAttribute("aria-label", this.message);
     return marker;
