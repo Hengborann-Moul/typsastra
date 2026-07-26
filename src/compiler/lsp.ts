@@ -201,6 +201,7 @@ export class TinymistLspClient {
 
   public async restart(): Promise<void> {
     this.rejectPendingRequests(new Error("Tinymist is restarting."));
+    this.clearPreviewEndpoints();
     this.setStatus("starting", "Restarting Tinymist");
     await this.ensureTransportListeners();
     await this.transport.start(this.getWorkspaceRoot());
@@ -212,6 +213,7 @@ export class TinymistLspClient {
 
   public async stop(): Promise<void> {
     this.rejectPendingRequests(new Error("Tinymist was stopped."));
+    this.clearPreviewEndpoints();
     await this.transport.stop();
     this.setStatus("stopped", "Tinymist stopped");
   }
@@ -230,12 +232,18 @@ export class TinymistLspClient {
     this.pendingRequests.clear();
   }
 
+  private clearPreviewEndpoints(): void {
+    this.latestPreviewUrl = "";
+    this.latestPreviewDataPlaneUrl = "";
+  }
+
   private ensureTransportListeners(): Promise<void> {
     if (this.transportListeners) return this.transportListeners;
     this.transportListeners = Promise.all([
       this.transport.listenStatus(status => {
         if (status === "stopped") {
           this.rejectPendingRequests(new Error("Tinymist stopped before the LSP request completed."));
+          this.clearPreviewEndpoints();
           this.setStatus("stopped", "Tinymist stopped");
         }
         else if (status === "running") this.setStatus("running", "Tinymist process running");

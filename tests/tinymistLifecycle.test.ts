@@ -77,6 +77,7 @@ describe("Tinymist workspace lifecycle", () => {
 
   test("restarts and requeues a preview interrupted by an unexpected Tinymist stop", async () => {
     const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
+    const clientSource = await Bun.file(new URL("../src/compiler/lsp.ts", import.meta.url)).text();
 
     expect(isTinymistStoppedRequestError(
       new Error("Tinymist stopped before the LSP request completed.")
@@ -90,5 +91,11 @@ describe("Tinymist workspace lifecycle", () => {
     expect(source).toContain("this.queuedPdfPreviewForced = true");
     expect(source).toContain("isTinymistStoppedRequestError(error)");
     expect(source).toContain("this.tinymistPreviewRecoveryAttempts = 0");
+    expect(source).toContain("this.pdfSourceMapRetryKey = null");
+    expect(source).toContain("window.clearTimeout(this.pdfSourceMapWarmupTimer)");
+    expect(source).toContain("this.pdfPreviewSourceMapRootPath = null");
+    expect(source).toContain("this.pdfPreviewSourceMapTaskId = null");
+    expect(clientSource).toContain("private clearPreviewEndpoints(): void");
+    expect(clientSource).toContain("this.latestPreviewDataPlaneUrl = \"\"");
   });
 });

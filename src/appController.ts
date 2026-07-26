@@ -2645,10 +2645,19 @@ export class TypsastraWorkspaceController {
     this.pdfSyncRegisteredTaskId = null;
     this.pdfSourceMapStartup = null;
     this.pdfSourceMapStartupKey = null;
+    this.pdfSourceMapRetryKey = null;
+    this.pdfSourceMapRetryNotBefore = 0;
+    this.pdfSourceMapFailureCount = 0;
+    if (this.pdfSourceMapWarmupTimer !== null) {
+      window.clearTimeout(this.pdfSourceMapWarmupTimer);
+      this.pdfSourceMapWarmupTimer = null;
+    }
     this.clearPdfSourceMapDocumentReadiness();
     this.pdfSyncSocket?.close();
     this.pdfSyncSocket = null;
     this.pdfSyncSocketUrl = "";
+    this.pdfPreviewSourceMapRootPath = null;
+    this.pdfPreviewSourceMapTaskId = null;
   }
 
   private stopTinymistSession(statusMessage: string): Promise<void> {
