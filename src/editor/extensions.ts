@@ -1,5 +1,6 @@
 import { Extension, Compartment, EditorSelection, EditorState, StateEffect, RangeSetBuilder, Prec } from "@codemirror/state";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { lineNumbers, highlightActiveLineGutter, highlightActiveLine, drawSelection, dropCursor, keymap, EditorView, ViewPlugin, Decoration, DecorationSet, ViewUpdate, tooltips } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap, insertTab } from "@codemirror/commands";
 import {
@@ -91,6 +92,27 @@ const completionNavigationHandler = Prec.highest(EditorView.domEventHandlers({
 }));
 
 type SearchRange = { from: number; to: number };
+
+export function selectedEditorClipboardText(state: EditorState): string | null {
+  const selected = state.selection.ranges
+    .filter(range => !range.empty)
+    .map(range => state.sliceDoc(range.from, range.to));
+  return selected.length > 0 ? selected.join(state.lineBreak) : null;
+}
+
+function writeEditorClipboardText(event: ClipboardEvent, view: EditorView): boolean {
+  const text = selectedEditorClipboardText(view.state);
+  if (text === null) return false;
+  event.clipboardData?.setData("text/plain", text);
+  event.preventDefault();
+  // WebView2's browser-owned clipboard payload can paste normally while not
+  // being retained by Windows clipboard history. Finish the copy through
+  // Tauri's native text clipboard so Windows receives a standard text item.
+  void writeText(text).catch(error => {
+    console.error("Failed to write editor selection to the native clipboard:", error);
+  });
+  return true;
+}
 
 export function firstSearchMatch(
   state: EditorState,
@@ -542,6 +564,12 @@ export function getEditorExtensions(
     preventEscapedBracketAutoClose,
     contextualDoubleQuoteExtension,
     EditorView.domEventHandlers({
+      copy: (event, view) => writeEditorClipboardText(event, view),
+      cut: (event, view) => {
+        if (!writeEditorClipboardText(event, view)) return false;
+        view.dispatch(view.state.replaceSelection(""));
+        return true;
+      },
       mousedown: (event, view) => {
         if (searchPanelOpen(view.state)) closeSearchPanel(view);
         if ((event.ctrlKey || event.metaKey) && event.button === 0) {
