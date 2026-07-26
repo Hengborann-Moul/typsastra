@@ -201,6 +201,9 @@ export class SettingsController {
     });
     onChange("settings-cursor-sync", (settings, control) => { settings.preview.cursorSync = (control as HTMLInputElement).checked; });
     onChange("settings-sync-debounce", (settings, control) => { settings.preview.syncDebounceMs = Number(control.value); });
+    onChange("settings-forward-sync-timeout", (settings, control) => {
+      settings.preview.forwardSyncTimeoutMs = Number(control.value);
+    });
     onChange("settings-highlight-duration", (settings, control) => { settings.preview.highlightDurationMs = Number(control.value); });
     onChange("settings-khmer-prep", (settings, control) => { settings.preview.khmerRenderPreparation = (control as HTMLInputElement).checked; });
     onChange("settings-disable-webkit-dmabuf", (settings, control) => {
@@ -298,6 +301,7 @@ export class SettingsController {
     setValue("settings-tab-size", String(editor.tabSize));
     setValue("settings-preview-render-mode", preview.renderMode);
     setValue("settings-sync-debounce", String(preview.syncDebounceMs));
+    setValue("settings-forward-sync-timeout", String(preview.forwardSyncTimeoutMs));
     setValue("settings-highlight-duration", String(preview.highlightDurationMs));
     setChecked("settings-word-wrap", editor.wordWrap);
     setChecked("settings-line-numbers", editor.lineNumbers);

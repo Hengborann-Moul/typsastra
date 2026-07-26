@@ -20,6 +20,7 @@ describe("application settings", () => {
     expect(settings.editor.formatOnSave).toBe(false);
     expect(settings.preview.renderMode).toBe("on-save");
     expect(settings.preview.syncDebounceMs).toBe(defaultAppSettings.preview.syncDebounceMs);
+    expect(settings.preview.forwardSyncTimeoutMs).toBe(5000);
     expect(settings.preview.khmerRenderPreparation).toBe(false);
     expect(settings.compatibility.disableWebkitDmabufRenderer).toBe(false);
     expect(settings.toolchain.tinymistVersion).toBeNull();
@@ -30,7 +31,12 @@ describe("application settings", () => {
       developerMode: true,
       appearance: { theme: "unknown", editorFontSize: 80, editorLineHeight: 0.5 },
       editor: { tabSize: 3, codeFont: "MiSans Latin", unicodeFont: "unknown-font" },
-      preview: { renderMode: "sometimes", syncDebounceMs: 1, highlightDurationMs: 50000 },
+      preview: {
+        renderMode: "sometimes",
+        syncDebounceMs: 1,
+        forwardSyncTimeoutMs: 50000,
+        highlightDurationMs: 50000
+      },
       toolchain: { tinymistVersion: "0.15.1-rc.1" }
     });
 
@@ -43,6 +49,7 @@ describe("application settings", () => {
     expect(settings.editor.unicodeFont).toBe("unknown-font");
     expect(settings.editor.formatOnSave).toBe(false);
     expect(settings.preview.syncDebounceMs).toBe(50);
+    expect(settings.preview.forwardSyncTimeoutMs).toBe(30000);
     expect(settings.preview.highlightDurationMs).toBe(10000);
     expect(settings.preview.renderMode).toBe("on-save");
     expect(settings.toolchain.tinymistVersion).toBeNull();

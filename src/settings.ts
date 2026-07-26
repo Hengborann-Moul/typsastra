@@ -61,6 +61,7 @@ export type AppSettings = {
     renderMode: PreviewRenderMode;
     cursorSync: boolean;
     syncDebounceMs: number;
+    forwardSyncTimeoutMs: number;
     highlightDurationMs: number;
     khmerRenderPreparation: boolean;
   };
@@ -116,6 +117,7 @@ export const defaultAppSettings: AppSettings = {
     // cursorSync: true,
     cursorSync: false,
     syncDebounceMs: 500,
+    forwardSyncTimeoutMs: 5000,
     highlightDurationMs: 2200,
     khmerRenderPreparation: false
   },
@@ -258,6 +260,12 @@ export function normalizeAppSettings(value: unknown): AppSettings {
       renderMode: previewRenderMode(preview.renderMode),
       cursorSync: booleanValue(preview.cursorSync, defaultAppSettings.preview.cursorSync),
       syncDebounceMs: Math.round(boundedNumber(preview.syncDebounceMs, defaultAppSettings.preview.syncDebounceMs, 50, 2000)),
+      forwardSyncTimeoutMs: Math.round(boundedNumber(
+        preview.forwardSyncTimeoutMs,
+        defaultAppSettings.preview.forwardSyncTimeoutMs,
+        1000,
+        30000
+      )),
       highlightDurationMs: Math.round(boundedNumber(preview.highlightDurationMs, defaultAppSettings.preview.highlightDurationMs, 500, 10000)),
       khmerRenderPreparation: booleanValue(preview.khmerRenderPreparation, defaultAppSettings.preview.khmerRenderPreparation)
     },

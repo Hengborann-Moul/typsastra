@@ -28,6 +28,7 @@ Open Settings from **File → Settings**, the status bar, or `Ctrl + ,`. Changes
     "renderMode": "on-save",
     "cursorSync": true,
     "syncDebounceMs": 500,
+    "forwardSyncTimeoutMs": 5000,
     "highlightDurationMs": 2200,
     "khmerRenderPreparation": false
   },
@@ -66,7 +67,16 @@ is planned for v0.8.0 and hardened in v1.x.
 `syncDebounceMs` controls how long on-type mode waits after the latest edit
 before starting a preview update. It does not affect on-save mode.
 
-Forward cursor sync is temporarily disabled. Its reliability redesign and re-enablement are scheduled for the v0.9.0 prerelease.
+`forwardSyncTimeoutMs` is the total time a manual **Reveal Cursor in Preview**
+request may spend preparing the source-map session and locating a matching PDF
+position. It defaults to 5000 ms and accepts 1000-30000 ms. A shorter timeout
+returns control sooner when the selected Typst source has no representable
+preview position. Background source-map warm-up retains its longer independent
+window and does not block the editor.
+
+Automatic cursor-to-preview sync is temporarily disabled. Its reliability
+redesign and re-enablement are scheduled for the v0.9.0 prerelease; manual
+forward sync remains available from the preview toolbar and keyboard shortcut.
 
 ### Linux preview compatibility
 

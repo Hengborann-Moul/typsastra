@@ -14,6 +14,7 @@ import { getEditorExtensions, themeCompartment, getThemeExtension, applyUIThemeV
 import { typstLanguage } from "./editor/typstLanguage";
 import { createTypstAutocomplete } from "./editor/autocomplete";
 import { cursorRowColumn } from "./editor/verticalCursor";
+import { isForwardSyncContentPosition } from "./editor/forwardSyncEligibility";
 import type { EditorFoldRange } from "./editor/folding";
 import { looksLikeStalePrefixDiagnostic, setEditorDiagnosticsEffect } from "./editor/diagnostics";
 import type { EditorDiagnostic, EditorDiagnosticSeverity } from "./editor/diagnostics";
@@ -253,7 +254,6 @@ type ForwardSyncTarget = {
   character: number;
 };
 
-const PDF_FORWARD_SYNC_TIMEOUT_MS = 15_000;
 const PDF_SOURCE_MAP_READY_TIMEOUT_MS = 60_000;
 
 type LoadFileOptions = {
@@ -379,7 +379,11 @@ export class TypsastraWorkspaceController {
   private horizontalPaneResizeActive = false;
   private readonly horizontalPaneResizeWaiters = new Set<() => void>();
   private pdfForwardSyncGeneration = 0;
-  private pendingPdfForwardSync: { generation: number; requestedAt: number } | null = null;
+  private pendingPdfForwardSync: {
+    generation: number;
+    requestedAt: number;
+    expiresAt: number;
+  } | null = null;
   private manualForwardSyncGeneration: number | null = null;
   private queuedManualForwardSync: { path: string; cursor: number } | null = null;
   private pdfPreviewSourceMapRootPath: string | null = null;
@@ -4626,6 +4630,8 @@ export class TypsastraWorkspaceController {
 
   private async handlePdfForwardSync(path: string, cursor: number, requestedGeneration?: number): Promise<boolean> {
     const startedAt = performance.now();
+    const timeoutMs = this.settingsController.value.preview.forwardSyncTimeoutMs;
+    const deadline = startedAt + timeoutMs;
     const generation = requestedGeneration ?? ++this.pdfForwardSyncGeneration;
     const client = this.lspClient;
     const rootPath = this.pdfPreviewSourceMapRootPath ?? this.previewRootPath;
@@ -4645,6 +4651,18 @@ export class TypsastraWorkspaceController {
       });
       return false;
     }
+    if (
+      this.activeFilePath
+      && filePathKey(path) === filePathKey(this.activeFilePath)
+      && !isForwardSyncContentPosition(this.editorInstance.state, cursor)
+    ) {
+      this.appendDeveloperLog({
+        kind: "info",
+        source: "forward sync",
+        message: `Skipped forward sync: source offset ${cursor} is not textual Typst content.`
+      });
+      return false;
+    }
 
     const target = await this.forwardSyncTarget(path, cursor);
     const localMappingMs = performance.now() - startedAt;
@@ -4659,32 +4677,50 @@ export class TypsastraWorkspaceController {
     }
 
     const sessionStartedAt = performance.now();
-    const sourceMapSession = await this.ensurePdfSourceMapSocket(client, rootPath, taskId, "forward sync");
+    const sourceMapStartup = this.ensurePdfSourceMapSocket(client, rootPath, taskId, "forward sync");
+    let startupTimer: number | null = null;
+    const sourceMapSession = await Promise.race([
+      sourceMapStartup,
+      new Promise<null>(resolve => {
+        startupTimer = window.setTimeout(() => resolve(null), Math.max(1, deadline - performance.now()));
+      })
+    ]);
+    if (startupTimer !== null) window.clearTimeout(startupTimer);
     const sessionReadyMs = performance.now() - sessionStartedAt;
     if (generation !== this.pdfForwardSyncGeneration) return false;
     if (!sourceMapSession) {
       this.appendDeveloperLog({
         kind: "warning",
         source: "forward sync",
-        message: "Skipped PDF forward sync: source-map socket unavailable."
+        message: `Skipped PDF forward sync: source-map socket unavailable within ${timeoutMs}ms.`
       });
       return false;
     }
 
     const documentReadyStartedAt = performance.now();
-    const documentReady = await this.waitForPdfSourceMapDocument(sourceMapSession.socket);
+    const documentReadyBudget = Math.max(1, deadline - performance.now());
+    const documentReady = await this.waitForPdfSourceMapDocument(
+      sourceMapSession.socket,
+      documentReadyBudget
+    );
     const documentReadyMs = performance.now() - documentReadyStartedAt;
     if (generation !== this.pdfForwardSyncGeneration) return false;
     if (!documentReady) {
       this.appendDeveloperLog({
         kind: "warning",
         source: "forward sync",
-        message: "Skipped PDF forward sync: source-map document did not become ready."
+        message: `Skipped PDF forward sync: source-map document did not become ready within ${timeoutMs}ms.`
       });
       return false;
     }
 
-    this.pendingPdfForwardSync = { generation, requestedAt: Date.now() };
+    const positionBudget = Math.max(1, deadline - performance.now());
+    const requestedAt = Date.now();
+    this.pendingPdfForwardSync = {
+      generation,
+      requestedAt,
+      expiresAt: requestedAt + positionBudget
+    };
     window.setTimeout(() => {
       if (this.pendingPdfForwardSync?.generation === generation) {
         this.pendingPdfForwardSync = null;
@@ -4695,7 +4731,7 @@ export class TypsastraWorkspaceController {
         });
         this.finishManualForwardSync(generation, "Reveal in preview timed out");
       }
-    }, PDF_FORWARD_SYNC_TIMEOUT_MS);
+    }, positionBudget);
 
     void client.scrollPreview(sourceMapSession.taskId, {
       event: "panelScrollTo",
@@ -4734,6 +4770,22 @@ export class TypsastraWorkspaceController {
   }
 
   private async runManualForwardSync(request: { path: string; cursor: number }): Promise<void> {
+    if (
+      this.activeFilePath
+      && filePathKey(request.path) === filePathKey(this.activeFilePath)
+      && !isForwardSyncContentPosition(this.editorInstance.state, request.cursor)
+    ) {
+      this.appendDeveloperLog({
+        kind: "info",
+        source: "forward sync",
+        message: `Reveal skipped: source offset ${request.cursor} is not textual Typst content.`
+      });
+      this.setLspStatus({
+        kind: "preview-ready",
+        message: "This source position does not produce preview text"
+      });
+      return;
+    }
     const generation = ++this.pdfForwardSyncGeneration;
     this.manualForwardSyncGeneration = generation;
     this.pendingPdfForwardSync = null;
@@ -5115,7 +5167,7 @@ export class TypsastraWorkspaceController {
     }
 
     const pending = this.pendingPdfForwardSync;
-    if (!pending || Date.now() - pending.requestedAt > PDF_FORWARD_SYNC_TIMEOUT_MS) return;
+    if (!pending || Date.now() > pending.expiresAt) return;
     const compilerLookupMs = Date.now() - pending.requestedAt;
     this.pendingPdfForwardSync = null;
 
