@@ -558,7 +558,11 @@ fn read_workspace_file(path: String) -> Result<String, String> {
 
 #[tauri::command]
 fn read_binary_file(path: String) -> Result<tauri::ipc::Response, String> {
-    let bytes = std::fs::read(&path).map_err(|error| format!("Failed to read file: {error}"))?;
+    // `canonicalize` retains Windows' extended-length prefix, allowing Draft
+    // Preview hover images to be read from workspace paths longer than
+    // MAX_PATH. Other platforms receive an ordinary canonical path.
+    let io_path = std::fs::canonicalize(&path).unwrap_or_else(|_| std::path::PathBuf::from(&path));
+    let bytes = std::fs::read(&io_path).map_err(|error| format!("Failed to read file: {error}"))?;
     Ok(tauri::ipc::Response::new(bytes))
 }
 

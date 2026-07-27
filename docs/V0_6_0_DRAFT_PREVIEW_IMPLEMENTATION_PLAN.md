@@ -22,15 +22,16 @@ or redistribute source images.
 ## Ratio-preserving placeholders
 
 For a statically resolvable local `image("path")` call, Typsastra reads only
-enough image metadata to determine its intrinsic width and height. It generates
-a small SVG placeholder whose `width`, `height`, and `viewBox` use those exact
-dimensions.
+enough image metadata to determine its intrinsic width and height. It replaces
+the image in the private render mirror with a Typst `block` containing the
+literal relative path as fixed-size `raw` text. This avoids embedding a
+resolution-scaled label inside an SVG or raster placeholder.
 
 This gives the placeholder the exact intrinsic aspect ratio of the source
-image. Typsastra also preserves the original Typst arguments, including
-`width`, `height`, `fit`, and alignment. Consequently, the draft should retain
-the source image's box ratio and author-specified layout behavior rather than
-guessing a generic rectangle.
+image. Explicit `width` and `height` arguments are copied to the block. When
+either dimension is absent, Typsastra supplies normalized point dimensions
+derived from the intrinsic ratio instead of scaling the placeholder from source
+pixel resolution. Image-only arguments such as `fit` are intentionally omitted.
 
 Supported metadata readers initially cover PNG, JPEG, GIF, BMP, WebP VP8X, and
 SVG with a usable `viewBox` or numeric width and height.
@@ -64,11 +65,11 @@ The overlay contract is:
 ## Source synchronization
 
 Generated wrappers are recorded in the private render source map. Unchanged
-source remains mapped normally, while each generated image wrapper maps back to
-the original image call. Hovering or keyboard-focusing a Draft placeholder
-inspects its original image. Clicking the placeholder uses its generation
-manifest to inverse-sync directly to the original source `image(...)` call,
-without asking Tinymist to resolve the synthetic placeholder coordinates.
+source remains mapped normally, while each linked block maps back to the
+original image call. Hovering or keyboard-focusing a Draft placeholder inspects
+its original image. Clicking the block, including its raw path label, uses its
+generation manifest to inverse-sync directly to the original source
+`image(...)` call without asking Tinymist to resolve synthetic coordinates.
 
 Normal Preview remains the reference mode for validating exact forward and
 inverse synchronization.
@@ -109,7 +110,7 @@ on-save updates across:
 - [x] Normal and Draft controls are available in the live-preview toolbar.
 - [x] The selected mode persists per workspace.
 - [x] Static local image calls receive exact-ratio placeholders.
-- [x] Original Typst image sizing and fitting arguments remain intact.
+- [x] Explicit Typst width and height values transfer to linked placeholder blocks.
 - [x] Dynamic or unsafe calls remain unchanged and are reported.
 - [x] Placeholder hover/focus can show the original image on demand.
 - [x] Draft placeholder clicks inverse-sync to their original image calls.

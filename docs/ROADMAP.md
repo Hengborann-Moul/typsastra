@@ -147,12 +147,13 @@ manageable without changing the portable Typst source model.
 
 - Add **Draft Preview**, a preview-only render mode that replaces statically
   resolvable image calls in Typsastra's private render mirror with lightweight
-  layout-preserving placeholders. Each placeholder must use the source image's
-  exact intrinsic aspect ratio while retaining the original Typst `width`,
-  `height`, `fit`, and placement arguments, so omitted images do not
-  unnecessarily reflow the draft. Hovering a placeholder may load the real
-  image as a temporary UI overlay on demand, without changing source or
-  including the image in the compiled draft. Dynamic and unresolved image
+  layout-preserving placeholders. Each placeholder uses a linked Typst block
+  with a fixed-size raw relative-path label. Explicit `width` and `height`
+  values transfer to the block; missing dimensions use a normalized
+  ratio-derived fallback, while image-only fitting options are omitted.
+  Hovering a placeholder may load the real image as a
+  temporary UI overlay on demand, without changing source or including it in
+  the compiled draft. Dynamic and unresolved image
   expressions must remain explicit limitations. Draft Preview must be clearly
   labeled, explicitly selected, and never used for final PDF export.
   See the [Draft Preview implementation plan](V0_6_0_DRAFT_PREVIEW_IMPLEMENTATION_PLAN.md).

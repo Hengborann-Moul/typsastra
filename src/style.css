@@ -1843,7 +1843,8 @@ body.typsastra-resizing #input-container-wrapper::after {
 }
 
 .preview-content-mode-control {
-  display: inline-flex;
+  display: inline-grid;
+  grid-template-columns: repeat(2, max-content);
   align-items: center;
   margin-right: auto;
   border: 1px solid var(--ui-border);
@@ -1852,10 +1853,9 @@ body.typsastra-resizing #input-container-wrapper::after {
 
 .preview-content-mode-button {
   position: relative;
-  flex: 0 0 58px;
-  width: 58px;
+  min-width: 76px;
   height: 26px;
-  padding: 0 9px;
+  padding: 0 14px;
   border: 0;
   border-right: 1px solid var(--ui-border);
   border-radius: 0;

@@ -65,8 +65,9 @@ The live-preview toolbar also offers **Normal** and **Draft** content modes.
 Normal Preview compiles the original images. Draft Preview replaces eligible
 static local image calls only in Typsastra's private render mirror with
 lightweight placeholders that keep the source image's exact intrinsic aspect
-ratio and the original Typst sizing and fitting arguments. Hover or
-keyboard-focus a placeholder to inspect the original image on demand.
+ratio. Explicit `width` and `height` values are transferred to the placeholder
+block; image-only fitting options are omitted. Hover or keyboard-focus a
+placeholder to inspect the original image on demand.
 
 The selected content mode is stored per workspace. Dynamic, remote, package,
 missing, and unsupported images remain unchanged and are listed in the Draft

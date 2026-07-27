@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use typst_syntax::ast::{Arg, AstNode, Expr, FuncCall};
 use typst_syntax::SyntaxNode;
 
@@ -62,8 +62,8 @@ pub struct DraftPreparation {
 pub fn prepare_draft_images(
     project_root: &Path,
     source_path: &Path,
-    destination_path: &Path,
-    render_dir: &Path,
+    _destination_path: &Path,
+    _render_dir: &Path,
     source: &str,
 ) -> DraftPreparation {
     let root = typst_syntax::parse(source);
@@ -97,14 +97,29 @@ pub fn prepare_draft_images(
             continue;
         }
 
-        let image_path = normalize_existing_path(
-            &source_path
-                .parent()
-                .unwrap_or_else(|| Path::new(""))
-                .join(&raw_path),
-        );
-        let project_root = normalize_existing_path(project_root);
-        if !image_path.starts_with(&project_root) {
+        let unresolved_image_path = source_path
+            .parent()
+            .unwrap_or_else(|| Path::new(""))
+            .join(&raw_path);
+        let Some(image_io_path) = canonical_io_path(&unresolved_image_path) else {
+            result.diagnostics.push(DraftImageDiagnostic {
+                source_path: source_path.to_path_buf(),
+                from_utf16: reference.from_utf16,
+                to_utf16: reference.to_utf16,
+                reason: "The image file is unavailable.".into(),
+            });
+            continue;
+        };
+        let Some(project_io_root) = canonical_io_path(project_root) else {
+            result.diagnostics.push(DraftImageDiagnostic {
+                source_path: source_path.to_path_buf(),
+                from_utf16: reference.from_utf16,
+                to_utf16: reference.to_utf16,
+                reason: "The workspace root could not be resolved safely.".into(),
+            });
+            continue;
+        };
+        if !image_io_path.starts_with(&project_io_root) {
             result.diagnostics.push(DraftImageDiagnostic {
                 source_path: source_path.to_path_buf(),
                 from_utf16: reference.from_utf16,
@@ -113,7 +128,8 @@ pub fn prepare_draft_images(
             });
             continue;
         }
-        let Some((width, height, mime_type)) = read_image_dimensions(&image_path) else {
+        let image_path = display_path(&image_io_path);
+        let Some((width, height, mime_type)) = read_image_dimensions(&image_io_path) else {
             result.diagnostics.push(DraftImageDiagnostic {
                 source_path: source_path.to_path_buf(),
                 from_utf16: reference.from_utf16,
@@ -131,7 +147,7 @@ pub fn prepare_draft_images(
             });
             continue;
         }
-        let Ok(metadata) = fs::metadata(&image_path) else {
+        let Ok(metadata) = fs::metadata(&image_io_path) else {
             result.diagnostics.push(DraftImageDiagnostic {
                 source_path: source_path.to_path_buf(),
                 from_utf16: reference.from_utf16,
@@ -141,49 +157,25 @@ pub fn prepare_draft_images(
             continue;
         };
         let id = draft_asset_id(&image_path);
-        let placeholder_dir = render_dir.join(".typsastra-draft-assets");
-        if fs::create_dir_all(&placeholder_dir).is_err() {
-            result.diagnostics.push(DraftImageDiagnostic {
-                source_path: source_path.to_path_buf(),
-                from_utf16: reference.from_utf16,
-                to_utf16: reference.to_utf16,
-                reason: "The private Draft Preview asset directory could not be created.".into(),
-            });
-            continue;
+        let mut block_arguments = call
+            .layout_arguments
+            .iter()
+            .map(|(start, end)| source[*start..*end].trim())
+            .filter(|argument| !argument.is_empty())
+            .map(|argument| format!("{argument},"))
+            .collect::<Vec<_>>();
+        if !call.has_width {
+            let normalized_width = f64::from(width) / f64::from(height) * 100.0;
+            block_arguments.push(format!("width: {normalized_width:.6}pt,"));
         }
-        let placeholder_path = placeholder_dir.join(format!("{id}.svg"));
-        let filename = image_path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("Image");
-        if fs::write(&placeholder_path, placeholder_svg(width, height, filename)).is_err() {
-            result.diagnostics.push(DraftImageDiagnostic {
-                source_path: source_path.to_path_buf(),
-                from_utf16: reference.from_utf16,
-                to_utf16: reference.to_utf16,
-                reason: "The ratio-preserving Draft Preview placeholder could not be written."
-                    .into(),
-            });
-            continue;
+        if !call.has_height {
+            block_arguments.push("height: 100pt,".into());
         }
-
-        let relative_placeholder = relative_path(
-            destination_path.parent().unwrap_or(render_dir),
-            &placeholder_path,
-        )
-        .unwrap_or_else(|| placeholder_path.clone())
-        .to_string_lossy()
-        .replace('\\', "/");
-        let original_call = &source[call.call_start..call.call_end];
-        let path_start = call.path_start - call.call_start;
-        let path_end = call.path_end - call.call_start;
-        let mut placeholder_call = String::with_capacity(original_call.len() + 64);
-        placeholder_call.push_str(&original_call[..path_start]);
-        placeholder_call.push('"');
-        placeholder_call.push_str(&escape_typst_string(&relative_placeholder));
-        placeholder_call.push('"');
-        placeholder_call.push_str(&original_call[path_end..]);
-        let generated = format!("link(\"{DRAFT_LINK_PREFIX}{id}\", {placeholder_call})");
+        let generated = format!(
+            "link(\"{DRAFT_LINK_PREFIX}{id}\", block({arguments}stroke: 1pt + rgb(\"#7b8491\"), inset: 4pt, clip: true)[#align(center + horizon)[#text(size: 8pt, fill: rgb(\"#505762\"))[#raw(\"{label}\")]]])",
+            arguments = block_arguments.join(" "),
+            label = escape_typst_string(&raw_path),
+        );
         result.replacements.push(DraftReplacement {
             start: call.call_start,
             end: call.call_end,
@@ -214,8 +206,9 @@ struct ImageCall {
     call_start: usize,
     call_end: usize,
     literal_path: Option<String>,
-    path_start: usize,
-    path_end: usize,
+    layout_arguments: Vec<(usize, usize)>,
+    has_width: bool,
+    has_height: bool,
 }
 
 fn collect_image_calls(node: &SyntaxNode, offset: usize, output: &mut Vec<ImageCall>) {
@@ -228,13 +221,37 @@ fn collect_image_calls(node: &SyntaxNode, offset: usize, output: &mut Vec<ImageC
             };
             if let Some(value) = literal {
                 let value_node = value.to_untyped();
-                if let Some(relative) = relative_node_offset(node, value_node, 0) {
+                if let Some(_relative) = relative_node_offset(node, value_node, 0) {
+                    let mut layout_arguments = Vec::new();
+                    let mut has_width = false;
+                    let mut has_height = false;
+                    for argument in call.args().items() {
+                        let Arg::Named(named) = argument else {
+                            continue;
+                        };
+                        let name = named.name().as_str();
+                        if name != "width" && name != "height" {
+                            continue;
+                        }
+                        has_width |= name == "width";
+                        has_height |= name == "height";
+                        let argument_node = named.to_untyped();
+                        if let Some(argument_relative) =
+                            relative_node_offset(node, argument_node, 0)
+                        {
+                            layout_arguments.push((
+                                offset + argument_relative,
+                                offset + argument_relative + argument_node.len(),
+                            ));
+                        }
+                    }
                     output.push(ImageCall {
                         call_start: offset,
                         call_end: offset + node.len(),
                         literal_path: Some(value.get().to_string()),
-                        path_start: offset + relative,
-                        path_end: offset + relative + value_node.len(),
+                        layout_arguments,
+                        has_width,
+                        has_height,
                     });
                 }
             } else {
@@ -242,8 +259,9 @@ fn collect_image_calls(node: &SyntaxNode, offset: usize, output: &mut Vec<ImageC
                     call_start: offset,
                     call_end: offset + node.len(),
                     literal_path: None,
-                    path_start: offset,
-                    path_end: offset,
+                    layout_arguments: Vec::new(),
+                    has_width: false,
+                    has_height: false,
                 });
             }
             return;
@@ -276,8 +294,12 @@ fn draft_asset_id(path: &Path) -> String {
     format!("{:x}", digest.finalize())[..24].to_string()
 }
 
-fn normalize_existing_path(path: &Path) -> PathBuf {
-    dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+fn canonical_io_path(path: &Path) -> Option<PathBuf> {
+    fs::canonicalize(path).ok()
+}
+
+fn display_path(path: &Path) -> PathBuf {
+    dunce::simplified(path).to_path_buf()
 }
 
 fn read_image_dimensions(path: &Path) -> Option<(u32, u32, String)> {
@@ -415,61 +437,8 @@ fn xml_attribute<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
     Some(&tag[content_start..end])
 }
 
-fn placeholder_svg(width: u32, height: u32, filename: &str) -> String {
-    let label = escape_xml(filename);
-    let font_size = (width.min(height) as f64 * 0.055).clamp(12.0, 72.0);
-    format!(
-        r##"<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">
-<rect x="1" y="1" width="{rect_width}" height="{rect_height}" fill="#f2f3f5" stroke="#7b8491" stroke-width="{stroke}"/>
-<path d="M {icon_x} {icon_y2} L {icon_x2} {icon_y} L {icon_x3} {icon_y2} Z" fill="#a8afb8"/>
-<text x="50%" y="58%" text-anchor="middle" font-family="sans-serif" font-size="{font_size}" fill="#505762">{label}</text>
-</svg>"##,
-        rect_width = width.saturating_sub(2),
-        rect_height = height.saturating_sub(2),
-        stroke = (width.min(height) as f64 * 0.006).clamp(1.0, 8.0),
-        icon_x = width as f64 * 0.42,
-        icon_x2 = width as f64 * 0.5,
-        icon_x3 = width as f64 * 0.58,
-        icon_y = height as f64 * 0.30,
-        icon_y2 = height as f64 * 0.43,
-    )
-}
-
-fn escape_xml(value: &str) -> String {
-    value
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&apos;")
-}
-
 fn escape_typst_string(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
-}
-
-fn relative_path(from: &Path, to: &Path) -> Option<PathBuf> {
-    let from = from.components().collect::<Vec<_>>();
-    let to = to.components().collect::<Vec<_>>();
-    if matches!((from.first(), to.first()), (Some(Component::Prefix(left)), Some(Component::Prefix(right))) if left != right)
-    {
-        return None;
-    }
-    let common = from
-        .iter()
-        .zip(&to)
-        .take_while(|(left, right)| left == right)
-        .count();
-    let mut result = PathBuf::new();
-    for component in &from[common..] {
-        if !matches!(component, Component::CurDir) {
-            result.push("..");
-        }
-    }
-    for component in &to[common..] {
-        result.push(component.as_os_str());
-    }
-    Some(result)
 }
 
 #[cfg(test)]
@@ -493,7 +462,7 @@ mod tests {
             &source,
             &destination,
             &workspace.path().join("cache/render"),
-            "#image(\"wide.png\", width: 80%)",
+            "#image(\"wide.png\", width: 80%, height: 6cm, fit: \"cover\")",
         );
         assert_eq!(prepared.assets[0].width, 1600);
         assert_eq!(prepared.assets[0].height, 900);
@@ -501,14 +470,76 @@ mod tests {
             .generated
             .contains("link(\"https://draft-preview.typsastra.invalid/"));
         assert!(prepared.replacements[0].generated.contains("width: 80%"));
-        let svg = fs::read_to_string(
-            workspace
-                .path()
-                .join("cache/render/.typsastra-draft-assets")
-                .join(format!("{}.svg", prepared.assets[0].id)),
-        )
-        .unwrap();
-        assert!(svg.contains("viewBox=\"0 0 1600 900\""));
+        assert!(prepared.replacements[0].generated.contains("height: 6cm"));
+        assert!(prepared.replacements[0]
+            .generated
+            .contains("#raw(\"wide.png\")"));
+        assert!(prepared.replacements[0]
+            .generated
+            .contains("text(size: 8pt"));
+        assert!(!prepared.replacements[0].generated.contains("fit:"));
+    }
+
+    #[test]
+    fn derives_ratio_only_dimensions_when_image_size_is_implicit() {
+        let workspace = tempfile::tempdir().unwrap();
+        let image = workspace.path().join("wide.png");
+        let mut png = vec![0u8; 24];
+        png[..8].copy_from_slice(b"\x89PNG\r\n\x1a\n");
+        png[16..20].copy_from_slice(&1600u32.to_be_bytes());
+        png[20..24].copy_from_slice(&900u32.to_be_bytes());
+        fs::write(&image, png).unwrap();
+        let prepared = prepare_draft_images(
+            workspace.path(),
+            &workspace.path().join("main.typ"),
+            &workspace.path().join("cache/render/main.typ"),
+            &workspace.path().join("cache/render"),
+            "#image(\"wide.png\")",
+        );
+        assert!(prepared.replacements[0]
+            .generated
+            .contains("width: 177.777778pt"));
+        assert!(prepared.replacements[0].generated.contains("height: 100pt"));
+    }
+
+    #[test]
+    fn replaces_images_beyond_the_legacy_windows_path_limit() {
+        let workspace = tempfile::tempdir().unwrap();
+        let destination = workspace.path().join("cache/render/main.typ");
+        fs::create_dir_all(destination.parent().unwrap()).unwrap();
+        let long_relative = (0..9).fold(PathBuf::from("images"), |path, index| {
+            path.join(format!("descriptive-image-directory-{index:02}"))
+        });
+        let workspace_io = fs::canonicalize(workspace.path()).unwrap();
+        let long_directory_io = workspace_io.join(&long_relative);
+        fs::create_dir_all(&long_directory_io).unwrap();
+        let image_io = long_directory_io.join("photo.png");
+        let mut png = vec![0u8; 24];
+        png[..8].copy_from_slice(b"\x89PNG\r\n\x1a\n");
+        png[16..20].copy_from_slice(&1280u32.to_be_bytes());
+        png[20..24].copy_from_slice(&960u32.to_be_bytes());
+        fs::write(&image_io, png).unwrap();
+        let literal = long_relative
+            .join("photo.png")
+            .to_string_lossy()
+            .replace('\\', "/");
+        let source_text = format!("#image(\"{literal}\")");
+
+        let prepared = prepare_draft_images(
+            workspace.path(),
+            &workspace.path().join("main.typ"),
+            &destination,
+            &workspace.path().join("cache/render"),
+            &source_text,
+        );
+
+        assert!(
+            workspace.path().join(&long_relative).as_os_str().len() > 260,
+            "the fixture must exercise a path beyond the legacy Windows limit"
+        );
+        assert_eq!(prepared.replacements.len(), 1);
+        assert_eq!(prepared.assets.len(), 1);
+        assert!(prepared.diagnostics.is_empty());
     }
 
     #[test]

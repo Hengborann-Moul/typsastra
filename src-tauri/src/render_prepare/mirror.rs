@@ -13,7 +13,6 @@ use super::sourcemap::{MappingKind, SourceMap, SOURCE_MAP_VERSION};
 const RENDER_CACHE_LAYOUT_VERSION: &str = "3-flat-preview-output";
 const RENDER_CACHE_OWNER_SCHEMA_VERSION: u32 = 1;
 const RENDER_CACHE_OWNER_FILE: &str = "workspace-owner.json";
-const DRAFT_ASSET_DIRECTORY: &str = ".typsastra-draft-assets";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -307,15 +306,6 @@ fn walk_for_stale(
         let entry = entry?;
         let path = entry.path();
         let rel = path.strip_prefix(base_render).unwrap_or(&path);
-        // Draft placeholders are generated render inputs, not mirrors of
-        // workspace files. A cancelled Normal/Draft transition may overlap
-        // another preparation, so the ordinary stale-mirror sweep must never
-        // delete this directory out from under an active Draft generation.
-        if rel.components().next().is_some_and(|component| {
-            component.as_os_str() == std::ffi::OsStr::new(DRAFT_ASSET_DIRECTORY)
-        }) {
-            continue;
-        }
         let src_path = project_root.join(rel);
 
         if !src_path.exists() {
@@ -814,11 +804,11 @@ mod tests {
     }
 
     #[test]
-    fn stale_mirror_cleanup_preserves_generated_draft_assets() {
+    fn stale_mirror_cleanup_removes_obsolete_draft_assets() {
         let workspace = tempfile::tempdir().unwrap();
         let render_dir = workspace.path().join(".typsastra/cache/render");
         let maps_dir = workspace.path().join(".typsastra/cache/maps");
-        let draft_dir = render_dir.join(DRAFT_ASSET_DIRECTORY);
+        let draft_dir = render_dir.join(".typsastra-draft-assets");
         let placeholder = draft_dir.join("placeholder.svg");
         let stale_mirror = render_dir.join("removed-from-project.png");
         fs::create_dir_all(&draft_dir).unwrap();
@@ -828,12 +818,12 @@ mod tests {
 
         clean_stale_cache_files(&render_dir, &maps_dir, workspace.path()).unwrap();
 
-        assert_eq!(fs::read(&placeholder).unwrap(), b"<svg/>");
+        assert!(!placeholder.exists());
         assert!(!stale_mirror.exists());
     }
 
     #[test]
-    fn normal_draft_normal_draft_transition_keeps_required_placeholder() {
+    fn normal_draft_normal_draft_transition_regenerates_linked_blocks() {
         let workspace = tempfile::tempdir().unwrap();
         let main = workspace.path().join("main.typ");
         let image = workspace.path().join("photo.png");
@@ -856,25 +846,22 @@ mod tests {
         mirror_project_cancellable(&options, None, || false).unwrap();
         options.preview_content_mode = PreviewContentMode::Draft;
         let first_draft = mirror_project_cancellable(&options, None, || false).unwrap();
-        let placeholder = cache_root
-            .join("render")
-            .join(DRAFT_ASSET_DIRECTORY)
-            .join(format!("{}.svg", first_draft.draft_assets[0].id));
-        assert!(placeholder.exists());
+        assert_eq!(first_draft.draft_assets.len(), 1);
+        let draft_source = fs::read_to_string(cache_root.join("render/main.typ")).unwrap();
+        assert!(draft_source.contains("draft-preview.typsastra.invalid"));
+        assert!(draft_source.contains("#raw(\"photo.png\")"));
 
         options.preview_content_mode = PreviewContentMode::Normal;
         mirror_project_cancellable(&options, None, || false).unwrap();
-        assert!(placeholder.exists());
         assert!(!fs::read_to_string(cache_root.join("render/main.typ"))
             .unwrap()
             .contains("draft-preview.typsastra.invalid"));
 
         options.preview_content_mode = PreviewContentMode::Draft;
         mirror_project_cancellable(&options, None, || false).unwrap();
-        assert!(placeholder.exists());
-        assert!(fs::read_to_string(cache_root.join("render/main.typ"))
-            .unwrap()
-            .contains("draft-preview.typsastra.invalid"));
+        let draft_source = fs::read_to_string(cache_root.join("render/main.typ")).unwrap();
+        assert!(draft_source.contains("draft-preview.typsastra.invalid"));
+        assert!(draft_source.contains("#raw(\"photo.png\")"));
     }
 
     #[test]

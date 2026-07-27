@@ -15,13 +15,14 @@ describe("Draft Preview", () => {
     expect(html).toContain('id="preview-content-draft-btn"');
     expect(controller).toContain("previewContentMode: this.previewContentMode");
     expect(controller).toContain('previewContentMode: "normal"');
-    expect(styles).toMatch(/\.preview-content-mode-button\s*\{[^}]*flex:\s*0 0 58px;/s);
+    expect(styles).toMatch(/\.preview-content-mode-control\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*max-content\);/s);
+    expect(styles).toMatch(/\.preview-content-mode-button\s*\{[^}]*min-width:\s*76px;/s);
     expect(styles).toMatch(/data-compiling="true"[^}]*::after\s*\{[^}]*position:\s*absolute;/s);
   });
 
   test("commits the requested mode and image manifest only after PDF presentation", () => {
-    const presentation = controller.indexOf("await this.loadPdfPath(pdfPath");
-    const modeCommit = controller.indexOf("this.presentedPreviewContentMode = generationContentMode", presentation);
+    const modeCommit = controller.indexOf("this.presentedPreviewContentMode = generationContentMode");
+    const presentation = controller.lastIndexOf("await this.loadPdfPath(", modeCommit);
     const manifestCommit = controller.indexOf("this.draftImageAssets = generationContentMode", presentation);
     expect(presentation).toBeGreaterThan(-1);
     expect(modeCommit).toBeGreaterThan(presentation);
@@ -36,6 +37,7 @@ describe("Draft Preview", () => {
     expect(previewFrame).toContain("this.onPreviewClick({ draftImageId: annotationTarget.id })");
     expect(controller).toContain("await this.navigateToDraftPreviewImage(point.draftImageId)");
     expect(previewFrame).not.toContain('if (this.annotationTargets.get(annotationLink)?.kind === "draft-image")');
+    expect(plan).toContain("including its raw path label");
   });
 
   test("documents exact intrinsic ratio and original-image export guarantees", () => {
