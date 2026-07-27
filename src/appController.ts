@@ -5,7 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getVersion } from "@tauri-apps/api/app";
 import { dirname, join } from "@tauri-apps/api/path";
-import { EditorState, Transaction, type Text } from "@codemirror/state";
+import { EditorState, type Extension, type Text } from "@codemirror/state";
 import { EditorView, highlightActiveLine, highlightActiveLineGutter, lineNumbers } from "@codemirror/view";
 import { undo, redo, undoDepth } from "@codemirror/commands";
 import { foldAll, foldEffect, foldedRanges, indentUnit, unfoldAll, unfoldEffect } from "@codemirror/language";
@@ -91,6 +91,11 @@ import { releaseSummaryForVersion, shouldShowReleaseSummary } from "./releaseNot
 import { WebviewStorageController } from "./webviewStorageController";
 import { SystemResumeMonitor } from "./platform/systemResume";
 import { setImageOptimizationWarningsEffect, type ImageOptimizationWarning } from "./editor/imageWarnings";
+import {
+  captureEditorUndoHistory,
+  createTabEditorState,
+  type EditorUndoHistory,
+} from "./editor/tabHistory";
 
 import {
   ensureTypographyTemplateApplication,
@@ -214,6 +219,7 @@ type EditorTab = {
   sizeBytes?: number;
   lineCount?: number;
   temporary?: boolean;
+  undoHistory?: EditorUndoHistory;
 };
 
 type PreviewSessionState = Pick<
@@ -491,6 +497,7 @@ export class TypsastraWorkspaceController {
   });
 
   private editorInstance!: EditorView;
+  private editorExtensions: Extension = [];
   private isComposing = false;
   private editorInputSequence = 0;
   private editorInputStartedAt: number | null = null;
@@ -994,28 +1001,8 @@ export class TypsastraWorkspaceController {
 
     if (this.editorInstance) {
       const editorView = this.editorInstance;
-      const indentation = " ".repeat(editor.tabSize);
       editorView.dispatch({
-        effects: [
-          themeCompartment.reconfigure(getThemeExtension(appearance.theme)),
-          wrapCompartment.reconfigure(editor.wordWrap ? EditorView.lineWrapping : []),
-          lineNumbersCompartment.reconfigure(editor.lineNumbers ? lineNumbers() : []),
-          activeLineCompartment.reconfigure(editor.highlightActiveLine ? [highlightActiveLineGutter(), highlightActiveLine()] : []),
-          closeBracketsCompartment.reconfigure(editor.autoCloseBrackets ? closeBrackets() : []),
-          indentationGuidesCompartment.reconfigure(editor.indentationGuides ? visibleIndentationMarkers() : []),
-          tabSizeCompartment.reconfigure([EditorState.tabSize.of(editor.tabSize), indentUnit.of(indentation)]),
-          showZwsCompartment.reconfigure(editor.showZws ? showZeroWidthSpaces : []),
-          completionCompartment.reconfigure(createTypstAutocomplete(
-              () => this.lspClient,
-              () => this.getActiveLspUri(),
-              () => this.flushPendingLspSync(),
-              editor.wordCompletion,
-              () => this.spellcheckController.getProviders(),
-              providers => this.documentLanguageService.completionProvider(providers),
-              () => this.documentLanguageService.currentGeneration(),
-              milliseconds => this.performanceDiagnostics.record({ name: "language.completion", milliseconds }),
-          ))
-        ]
+        effects: this.currentEditorSettingsEffects()
       });
       window.requestAnimationFrame(() => {
         if (this.editorInstance === editorView) editorView.requestMeasure();
@@ -1027,6 +1014,31 @@ export class TypsastraWorkspaceController {
     const zwsLabel = document.getElementById("zws-label");
     if (zwsLabel) zwsLabel.textContent = editor.showZws ? "Invisibles: On" : "Invisibles: Off";
     if (!preview.cursorSync) this.previewSyncController.clearForward();
+  }
+
+  private currentEditorSettingsEffects() {
+    const { appearance, editor } = this.settingsController.value;
+    const indentation = " ".repeat(editor.tabSize);
+    return [
+      themeCompartment.reconfigure(getThemeExtension(appearance.theme)),
+      wrapCompartment.reconfigure(editor.wordWrap ? EditorView.lineWrapping : []),
+      lineNumbersCompartment.reconfigure(editor.lineNumbers ? lineNumbers() : []),
+      activeLineCompartment.reconfigure(editor.highlightActiveLine ? [highlightActiveLineGutter(), highlightActiveLine()] : []),
+      closeBracketsCompartment.reconfigure(editor.autoCloseBrackets ? closeBrackets() : []),
+      indentationGuidesCompartment.reconfigure(editor.indentationGuides ? visibleIndentationMarkers() : []),
+      tabSizeCompartment.reconfigure([EditorState.tabSize.of(editor.tabSize), indentUnit.of(indentation)]),
+      showZwsCompartment.reconfigure(editor.showZws ? showZeroWidthSpaces : []),
+      completionCompartment.reconfigure(createTypstAutocomplete(
+        () => this.lspClient,
+        () => this.getActiveLspUri(),
+        () => this.flushPendingLspSync(),
+        editor.wordCompletion,
+        () => this.spellcheckController.getProviders(),
+        providers => this.documentLanguageService.completionProvider(providers),
+        () => this.documentLanguageService.currentGeneration(),
+        milliseconds => this.performanceDiagnostics.record({ name: "language.completion", milliseconds }),
+      ))
+    ];
   }
 
   private handleLanguageProvidersChanged(providers: Parameters<SpellcheckController["setProviders"]>[0]): void {
@@ -1185,65 +1197,68 @@ export class TypsastraWorkspaceController {
   private initCodeMirror() {
     const initialDocument = "";
     this.editorFontManager.initialize();
-    this.editorInstance = new EditorView({
-      state: EditorState.create({
-        doc: initialDocument,
-        extensions: [
-          getEditorExtensions(
-            () => this.lspClient,
-            () => this.getActiveLspUri(),
-            () => this.flushPendingLspSync(),
-            (uri, line, character) => void this.navigateToLspLocation(uri, line, character),
-            () => this.spellcheckController.getProviders()
-          ),
-          this.spellcheckController.extension(),
-          EditorView.updateListener.of((update) => {
-            const inputProfile = this.beginEditorInputProfile();
-            this.spellcheckController.completionStateChanged(completionStatus(update.state) !== null);
-            const wasComposing = this.isComposing;
-            this.isComposing = update.view.composing;
+    this.editorExtensions = [
+      getEditorExtensions(
+        () => this.lspClient,
+        () => this.getActiveLspUri(),
+        () => this.flushPendingLspSync(),
+        (uri, line, character) => void this.navigateToLspLocation(uri, line, character),
+        () => this.spellcheckController.getProviders()
+      ),
+      this.spellcheckController.extension(),
+      EditorView.updateListener.of((update) => {
+        const inputProfile = this.beginEditorInputProfile();
+        this.spellcheckController.completionStateChanged(completionStatus(update.state) !== null);
+        const wasComposing = this.isComposing;
+        this.isComposing = update.view.composing;
 
-            if (update.docChanged && !this.isLoadingFile) {
-              this.previewSyncController.clearForward();
-              this.markActiveTabDirty();
-              if (!update.view.composing) {
-                this.scheduleEditorContentMutation(update.state.doc);
-                this.spellcheckController.documentChanged(update);
-              }
-            } else if (!this.isLoadingFile && wasComposing && !update.view.composing) {
-              this.scheduleEditorContentMutation(update.state.doc);
-              this.spellcheckController.documentChanged(update);
-            }
-            if (update.selectionSet) {
-              this.spellcheckController.selectionChanged(update.docChanged);
-              this.syncSelectedSpellingLocation();
-              this.documentOutlineController.setCursorPosition(update.state.selection.main.head, this.activeFilePath);
-            } else if (update.docChanged) {
-              this.logConsoleController.setActiveSpellcheckLocation(null);
-            }
-            if (update.selectionSet || update.docChanged) {
-              this.updateCursorPositionStatus();
-            }
-            if (update.viewportChanged) {
-              const topVisiblePosition = update.view.lineBlockAtHeight(update.view.scrollDOM.scrollTop).from;
-              this.documentOutlineController.setCursorPosition(topVisiblePosition, this.activeFilePath);
-            }
-            if (!this.suppressFoldStatePersistence && update.transactions.some(transaction =>
-              transaction.effects.some(effect => effect.is(foldEffect) || effect.is(unfoldEffect))
-            )) {
-              const tab = this.getActiveTab();
-              if (tab) {
-                tab.foldStateExplicit = true;
-                tab.foldRanges = this.collectCurrentFoldRanges();
-                void this.saveWorkspaceState();
-              }
-            }
-            if (!update.docChanged && this.shouldForwardSyncSelectionUpdate(update)) {
-              this.previewSyncController.schedule(this.forwardSyncDebounceMs);
-            }
-            this.finishEditorInputProfile(inputProfile, update.state.doc.length, update.view.composing);
-          })
-        ]
+        if (update.docChanged && !this.isLoadingFile) {
+          this.previewSyncController.clearForward();
+          this.markActiveTabDirty();
+          if (!update.view.composing) {
+            this.scheduleEditorContentMutation(update.state.doc);
+            this.spellcheckController.documentChanged(update);
+          }
+        } else if (!this.isLoadingFile && wasComposing && !update.view.composing) {
+          this.scheduleEditorContentMutation(update.state.doc);
+          this.spellcheckController.documentChanged(update);
+        }
+        if (update.selectionSet) {
+          this.spellcheckController.selectionChanged(update.docChanged);
+          this.syncSelectedSpellingLocation();
+          this.documentOutlineController.setCursorPosition(update.state.selection.main.head, this.activeFilePath);
+        } else if (update.docChanged) {
+          this.logConsoleController.setActiveSpellcheckLocation(null);
+        }
+        if (update.selectionSet || update.docChanged) {
+          this.updateCursorPositionStatus();
+        }
+        if (update.viewportChanged) {
+          const topVisiblePosition = update.view.lineBlockAtHeight(update.view.scrollDOM.scrollTop).from;
+          this.documentOutlineController.setCursorPosition(topVisiblePosition, this.activeFilePath);
+        }
+        if (!this.suppressFoldStatePersistence && update.transactions.some(transaction =>
+          transaction.effects.some(effect => effect.is(foldEffect) || effect.is(unfoldEffect))
+        )) {
+          const tab = this.getActiveTab();
+          if (tab) {
+            tab.foldStateExplicit = true;
+            tab.foldRanges = this.collectCurrentFoldRanges();
+            void this.saveWorkspaceState();
+          }
+        }
+        if (!update.docChanged && this.shouldForwardSyncSelectionUpdate(update)) {
+          this.previewSyncController.schedule(this.forwardSyncDebounceMs);
+        }
+        this.finishEditorInputProfile(inputProfile, update.state.doc.length, update.view.composing);
+      })
+    ];
+    this.editorInstance = new EditorView({
+      state: createTabEditorState({
+        doc: initialDocument,
+        anchor: 0,
+        head: 0,
+        extensions: this.editorExtensions
       }),
       parent: this.codeRenderPane
     });
@@ -1507,6 +1522,7 @@ export class TypsastraWorkspaceController {
     tab.scrollTop = this.editorInstance.scrollDOM.scrollTop;
     tab.scrollLeft = this.editorInstance.scrollDOM.scrollLeft;
     tab.foldRanges = tab.foldStateExplicit ? this.collectCurrentFoldRanges() : [];
+    tab.undoHistory = captureEditorUndoHistory(this.editorInstance.state);
   }
 
   private collectCurrentFoldRanges(): EditorFoldRange[] {
@@ -1880,9 +1896,13 @@ export class TypsastraWorkspaceController {
         this.activateSpellcheckDocument(null);
         this.isLoadingFile = true;
         try {
-          this.editorInstance.dispatch({
-            changes: { from: 0, to: this.editorInstance.state.doc.length, insert: "" }
-          });
+          this.editorInstance.setState(createTabEditorState({
+            doc: "",
+            anchor: 0,
+            head: 0,
+            extensions: this.editorExtensions,
+          }));
+          this.editorInstance.dispatch({ effects: this.currentEditorSettingsEffects() });
           this.applyFoldRanges([]);
         } finally {
           this.isLoadingFile = false;
@@ -2323,6 +2343,7 @@ export class TypsastraWorkspaceController {
     tab.content = contents;
     tab.savedContent = contents;
     tab.contentLoaded = true;
+    tab.undoHistory = undefined;
     tab.foldRanges = tab.foldRanges === null
       ? null
       : this.normalizeFoldRanges(tab.foldRanges, contents.length);
@@ -2486,17 +2507,16 @@ export class TypsastraWorkspaceController {
       // previous tab's fallback stack, which is especially noticeable for
       // Khmer text.
       const editorFontEffect = this.editorFontManager.prepareDocument(tab.content);
+      this.editorInstance.setState(createTabEditorState({
+        doc: tab.content,
+        anchor: tab.selectionAnchor,
+        head: tab.selectionHead,
+        extensions: this.editorExtensions,
+        undoHistory: tab.undoHistory,
+      }));
       this.editorInstance.dispatch({
-        changes: { from: 0, to: this.editorInstance.state.doc.length, insert: tab.content },
-        selection: {
-          anchor: Math.min(tab.selectionAnchor, tab.content.length),
-          head: Math.min(tab.selectionHead, tab.content.length)
-        },
-        // A tab load is navigation, not an edit. Recording full-document
-        // replacements in the shared history retains every visited document
-        // and makes undo cross file boundaries.
-        annotations: Transaction.addToHistory.of(false),
         effects: [
+          ...this.currentEditorSettingsEffects(),
           ...(editorFontEffect ? [editorFontEffect] : []),
           languageCompartment.reconfigure(isTypstDocument ? typstLanguage : [])
         ]
@@ -3212,11 +3232,24 @@ export class TypsastraWorkspaceController {
       tab.isDirty = false;
       tab.version++;
       tab.latestVersion = tab.version;
+      tab.undoHistory = undefined;
       if (this.activeFilePath && filePathKey(this.activeFilePath) === filePathKey(path)) {
         this.isLoadingFile = true;
         try {
+          const selection = this.editorInstance.state.selection.main;
+          const editorFontEffect = this.editorFontManager.prepareDocument(content);
+          this.editorInstance.setState(createTabEditorState({
+            doc: content,
+            anchor: Math.min(selection.anchor, content.length),
+            head: Math.min(selection.head, content.length),
+            extensions: this.editorExtensions,
+          }));
           this.editorInstance.dispatch({
-            changes: { from: 0, to: this.editorInstance.state.doc.length, insert: content }
+            effects: [
+              ...this.currentEditorSettingsEffects(),
+              ...(editorFontEffect ? [editorFontEffect] : []),
+              languageCompartment.reconfigure(isTypstDocumentPath(path) ? typstLanguage : []),
+            ]
           });
         } finally {
           this.isLoadingFile = false;
@@ -6697,6 +6730,7 @@ export class TypsastraWorkspaceController {
     tab.savedContent = contents;
     tab.contentLoaded = true;
     tab.isDirty = false;
+    tab.undoHistory = undefined;
 
     if (!isActive) {
       this.renderEditorTabs();
@@ -6724,13 +6758,18 @@ export class TypsastraWorkspaceController {
       // Keep external reloads atomic from the user's perspective as well: the
       // matching Unicode font policy must precede the replacement text.
       const editorFontEffect = this.editorFontManager.prepareDocument(contents);
+      this.editorInstance.setState(createTabEditorState({
+        doc: contents,
+        anchor: Math.min(selection.anchor, contents.length),
+        head: Math.min(selection.head, contents.length),
+        extensions: this.editorExtensions,
+      }));
       this.editorInstance.dispatch({
-        changes: { from: 0, to: this.editorInstance.state.doc.length, insert: contents },
-        selection: {
-          anchor: Math.min(selection.anchor, contents.length),
-          head: Math.min(selection.head, contents.length)
-        },
-        effects: editorFontEffect ? [editorFontEffect] : undefined
+        effects: [
+          ...this.currentEditorSettingsEffects(),
+          ...(editorFontEffect ? [editorFontEffect] : []),
+          languageCompartment.reconfigure(isTypstDocumentPath(tab.path) ? typstLanguage : []),
+        ]
       });
     } finally {
       this.isLoadingFile = false;
@@ -7903,9 +7942,13 @@ export class TypsastraWorkspaceController {
 
     this.isLoadingFile = true;
     try {
-      this.editorInstance.dispatch({
-        changes: { from: 0, to: this.editorInstance.state.doc.length, insert: "" }
-      });
+      this.editorInstance.setState(createTabEditorState({
+        doc: "",
+        anchor: 0,
+        head: 0,
+        extensions: this.editorExtensions,
+      }));
+      this.editorInstance.dispatch({ effects: this.currentEditorSettingsEffects() });
       this.applyFoldRanges([]);
     } finally {
       this.isLoadingFile = false;
