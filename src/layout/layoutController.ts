@@ -1,3 +1,18 @@
+export function clampEditorPreviewSplitPct(
+  requestedInputPct: number,
+  viewportWidthPx: number,
+  packedPreviewWidthPx: number
+): number {
+  if (!Number.isFinite(viewportWidthPx) || viewportWidthPx <= 0) {
+    return Math.max(10, Math.min(requestedInputPct, 90));
+  }
+  const maximumInputPct = Math.max(
+    10,
+    Math.min(90, 100 - (Math.max(0, packedPreviewWidthPx) / viewportWidthPx) * 100)
+  );
+  return Math.max(10, Math.min(requestedInputPct, maximumInputPct));
+}
+
 export class LayoutController {
   private static readonly dragThresholdPx = 4;
   private readonly interruptResizeCallbacks = new Set<() => void>();
@@ -55,6 +70,26 @@ export class LayoutController {
     }
   }
 
+  private packedPreviewToolbarWidth(): number {
+    const toolbar = document.querySelector<HTMLElement>(".preview-actions");
+    if (!toolbar) return 0;
+    const visibleControls = [...toolbar.children].filter(child => {
+      const element = child as HTMLElement;
+      return !element.classList.contains("hidden") && getComputedStyle(element).display !== "none";
+    }) as HTMLElement[];
+    if (visibleControls.length === 0) return 0;
+    const toolbarStyle = getComputedStyle(toolbar);
+    const gap = Number.parseFloat(toolbarStyle.columnGap || toolbarStyle.gap) || 0;
+    const padding =
+      (Number.parseFloat(toolbarStyle.paddingLeft) || 0)
+      + (Number.parseFloat(toolbarStyle.paddingRight) || 0);
+    return Math.ceil(
+      visibleControls.reduce((width, control) => width + control.getBoundingClientRect().width, 0)
+      + gap * Math.max(0, visibleControls.length - 1)
+      + padding
+    );
+  }
+
   public dockPreview(): void {
     const previewWrapper = document.getElementById("preview-container-wrapper");
     const resizer = document.getElementById("editor-preview-resizer");
@@ -105,18 +140,26 @@ export class LayoutController {
     const viewport = document.getElementById("workspace-viewport");
     if (editorResizer && input && preview && viewport) {
       let viewportRect: DOMRect | null = null;
+      let packedPreviewWidth = 0;
       this.installDragResize(editorResizer, "col-resize", event => {
         const rect = viewportRect ?? viewport.getBoundingClientRect();
-        const percentage = Math.max(10, Math.min(((event.clientX - rect.left) / rect.width) * 100, 90));
+        const requestedPercentage = ((event.clientX - rect.left) / rect.width) * 100;
+        const percentage = clampEditorPreviewSplitPct(
+          requestedPercentage,
+          rect.width,
+          packedPreviewWidth
+        );
         input.style.width = `${percentage}%`;
         preview.style.width = `${100 - percentage}%`;
       }, () => {
         viewportRect = null;
+        packedPreviewWidth = 0;
         this.captureDockedPaneSize();
         this.onEditorWidthResizeEnd();
         this.onLayoutChanged();
       }, () => {
         viewportRect = viewport.getBoundingClientRect();
+        packedPreviewWidth = this.packedPreviewToolbarWidth();
         this.onEditorWidthResizeStart();
       });
     }

@@ -1813,9 +1813,12 @@ body.typsastra-resizing #input-container-wrapper::after {
   min-width: 0;
   padding: 2px 8px;
   display: flex;
+  flex-wrap: nowrap;
   gap: 8px;
   align-items: center;
   justify-content: flex-end;
+  overflow-x: hidden;
+  overflow-y: hidden;
   box-sizing: border-box;
   border-bottom: 1px solid var(--ui-border);
   background: var(--ui-bg);
@@ -1830,6 +1833,10 @@ body.typsastra-resizing #input-container-wrapper::after {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
 }
 
+.preview-actions > * {
+  flex: 0 0 auto;
+}
+
 .preview-image-warning-button {
   width: 36px;
   height: 28px;
@@ -1842,45 +1849,76 @@ body.typsastra-resizing #input-container-wrapper::after {
   cursor: pointer;
 }
 
-.preview-content-mode-control {
-  display: inline-grid;
-  grid-template-columns: repeat(2, max-content);
-  align-items: center;
-  margin-right: auto;
-  border: 1px solid var(--ui-border);
-  background: var(--ui-control-bg);
-}
-
-.preview-content-mode-button {
+.preview-content-mode-toggle {
   position: relative;
-  min-width: 76px;
-  height: 26px;
-  padding: 0 14px;
-  border: 0;
-  border-right: 1px solid var(--ui-border);
-  border-radius: 0;
+  min-width: 96px;
+  height: 28px;
+  padding: 0 9px;
+  margin-right: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   color: var(--ui-muted-text);
-  background: transparent;
-  font: inherit;
-  font-size: var(--ui-font-size);
   cursor: pointer;
 }
 
-.preview-content-mode-button:last-child {
-  border-right: 0;
+.preview-content-mode-track {
+  position: relative;
+  width: 30px;
+  height: 16px;
+  flex: 0 0 30px;
+  border: 1px solid var(--ui-border);
+  border-radius: 999px;
+  background: var(--ui-control-bg);
+  transition: background-color 120ms ease, border-color 120ms ease;
 }
 
-.preview-content-mode-button:hover {
+.preview-content-mode-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 10px;
+  height: 10px;
+  box-sizing: border-box;
+  border: 1px solid var(--ui-bg);
+  border-radius: 50%;
+  background: var(--ui-text);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--ui-text) 35%, transparent);
+  transition: transform 120ms ease, background-color 120ms ease;
+}
+
+.preview-content-mode-label {
+  min-width: 42px;
+  text-align: left;
+}
+
+.preview-content-mode-toggle:hover {
   color: var(--ui-text);
   background: var(--ui-hover);
 }
 
-.preview-content-mode-button.active {
-  color: var(--ui-header-text);
-  background: var(--ui-active-selection);
+.preview-content-mode-toggle.active {
+  color: var(--ui-text);
 }
 
-.preview-content-mode-control[data-compiling="true"] .preview-content-mode-button.active::after {
+.preview-content-mode-toggle:focus-visible {
+  outline: 1px solid var(--ui-accent-color);
+  outline-offset: -2px;
+}
+
+.preview-content-mode-toggle.active .preview-content-mode-track {
+  border-color: var(--ui-accent-color);
+  background: var(--ui-accent-color);
+}
+
+.preview-content-mode-toggle.active .preview-content-mode-thumb {
+  border-color: color-mix(in srgb, var(--ui-bg) 72%, transparent);
+  background: var(--ui-bg);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--ui-bg) 35%, transparent);
+  transform: translateX(14px);
+}
+
+.preview-content-mode-toggle[data-compiling="true"]::after {
   content: "…";
   position: absolute;
   top: 50%;
@@ -1890,7 +1928,7 @@ body.typsastra-resizing #input-container-wrapper::after {
   pointer-events: none;
 }
 
-.preview-content-mode-control.hidden {
+.preview-content-mode-toggle.hidden {
   display: none;
 }
 
@@ -2334,25 +2372,6 @@ body.typsastra-resizing #input-container-wrapper::after {
   font: 11px var(--font-family-sans);
   text-align: center;
   user-select: none;
-}
-
-@container preview-pane (max-width: 340px) {
-  .preview-actions {
-    gap: 4px;
-    padding-inline: 5px;
-  }
-
-  .preview-zoom-label {
-    min-width: 38px;
-    padding-inline: 4px;
-  }
-
-  .preview-page-controls { padding-inline: 4px; }
-  .preview-page-input { width: 32px; }
-
-  #undock-preview-btn {
-    display: none !important;
-  }
 }
 
 #preview-render-pane {

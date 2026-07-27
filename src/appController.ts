@@ -833,11 +833,9 @@ export class TypsastraWorkspaceController {
       this.draftImageAssets = new Map((update.draftAssets ?? []).map(asset => [asset.id, asset]));
       this.draftAssetRootPath = update.draftAssetRootPath ?? null;
       this.updatePreviewContentModeControl();
-      const contentModeControl = document.getElementById("preview-content-mode-control");
-      contentModeControl?.classList.remove("hidden");
-      for (const button of contentModeControl?.querySelectorAll("button") ?? []) {
-        (button as HTMLButtonElement).disabled = true;
-      }
+      const contentModeToggle = document.getElementById("preview-content-mode-toggle") as HTMLButtonElement | null;
+      contentModeToggle?.classList.remove("hidden");
+      if (contentModeToggle) contentModeToggle.disabled = true;
       void this.loadPdfPath(update.path, update.identity, update.sessionKey, update.surface);
     });
 
@@ -2178,21 +2176,26 @@ export class TypsastraWorkspaceController {
 
   private updatePreviewContentModeControl(compiling?: boolean): void {
     if (compiling !== undefined) this.previewContentModeCompiling = compiling;
-    const control = document.getElementById("preview-content-mode-control");
-    const normal = document.getElementById("preview-content-normal-btn") as HTMLButtonElement | null;
-    const draft = document.getElementById("preview-content-draft-btn") as HTMLButtonElement | null;
-    if (!control || !normal || !draft) return;
-    control.dataset.compiling = String(this.previewContentModeCompiling);
-    normal.classList.toggle("active", this.previewContentMode === "normal");
-    draft.classList.toggle("active", this.previewContentMode === "draft");
-    normal.setAttribute("aria-pressed", String(this.previewContentMode === "normal"));
-    draft.setAttribute("aria-pressed", String(this.previewContentMode === "draft"));
+    const toggle = document.getElementById("preview-content-mode-toggle") as HTMLButtonElement | null;
+    if (!toggle) return;
+    const draftActive = this.previewContentMode === "draft";
+    toggle.dataset.compiling = String(this.previewContentModeCompiling);
+    toggle.classList.toggle("active", draftActive);
+    toggle.setAttribute("aria-checked", String(draftActive));
+    const label = toggle.querySelector<HTMLElement>(".preview-content-mode-label");
+    if (label) label.textContent = draftActive ? "Draft" : "Normal";
+    toggle.setAttribute(
+      "aria-label",
+      draftActive
+        ? "Draft Preview active; switch to Normal Preview"
+        : "Normal Preview active; switch to Draft Preview"
+    );
     const presentedMismatch = this.presentedPreviewContentMode !== this.previewContentMode;
-    control.title = this.previewContentModeCompiling || presentedMismatch
+    toggle.title = this.previewContentModeCompiling || presentedMismatch
       ? `Preparing ${this.previewContentMode === "draft" ? "Draft" : "Normal"} Preview. The last successful ${this.presentedPreviewContentMode === "draft" ? "Draft" : "Normal"} Preview remains visible.`
       : `${this.previewContentMode === "draft"
-          ? `Draft Preview is active. ${this.draftImageAssets.size} image asset(s) use ratio-preserving placeholders; ${this.draftImageDiagnostics.length} call(s) remain unchanged.`
-          : "Normal Preview is active."}`;
+          ? `Draft Preview is active. Click to return to Normal Preview. ${this.draftImageAssets.size} image asset(s) use ratio-preserving placeholders; ${this.draftImageDiagnostics.length} call(s) remain unchanged.`
+          : "Normal Preview is active. Click to switch to Draft Preview."}`;
   }
 
   private async setPreviewContentMode(mode: PreviewContentMode): Promise<void> {
@@ -5586,7 +5589,7 @@ export class TypsastraWorkspaceController {
     previewActions.classList.remove("hidden");
 
     const showTypstOnly = !isImage && !isPdf;
-    const contentModeControl = document.getElementById("preview-content-mode-control");
+    const contentModeToggle = document.getElementById("preview-content-mode-toggle");
 
     const syncBtn = document.getElementById("preview-forward-sync-btn");
     const recompileBtn = document.getElementById("preview-recompile-btn");
@@ -5610,7 +5613,7 @@ export class TypsastraWorkspaceController {
       "hidden",
       !showTypstOnly || imageWarningBtn.dataset.active !== "true"
     );
-    contentModeControl?.classList.toggle("hidden", !showTypstOnly);
+    contentModeToggle?.classList.toggle("hidden", !showTypstOnly);
     this.updatePreviewContentModeControl();
   }
 
@@ -8182,11 +8185,8 @@ export class TypsastraWorkspaceController {
     document.getElementById("preview-image-warning-btn")?.addEventListener("click", () => {
       void this.showImageHeavyPreviewDetails();
     });
-    document.getElementById("preview-content-normal-btn")?.addEventListener("click", () => {
-      void this.setPreviewContentMode("normal");
-    });
-    document.getElementById("preview-content-draft-btn")?.addEventListener("click", () => {
-      void this.setPreviewContentMode("draft");
+    document.getElementById("preview-content-mode-toggle")?.addEventListener("click", () => {
+      void this.setPreviewContentMode(this.previewContentMode === "draft" ? "normal" : "draft");
     });
 
     const previewForwardSyncButton = document.getElementById("preview-forward-sync-btn");

@@ -1743,27 +1743,20 @@
                                 title="Image-heavy document"
                                 aria-label="Image-heavy document warning"
                             ></button>
-                            <div
-                                id="preview-content-mode-control"
-                                class="preview-content-mode-control hidden"
-                                role="group"
-                                aria-label="Preview content mode"
+                            <button
+                                id="preview-content-mode-toggle"
+                                class="preview-action-button preview-content-mode-toggle hidden"
+                                type="button"
+                                role="switch"
+                                aria-checked="false"
+                                aria-label="Normal Preview active; switch to Draft Preview"
+                                title="Switch to Draft Preview"
                             >
-                                <button
-                                    id="preview-content-normal-btn"
-                                    class="preview-content-mode-button active"
-                                    type="button"
-                                    aria-pressed="true"
-                                    title="Compile the normal preview with all document images"
-                                >Normal</button>
-                                <button
-                                    id="preview-content-draft-btn"
-                                    class="preview-content-mode-button"
-                                    type="button"
-                                    aria-pressed="false"
-                                    title="Replace eligible local images with ratio-preserving placeholders"
-                                >Draft</button>
-                            </div>
+                                <span class="preview-content-mode-track" aria-hidden="true">
+                                    <span class="preview-content-mode-thumb"></span>
+                                </span>
+                                <span class="preview-content-mode-label">Normal</span>
+                            </button>
                             <div class="preview-page-controls" aria-label="Preview page navigation">
                                 <input
                                     id="preview-page-input"

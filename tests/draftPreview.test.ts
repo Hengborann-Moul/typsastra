@@ -10,14 +10,35 @@ const html = readFileSync(join(root, "index.html"), "utf8");
 const plan = readFileSync(join(root, "docs", "V0_6_0_DRAFT_PREVIEW_IMPLEMENTATION_PLAN.md"), "utf8");
 
 describe("Draft Preview", () => {
-  test("exposes an explicit workspace-persisted Normal/Draft control", () => {
-    expect(html).toContain('id="preview-content-normal-btn"');
-    expect(html).toContain('id="preview-content-draft-btn"');
+  test("exposes a workspace-persisted Normal/Draft toggle", () => {
+    expect(html).toContain('id="preview-content-mode-toggle"');
+    expect(html).toContain('role="switch"');
+    expect(html).toContain('aria-checked="false"');
+    expect(html).toContain('class="preview-content-mode-track"');
+    expect(html).toContain('class="preview-content-mode-thumb"');
     expect(controller).toContain("previewContentMode: this.previewContentMode");
     expect(controller).toContain('previewContentMode: "normal"');
-    expect(styles).toMatch(/\.preview-content-mode-control\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*max-content\);/s);
-    expect(styles).toMatch(/\.preview-content-mode-button\s*\{[^}]*min-width:\s*76px;/s);
+    expect(controller).toContain('this.previewContentMode === "draft" ? "normal" : "draft"');
+    expect(styles).toMatch(/\.preview-content-mode-toggle\s*\{[^}]*min-width:\s*96px;/s);
+    expect(styles).toMatch(
+      /\.preview-content-mode-thumb\s*\{[^}]*background:\s*var\(--ui-text\);/
+    );
+    expect(styles).toMatch(/\.preview-content-mode-toggle\.active \.preview-content-mode-thumb\s*\{[^}]*translateX\(14px\)/s);
+    expect(styles).toContain(".preview-content-mode-toggle:focus-visible");
+    expect(styles).not.toMatch(
+      /\.preview-content-mode-toggle\.active\s*\{[^}]*background:\s*var\(--ui-active-selection\)/
+    );
+    expect(styles).not.toMatch(
+      /\.preview-content-mode-toggle\.active\s*\{[^}]*border-color:\s*var\(--ui-accent-color\)/
+    );
     expect(styles).toMatch(/data-compiling="true"[^}]*::after\s*\{[^}]*position:\s*absolute;/s);
+  });
+
+  test("keeps preview toolbar controls in one stable packed row", () => {
+    expect(styles).toMatch(/\.preview-actions\s*\{[^}]*flex-wrap:\s*nowrap;/s);
+    expect(styles).toMatch(/\.preview-actions\s*\{[^}]*overflow-x:\s*hidden;/s);
+    expect(styles).toMatch(/\.preview-actions\s*>\s*\*\s*\{[^}]*flex:\s*0 0 auto;/s);
+    expect(styles).not.toContain("@container preview-pane (max-width: 340px)");
   });
 
   test("commits the requested mode and image manifest only after PDF presentation", () => {

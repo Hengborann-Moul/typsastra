@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { clampEditorPreviewSplitPct } from "../src/layout/layoutController";
 
 describe("preview dock layout", () => {
   test("keeps the docked split separate from the temporary undocked width", async () => {
@@ -11,5 +12,12 @@ describe("preview dock layout", () => {
     expect(layout).toContain("previewWrapper.style.width = `${100 - this.dockedInputWidthPct}%`");
     expect(app).toContain("inputContainerWidthPct: this.layoutController.getDockedInputWidthPct()");
     expect(app).toContain("this.layoutController.setDockedInputWidthPct(state.layout.inputContainerWidthPct)");
+  });
+
+  test("stops shrinking once the visible preview toolbar is packed", () => {
+    expect(clampEditorPreviewSplitPct(80, 1000, 420)).toBe(58);
+    expect(clampEditorPreviewSplitPct(40, 1000, 420)).toBe(40);
+    expect(clampEditorPreviewSplitPct(95, 1000, 1200)).toBe(10);
+    expect(clampEditorPreviewSplitPct(95, 0, 420)).toBe(90);
   });
 });
