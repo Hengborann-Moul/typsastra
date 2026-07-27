@@ -34,6 +34,22 @@ describe("compiled PDF transport", () => {
     expect(source).not.toContain("if (!shouldMirror || !this.workspaceRootPath)");
   });
 
+  test("synchronizes prepared dependencies before exporting in every render mode", async () => {
+    const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
+    const renderStart = source.indexOf("private async renderPdfPreview");
+    const preparedPaths = source.indexOf("const preparedPaths = [...new Set([", renderStart);
+    const invalidation = source.indexOf("await this.lspClient.notifyWorkspaceFilesChanged(", preparedPaths);
+    const synchronization = source.indexOf("await this.syncPreparedPreviewDocuments(previewPath)", invalidation);
+    const exportRequest = source.indexOf("await this.lspClient.exportPdfToFile(previewPath)", synchronization);
+    const invalidationPrefix = source.slice(preparedPaths, invalidation);
+
+    expect(preparedPaths).toBeGreaterThan(renderStart);
+    expect(invalidation).toBeGreaterThan(preparedPaths);
+    expect(synchronization).toBeGreaterThan(invalidation);
+    expect(exportRequest).toBeGreaterThan(synchronization);
+    expect(invalidationPrefix).not.toContain('renderMode === "on-type"');
+  });
+
   test("validates copied workspace caches before starting Tinymist", async () => {
     const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
     const validation = source.indexOf(

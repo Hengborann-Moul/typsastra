@@ -3837,11 +3837,11 @@ export class TypsastraWorkspaceController {
       });
       this.ensurePreviewPreparationCurrent(preparationRevision);
       this.appendDeveloperLog({ kind: "info", source: "preview scheduler", message: `Render generation ${generation}: preview root prepared at ${previewPath}.` });
-      if (this.settingsController.value.preview.renderMode === "on-type") {
-        const preparedPaths = [...new Set([
-          previewPath,
-          ...[...this.pdfPreviewGeneratedFiles.values()].map(file => file.generatedPath)
-        ].map(nativeFilePath))];
+      const preparedPaths = [...new Set([
+        previewPath,
+        ...[...this.pdfPreviewGeneratedFiles.values()].map(file => file.generatedPath)
+      ].map(nativeFilePath))];
+      if (preparedPaths.length > 0) {
         await this.lspClient.notifyWorkspaceFilesChanged(
           preparedPaths.map(path => ({ uri: filePathToUri(path), type: 2 as const }))
         );
@@ -3851,7 +3851,7 @@ export class TypsastraWorkspaceController {
         this.appendDeveloperLog({
           kind: "info",
           source: "preview scheduler",
-          message: `Render generation ${generation}: invalidated ${preparedPaths.length} prepared file(s) and synchronized ${syncedPreparedDocuments} in-memory document(s) in Tinymist.`
+          message: `Render generation ${generation}: invalidated ${preparedPaths.length} prepared file(s) and synchronized ${syncedPreparedDocuments} in-memory document(s) in Tinymist for ${this.settingsController.value.preview.renderMode}.`
         });
       }
       // Register the configured private output before awaiting the RPC because
