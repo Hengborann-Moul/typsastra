@@ -164,14 +164,23 @@ pub fn prepare_draft_images(
             .filter(|argument| !argument.is_empty())
             .map(|argument| format!("{argument},"))
             .collect::<Vec<_>>();
-        if !call.has_width && !call.has_height {
-            let normalized_width = f64::from(width) / f64::from(height) * 100.0;
-            block_arguments.push(format!("width: {normalized_width:.6}pt,"));
+        let uses_default_width = !call.has_width && !call.has_height;
+        if uses_default_width {
+            // Match Typst's implicit image layout: an image without either
+            // dimension fills the available width and derives its height from
+            // the intrinsic aspect ratio.
+            block_arguments.push("width: 100%,".into());
         }
-        if !call.has_width && !call.has_height {
-            block_arguments.push("height: 100pt,".into());
-        }
-        let mut generated = if call.has_width == call.has_height {
+        let mut generated = if uses_default_width {
+            intrinsic_ratio_draft_placeholder(
+                &id,
+                &raw_path,
+                width,
+                height,
+                &block_arguments,
+                true,
+            )
+        } else if call.has_width == call.has_height {
             fixed_draft_placeholder(&id, &raw_path, &block_arguments, &call)
         } else {
             intrinsic_ratio_draft_placeholder(
@@ -683,7 +692,7 @@ mod tests {
     }
 
     #[test]
-    fn derives_ratio_only_dimensions_when_image_size_is_implicit() {
+    fn uses_full_available_width_when_image_size_is_implicit() {
         let workspace = tempfile::tempdir().unwrap();
         let image = workspace.path().join("wide.png");
         let mut png = vec![0u8; 24];
@@ -698,10 +707,17 @@ mod tests {
             &workspace.path().join("cache/render"),
             "#image(\"wide.png\")",
         );
-        assert!(prepared.replacements[0]
-            .generated
-            .contains("width: 177.777778pt"));
-        assert!(prepared.replacements[0].generated.contains("height: 100pt"));
+        let generated = &prepared.replacements[0].generated;
+        assert!(generated.contains("block(width: 100%,"));
+        assert!(generated.contains("viewBox='0 0 1600 900'"));
+        assert!(generated.contains("#image(bytes("));
+        assert!(generated.contains("width: 100%)"));
+        assert!(!generated.contains("height: 100pt"));
+        let parsed = typst_syntax::parse(&format!("#{generated}"));
+        assert!(
+            parsed.errors_and_warnings().0.is_empty(),
+            "generated implicit-size placeholder must remain valid Typst syntax"
+        );
     }
 
     #[test]
