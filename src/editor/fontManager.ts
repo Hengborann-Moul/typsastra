@@ -230,7 +230,11 @@ export class EditorFontManager {
     document.documentElement.style.setProperty("--editor-code-font", stack);
     document.documentElement.style.setProperty("--editor-unicode-font", unicodeFamilies.length > 0 ? uiStack : "sans-serif");
     const view = this.getEditorView();
-    if (this.appliedStack === stack && (!dispatchEffect || this.appliedView === view)) return null;
+    // A caller requesting an effect is about to replace the complete
+    // EditorState. The replacement reinstalls the compartment's default font,
+    // even when the configured stack itself has not changed, so it must always
+    // receive a fresh reconfiguration effect.
+    if (dispatchEffect && this.appliedStack === stack && this.appliedView === view) return null;
     this.appliedStack = stack;
     const effect = editorFontCompartment.reconfigure(editorFontTheme(stack));
     if (dispatchEffect && view) {
