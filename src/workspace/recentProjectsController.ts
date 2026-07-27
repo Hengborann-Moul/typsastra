@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { filePathKey } from "../platform/paths";
+import { shortcutLabel } from "../platform/shortcuts";
 import { createAppIcon } from "../ui/icons";
 
 const storageKey = "typsastra-recent-projects";
@@ -252,7 +253,7 @@ export class RecentProjectsController {
     }
 
     projects.forEach((path, index) => {
-      const item = this.createWelcomeItem(path, `Ctrl+${index + 1}`);
+      const item = this.createWelcomeItem(path, shortcutLabel(`Mod+${index + 1}`));
       item.addEventListener("click", () => this.openProject(path));
       section.appendChild(item);
     });

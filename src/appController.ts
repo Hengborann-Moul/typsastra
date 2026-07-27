@@ -1707,9 +1707,16 @@ export class TypsastraWorkspaceController {
     }
   }
 
+  private toggleEditorToolbar(): void {
+    this.settingsController.update(settings => {
+      settings.editor.visualToolbar = !settings.editor.visualToolbar;
+    });
+  }
+
   private restoreDefaultLayout(): void {
     if (!this.workspaceRootPath) return;
     this.sidebarController.setVisible(true);
+    if (!this.settingsController.value.editor.visualToolbar) this.toggleEditorToolbar();
 
     const explorerSidebar = document.getElementById("explorer-sidebar");
     if (explorerSidebar) explorerSidebar.style.width = `${DEFAULT_EXPLORER_WIDTH_PX}px`;
@@ -1749,7 +1756,9 @@ export class TypsastraWorkspaceController {
   }
 
   private applySettingsToRuntime(settings: AppSettings): void {
+    const { editor } = settings;
     this.settingsRuntimeController.apply(settings);
+    this.editorToolbarController.setVisible(editor.visualToolbar);
   }
 
   private currentEditorSettingsEffects() {
@@ -2618,6 +2627,7 @@ export class TypsastraWorkspaceController {
       toggleSidebar: () => this.sidebarController.toggle(),
       setSidebarTool: tool => this.sidebarController.setTool(tool),
       restoreDefaultLayout: () => this.restoreDefaultLayout(),
+      toggleEditorToolbar: () => this.toggleEditorToolbar(),
       toggleLogConsole: () => this.logConsoleController.toggle(),
       clearLogs: () => this.logConsoleController.clearLogs(),
       restartLsp: async () => {

@@ -1,6 +1,6 @@
 # Settings
 
-Open Settings from **File → Settings**, the status bar, or `Ctrl + ,`. Changes apply immediately and are persisted to `settings.json`; the panel displays the exact platform-specific file path and can reveal it in the system file manager.
+Open Settings from **File → Settings**, the status bar, or `Ctrl + ,` (`Cmd + ,` on macOS). Changes apply immediately and are persisted to `settings.json`; the panel displays the exact platform-specific file path and can reveal it in the system file manager.
 
 ```json
 {
@@ -17,6 +17,7 @@ Open Settings from **File → Settings**, the status bar, or `Ctrl + ,`. Changes
     "wordCompletion": true,
     "userDictionary": [],
     "wordWrap": true,
+    "visualToolbar": true,
     "tabSize": 2,
     "lineNumbers": true,
     "highlightActiveLine": true,
@@ -44,6 +45,10 @@ Open Settings from **File → Settings**, the status bar, or `Ctrl + ,`. Changes
 ```
 
 Invalid or missing fields fall back to bounded defaults. Existing theme and word-wrap values from older releases are migrated from `localStorage` the first time the settings file is created.
+
+## Editor
+
+`visualToolbar` controls the formatting and typography toolbar above the editor. It is shown by default and can be toggled from **View → Toggle Editor Toolbar**, `Ctrl + Shift + T` (`Cmd + Shift + T` on macOS), or the **Editor toolbar** switch in the Editor panel; all three write the same setting, so the choice survives restarts. Hiding the toolbar closes its open dropdowns and the Document Typography dialog. **View → Restore Default Layout** brings the toolbar back.
 
 ## Saving
 
@@ -238,12 +243,22 @@ Typst formatting is available from **Edit → Format Document** or `Ctrl+Shift+F
 
 ## Keyboard shortcuts
 
-- `Ctrl + N`: New File
-- `Ctrl + K`, `Ctrl + O`: Open Project
-- `Ctrl + B`: Toggle Explorer Sidebar
-- `Ctrl + ,`: Open Settings
-- `Ctrl + Shift + F`: Format Document
-- `Alt + Z`: Toggle Word Wrap
-- `Ctrl + ~`: Toggle Log Console
+| Action | Windows and Linux | macOS |
+| --- | --- | --- |
+| New File | `Ctrl+N` | `Cmd+N` |
+| Open Workspace | `Ctrl+K Ctrl+O` | `Cmd+K Cmd+O` |
+| Save | `Ctrl+S` | `Cmd+S` |
+| Save As | `Ctrl+Shift+S` | `Cmd+Shift+S` |
+| Open Settings | `Ctrl+,` | `Cmd+,` |
+| Undo | `Ctrl+Z` | `Cmd+Z` |
+| Redo | `Ctrl+Y` | `Cmd+Shift+Z` |
+| Format Document | `Ctrl+Shift+F` | `Cmd+Shift+F` |
+| Toggle Word Wrap | `Alt+Z` | `Option+Z` |
+| Toggle Explorer Sidebar | `Ctrl+B` | `Cmd+B` |
+| Toggle Editor Toolbar | `Ctrl+Shift+T` | `Cmd+Shift+T` |
+| Toggle Log Console | ``Ctrl+` `` | ``Cmd+` `` |
+| Reveal Cursor in Preview | `Alt+Enter` | `Option+Enter` |
 
 Shortcuts are matched by physical key position, so they continue to work under Khmer and other non-Latin keyboard layouts.
+
+Menu items, context menus, the welcome screen, and shortcut-bearing tooltips render these labels from one platform-neutral spec in `src/platform/shortcuts.ts`. Labels are authored as `data-shortcut="Mod+B"`, where `Mod` renders as `Ctrl` on Windows and Linux and `Cmd` on macOS, `Alt` renders as `Option` on macOS, and `Ctrl` stays literal. Where the macOS binding differs beyond the modifier name, such as redo, `data-shortcut-mac` carries the full macOS spec. The authored text stays as the Windows and Linux fallback, so a label is never blank before scripts run.

@@ -14,6 +14,7 @@ import {
   SURROUND_WITH_OPTIONS,
   type SurroundWithOption,
 } from "../editor/surroundWith";
+import { applyShortcutLabels } from "../platform/shortcuts";
 
 export type ContextMenuDependencies = {
   getWorkspaceRoot: () => string | null;
@@ -622,6 +623,7 @@ export class ContextMenuController {
     this.menu.innerHTML = items;
     this.menu.dataset.menuKind = menuKind;
     this.menu.style.display = "block";
+    applyShortcutLabels(this.menu);
     const rect = this.menu.getBoundingClientRect();
     if (alignRight) x -= rect.width;
     this.menu.style.left = `${Math.max(0, Math.min(x, window.innerWidth - rect.width))}px`;
@@ -691,7 +693,7 @@ export class ContextMenuController {
 
   private explorerItems(): string {
     const mainAction = this.mainFileItem();
-    return `${mainAction}<div class="dropdown-item" id="ctx-new-file">New File <span class="hotkey">Ctrl+N</span></div><div class="dropdown-item" id="ctx-fs-new-folder">New Folder</div><div class="dropdown-separator"></div><div class="dropdown-item" id="ctx-fs-rename">Rename <span class="hotkey">F2</span></div><div class="dropdown-item" id="ctx-fs-delete">Delete <span class="hotkey">Delete</span></div>${this.targetIsDirectory ? "" : '<div class="dropdown-separator"></div><div class="dropdown-item" id="ctx-fs-duplicate">Duplicate File</div><div class="dropdown-item" id="ctx-fs-copy">Copy File <span class="hotkey">Ctrl+C</span></div>'}${this.copiedFilePath ? '<div class="dropdown-item" id="ctx-fs-paste">Paste File <span class="hotkey">Ctrl+V</span></div>' : ""}<div class="dropdown-separator"></div><div class="dropdown-item" id="ctx-fs-reveal">Reveal in System Explorer</div><div class="dropdown-item" id="ctx-fs-copy-rel-path">Copy Relative Path</div><div class="dropdown-item" id="ctx-fs-copy-abs-path">Copy Absolute Path</div>`;
+    return `${mainAction}<div class="dropdown-item" id="ctx-new-file">New File <span class="hotkey" data-shortcut="Mod+N">Ctrl+N</span></div><div class="dropdown-item" id="ctx-fs-new-folder">New Folder</div><div class="dropdown-separator"></div><div class="dropdown-item" id="ctx-fs-rename">Rename <span class="hotkey">F2</span></div><div class="dropdown-item" id="ctx-fs-delete">Delete <span class="hotkey">Delete</span></div>${this.targetIsDirectory ? "" : '<div class="dropdown-separator"></div><div class="dropdown-item" id="ctx-fs-duplicate">Duplicate File</div><div class="dropdown-item" id="ctx-fs-copy">Copy File <span class="hotkey" data-shortcut="Mod+C">Ctrl+C</span></div>'}${this.copiedFilePath ? '<div class="dropdown-item" id="ctx-fs-paste">Paste File <span class="hotkey" data-shortcut="Mod+V">Ctrl+V</span></div>' : ""}<div class="dropdown-separator"></div><div class="dropdown-item" id="ctx-fs-reveal">Reveal in System Explorer</div><div class="dropdown-item" id="ctx-fs-copy-rel-path">Copy Relative Path</div><div class="dropdown-item" id="ctx-fs-copy-abs-path">Copy Absolute Path</div><div class="dropdown-separator"></div><div class="dropdown-item" id="ctx-open-project">Open Workspace <span class="hotkey" data-shortcut="Mod+O">Ctrl+O</span></div><div class="dropdown-separator"></div><div class="dropdown-item" id="ctx-restart-workspace">Restart Workspace</div>`;
   }
 
   private imageExplorerItems(): string {
@@ -699,7 +701,7 @@ export class ContextMenuController {
   }
 
   private explorerBackgroundItems(): string {
-    return `<div class="dropdown-item" id="ctx-new-file">New File <span class="hotkey">Ctrl+N</span></div><div class="dropdown-item" id="ctx-fs-new-folder">New Folder</div>${this.copiedFilePath ? '<div class="dropdown-separator"></div><div class="dropdown-item" id="ctx-fs-paste">Paste File <span class="hotkey">Ctrl+V</span></div>' : ""}<div class="dropdown-separator"></div><div class="dropdown-item" id="ctx-project-reveal">Reveal Project in Explorer</div><div class="dropdown-item" id="ctx-project-copy-abs-path">Copy Project Absolute Path</div><div class="dropdown-separator"></div><div class="dropdown-item" id="ctx-open-project">Open Project <span class="hotkey">Ctrl+O</span></div><div class="dropdown-separator"></div><div class="dropdown-item" id="ctx-restart-workspace">Reload Project</div>`;
+    return `<div class="dropdown-item" id="ctx-new-file">New File <span class="hotkey" data-shortcut="Mod+N">Ctrl+N</span></div><div class="dropdown-item" id="ctx-fs-new-folder">New Folder</div>${this.copiedFilePath ? '<div class="dropdown-separator"></div><div class="dropdown-item" id="ctx-fs-paste">Paste File <span class="hotkey" data-shortcut="Mod+V">Ctrl+V</span></div>' : ""}<div class="dropdown-separator"></div><div class="dropdown-item" id="ctx-fs-reveal">Reveal Workspace in Explorer</div><div class="dropdown-separator"></div><div class="dropdown-item" id="ctx-open-project">Open Workspace <span class="hotkey" data-shortcut="Mod+O">Ctrl+O</span></div><div class="dropdown-separator"></div><div class="dropdown-item" id="ctx-restart-workspace">Restart Workspace</div>`;
   }
 
   private tabItems(): string {
@@ -754,7 +756,7 @@ export class ContextMenuController {
     const surroundWith = this.surroundSelection && this.dependencies.getActiveFile()?.toLowerCase().endsWith(".typ")
       ? '<div class="dropdown-item" id="ctx-editor-surround-with">Surround With…</div><div class="dropdown-separator"></div>'
       : "";
-    return `${spelling}${forwardSync}${surroundWith}<div class="dropdown-item" id="ctx-copy-text">Copy <span class="hotkey">Ctrl+C</span></div><div class="dropdown-item" id="ctx-paste-text">Paste <span class="hotkey">Ctrl+V</span></div><div class="dropdown-item" id="ctx-cut-text">Cut <span class="hotkey">Ctrl+X</span></div><div class="dropdown-separator"></div><div class="dropdown-item" id="ctx-editor-toggle-comment">Toggle Line Comment</div><div class="dropdown-item" id="ctx-editor-format">Format Document</div><div class="dropdown-separator"></div><div class="dropdown-item" id="ctx-undo">Undo</div><div class="dropdown-item" id="ctx-redo">Redo</div><div class="dropdown-separator"></div><div class="dropdown-item" id="ctx-editor-select-all">Select All</div>`;
+    return `${spelling}${forwardSync}${surroundWith}<div class="dropdown-item" id="ctx-copy-text">Copy <span class="hotkey" data-shortcut="Mod+C">Ctrl+C</span></div><div class="dropdown-item" id="ctx-paste-text">Paste <span class="hotkey" data-shortcut="Mod+V">Ctrl+V</span></div><div class="dropdown-item" id="ctx-cut-text">Cut <span class="hotkey" data-shortcut="Mod+X">Ctrl+X</span></div><div class="dropdown-separator"></div><div class="dropdown-item" id="ctx-editor-toggle-comment">Toggle Line Comment</div><div class="dropdown-item" id="ctx-editor-format">Format Document</div><div class="dropdown-separator"></div><div class="dropdown-item" id="ctx-undo">Undo</div><div class="dropdown-item" id="ctx-redo">Redo</div><div class="dropdown-separator"></div><div class="dropdown-item" id="ctx-editor-select-all">Select All</div>`;
   }
 
   private openSurroundWith(): void {
@@ -867,11 +869,11 @@ export class ContextMenuController {
 
   private nativeTextItems(editable: boolean): string {
     const editItems = editable
-      ? '<div class="dropdown-item" id="ctx-native-cut">Cut <span class="hotkey">Ctrl+X</span></div><div class="dropdown-item" id="ctx-native-paste">Paste <span class="hotkey">Ctrl+V</span></div>'
+      ? '<div class="dropdown-item" id="ctx-native-cut">Cut <span class="hotkey" data-shortcut="Mod+X">Ctrl+X</span></div><div class="dropdown-item" id="ctx-native-paste">Paste <span class="hotkey" data-shortcut="Mod+V">Ctrl+V</span></div>'
       : "";
     const selectAll = editable
-      ? '<div class="dropdown-separator"></div><div class="dropdown-item" id="ctx-native-select-all">Select All <span class="hotkey">Ctrl+A</span></div>'
+      ? '<div class="dropdown-separator"></div><div class="dropdown-item" id="ctx-native-select-all">Select All <span class="hotkey" data-shortcut="Mod+A">Ctrl+A</span></div>'
       : "";
-    return `<div class="dropdown-item" id="ctx-native-copy">Copy <span class="hotkey">Ctrl+C</span></div>${editItems}${selectAll}`;
+    return `<div class="dropdown-item" id="ctx-native-copy">Copy <span class="hotkey" data-shortcut="Mod+C">Ctrl+C</span></div>${editItems}${selectAll}`;
   }
 }

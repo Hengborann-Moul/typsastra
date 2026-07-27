@@ -58,6 +58,7 @@ export interface AppEventActions {
   toggleSidebar: () => void;
   setSidebarTool: (tool: "explorer" | "images") => void;
   restoreDefaultLayout: () => void;
+  toggleEditorToolbar: () => void;
   toggleLogConsole: () => void;
   clearLogs: () => void;
   restartLsp: () => Promise<void> | void;
@@ -121,6 +122,11 @@ function bindKeyboardShortcuts(actions: AppEventActions): void {
     if (cmdOrCtrl && event.shiftKey && !event.altKey && keyCode === "KeyS") {
       event.preventDefault();
       void actions.saveActiveFileAs();
+      return;
+    }
+    if (cmdOrCtrl && event.shiftKey && !event.altKey && keyCode === "KeyT") {
+      event.preventDefault();
+      actions.toggleEditorToolbar();
       return;
     }
 
@@ -352,6 +358,7 @@ export function bindAppEvents(actions: AppEventActions): void {
   document.getElementById("sidebar-explorer-button")?.addEventListener("click", () => actions.setSidebarTool("explorer"));
   document.getElementById("sidebar-images-button")?.addEventListener("click", () => actions.setSidebarTool("images"));
   document.getElementById("action-restore-default-layout")?.addEventListener("click", actions.restoreDefaultLayout);
+  document.getElementById("action-toggle-editor-toolbar")?.addEventListener("click", actions.toggleEditorToolbar);
   document.getElementById("action-clear-logs")?.addEventListener("click", actions.clearLogs);
   document.getElementById("action-restart-lsp")?.addEventListener("click", () => void actions.restartLsp());
   document.getElementById("action-docs-typsastra")?.addEventListener("click", () => void openUrl("https://github.com/sovichea/typsastra"));
