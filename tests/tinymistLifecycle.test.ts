@@ -56,6 +56,28 @@ describe("Tinymist workspace lifecycle", () => {
     expect(typographySync).toBeGreaterThan(tabDispatch);
   });
 
+  test("keeps imported template ownership while reusing the main preview session", async () => {
+    const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
+    const capture = source.indexOf("private captureCurrentMainSessionForImportedTarget");
+    const nextMethod = source.indexOf("\n  private ", capture + 10);
+    const method = source.slice(capture, nextMethod);
+    expect(method).toContain("previewImported: target.imported");
+    expect(method).toContain("previewStandalone: target.standalone");
+    expect(method).toContain("previewDisabled: target.disabled");
+  });
+
+  test("uses one cached compiler root for on-save and on-type sessions", async () => {
+    const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
+    const preparation = source.indexOf("private async prepareRenderProjectIfNeeded");
+    const preparationEnd = source.indexOf("\n  private ", preparation + 10);
+    const method = source.slice(preparation, preparationEnd);
+    expect(method).toContain("this.pinnedMainFilePath");
+    expect(method).toContain("entryFile = this.mapToOriginalPath(this.pinnedMainFilePath)");
+    expect(method).not.toContain('renderMode !== "on-type"');
+    expect(source).toContain("cachedPreviewCompilerPath(previewLspMainPath(target))");
+    expect(source).toContain("await this.prepareRenderProjectIfNeeded();\n        await this.restartTinymistSession");
+  });
+
   test("corrects unsupported compiler-font scales after reporting them", async () => {
     const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
     expect(source).toContain('userEvent: "input.typography-scale-correction"');

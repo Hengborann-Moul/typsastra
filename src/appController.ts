@@ -993,7 +993,7 @@ export class TypsastraWorkspaceController {
       }
     }
 
-    if (khmerPrepChanged && preview.renderMode === "on-type") {
+    if (khmerPrepChanged) {
       void this.prepareRenderProjectIfNeeded().then(() => this.refreshActivePreviewRoot());
     } else if (previewRenderModeChanged) {
       void this.refreshActivePreviewRoot();
@@ -2613,9 +2613,9 @@ export class TypsastraWorkspaceController {
         await this.openDocumentIfNeeded(lspUri, lspContent, this.currentVersion);
       }
       if (!previewGuarded) {
-        const lspMainPath = previewTarget
+        const lspMainPath = this.cachedPreviewCompilerPath(previewTarget
           ? previewLspMainPath(previewTarget)
-          : (this.previewStandalone ? this.previewRootPath : (this.previewMainPath ?? this.previewRootPath));
+          : (this.previewStandalone ? this.previewRootPath : (this.previewMainPath ?? this.previewRootPath)));
         const pinChanged = await this.updatePinnedMain(lspMainPath);
         if (pinChanged) {
           await this.recheckActiveDocumentAfterPin(tab.content);
@@ -3573,9 +3573,9 @@ export class TypsastraWorkspaceController {
   private async reloadWorkspaceFonts(): Promise<void> {
     if (!this.lspClient || !this.workspaceRootPath) return;
     await this.restartTinymistSession("Reloading workspace fonts...");
-    const lspMainPath = this.previewStandalone
+    const lspMainPath = this.cachedPreviewCompilerPath(this.previewStandalone
       ? this.previewRootPath
-      : (this.previewMainPath ?? this.previewRootPath);
+      : (this.previewMainPath ?? this.previewRootPath));
     await this.updatePinnedMain(lspMainPath, true);
     if (this.activeFilePath) {
       await this.recheckActiveDocumentAfterPin(this.editorInstance.state.doc.toString());
@@ -3634,9 +3634,28 @@ export class TypsastraWorkspaceController {
     const currentMainMatchesMain = this.previewMainPath
       ? filePathKey(this.previewMainPath) === mainKey
       : false;
-    return currentRootMatchesMain || currentMainMatchesMain
-      ? this.capturePreviewSession()
-      : null;
+    if (!currentRootMatchesMain && !currentMainMatchesMain) return null;
+    // Reuse the already-presented main PDF, but retain ownership from the
+    // target being activated. Copying the main tab's `imported=false` flag to
+    // an included chapter or template makes subsequent on-save scheduling
+    // incorrectly treat that dependency as unrelated.
+    return {
+      ...this.capturePreviewSession(),
+      previewMainPath: target.mainPath,
+      previewImported: target.imported,
+      previewStandalone: target.standalone,
+      previewDisabled: target.disabled
+    };
+  }
+
+  private cachedPreviewCompilerPath(path: string | null): string | null {
+    if (!path || !this.workspaceRootPath) return path;
+    if (this.isRenderCachePath(path)) return path;
+    const originalPath = this.mapToOriginalPath(path);
+    const relativePath = relativeFilePath(this.workspaceRootPath, originalPath);
+    const cacheRoot = this.getCacheRootPath();
+    if (relativePath === null || !cacheRoot) return path;
+    return `${cacheRoot}/render/${relativePath.replace(/\\/g, "/")}`;
   }
 
   private applyPreviewSessionToTab(tab: EditorTab, session: PreviewSessionState): void {
@@ -7225,7 +7244,7 @@ export class TypsastraWorkspaceController {
       }
       return;
     }
-    await this.updatePinnedMain(previewLspMainPath(target));
+    await this.updatePinnedMain(this.cachedPreviewCompilerPath(previewLspMainPath(target)));
     const docIdentity = target.rootPath
       ? researchDocumentIdentity(
           this.workspaceRootPath ?? target.rootPath,
@@ -7786,6 +7805,10 @@ export class TypsastraWorkspaceController {
       this.queuedPdfPreviewForced = false;
       void invoke("cancel_render_preparation").catch(() => {});
       try {
+        // Both refresh policies compile through the same private render
+        // mirror. Prepare its stable main root before Tinymist starts so an
+        // active included template can immediately restore the main preview.
+        await this.prepareRenderProjectIfNeeded();
         await this.restartTinymistSession("Restarting Tinymist for the new main file...");
       } catch (error) {
         this.lspReady = false;
@@ -8811,33 +8834,20 @@ export class TypsastraWorkspaceController {
 
 
   private async prepareRenderProjectIfNeeded(): Promise<void> {
-    if (!this.workspaceRootPath
-      || !this.settingsController.value.preview.khmerRenderPreparation
-      || this.settingsController.value.preview.renderMode !== "on-type") {
-      return;
-    }
-    if (!activeFileCanRenderPreview(
-      this.activeFilePath,
-      this.pinnedMainFilePath,
-      this.previewImported,
-      this.previewDisabled
-    )) {
-      this.appendDeveloperLog({
-        kind: "info",
-        source: "preview scheduler",
-        message: `Render preparation skipped: ${this.activeFilePath ?? "no active file"} does not participate in the configured main preview.`
-      });
-      return;
-    }
+    if (!this.workspaceRootPath || !this.pinnedMainFilePath) return;
     const cacheRoot = this.getCacheRootPath();
     if (!cacheRoot) return;
-    
-    const entryFile = this.activeFilePath || this.workspaceRootPath;
-    
+
+    // Cache preparation is shared by render-on-save and render-on-type. Their
+    // only difference is the trigger: explicit save versus debounced input.
+    // Always mirror the configured main document, never whichever dependency
+    // happens to be active while the workspace or LSP is starting.
+    const entryFile = this.mapToOriginalPath(this.pinnedMainFilePath);
+
     try {
       await invoke("prepare_render_project", {
         options: {
-          enableKhmerZws: true,
+          enableKhmerZws: this.settingsController.value.preview.khmerRenderPreparation,
           projectRoot: this.workspaceRootPath,
           entryFile,
           cacheRoot,

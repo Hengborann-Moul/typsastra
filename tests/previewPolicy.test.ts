@@ -56,11 +56,14 @@ describe("preview policy", () => {
     for (const method of [
       "async renderPdfPreview",
       "schedulePdfPreview",
-      "handleContentMutation",
-      "async prepareRenderProjectIfNeeded"
+      "handleContentMutation"
     ]) {
       expect(methodSource(method)).toContain("activeFileCanRenderPreview(");
     }
+    const preparation = methodSource("async prepareRenderProjectIfNeeded");
+    expect(preparation).toContain("this.pinnedMainFilePath");
+    expect(preparation).toContain("entryFile = this.mapToOriginalPath(this.pinnedMainFilePath)");
+    expect(preparation).not.toContain('renderMode !== "on-type"');
   });
   test("keeps standalone preview disabled for v1.0", () => {
     expect(allowsStandalonePreview("// @standalone-preview\n= Chapter")).toBe(false);
