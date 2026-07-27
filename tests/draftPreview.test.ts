@@ -5,6 +5,10 @@ import { join } from "node:path";
 const root = join(import.meta.dir, "..");
 const controller = readFileSync(join(root, "src", "appController.ts"), "utf8");
 const previewFrame = readFileSync(join(root, "src", "preview", "previewFrame.ts"), "utf8");
+const contextMenus = readFileSync(
+  join(root, "src", "components", "contextMenuController.ts"),
+  "utf8"
+);
 const styles = readFileSync(join(root, "src", "style.css"), "utf8");
 const html = readFileSync(join(root, "index.html"), "utf8");
 const plan = readFileSync(join(root, "docs", "V0_6_0_DRAFT_PREVIEW_IMPLEMENTATION_PLAN.md"), "utf8");
@@ -34,11 +38,23 @@ describe("Draft Preview", () => {
     expect(styles).toMatch(/data-compiling="true"[^}]*::after\s*\{[^}]*position:\s*absolute;/s);
   });
 
-  test("keeps preview toolbar controls in one stable packed row", () => {
+  test("keeps essential preview controls visible and progressively moves actions into the menu", () => {
     expect(styles).toMatch(/\.preview-actions\s*\{[^}]*flex-wrap:\s*nowrap;/s);
     expect(styles).toMatch(/\.preview-actions\s*\{[^}]*overflow-x:\s*hidden;/s);
     expect(styles).toMatch(/\.preview-actions\s*>\s*\*\s*\{[^}]*flex:\s*0 0 auto;/s);
-    expect(styles).not.toContain("@container preview-pane (max-width: 340px)");
+    expect(html).toContain('data-preview-collapsible="zoom"');
+    expect(html).toContain('data-preview-collapsible="sync"');
+    expect(html).toContain('data-preview-collapsible="recompile"');
+    expect(html).toContain('data-preview-collapsible="undock"');
+    expect(styles).toContain("@container preview-pane (max-width: 620px)");
+    expect(styles).toContain("@container preview-pane (max-width: 430px)");
+    expect(contextMenus).toContain('id="ctx-preview-zoom-fit"');
+    expect(contextMenus).toContain('id="ctx-preview-forward-sync"');
+    expect(contextMenus).toContain('id="ctx-preview-recompile"');
+    expect(contextMenus).toContain('id="ctx-export-pdf"');
+    expect(contextMenus).toContain('id="ctx-preview-undock"');
+    expect(contextMenus).toContain('this.menu.dataset.menuKind === "preview"');
+    expect(previewFrame).toContain('window.postMessage({ type: "HIDE_CONTEXT_MENU" }, "*")');
   });
 
   test("commits the requested mode and image manifest only after PDF presentation", () => {

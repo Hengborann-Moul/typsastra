@@ -1170,7 +1170,10 @@ export class PreviewFrame {
     this.motion.reset(this.iframe?.contentWindow?.scrollY ?? 0, performance.now());
     this.debugInverse(`Interaction listener installed: readyState=${doc.readyState}, url=${doc.URL || "(empty)"}.`);
     doc.addEventListener("contextmenu", event => event.preventDefault());
-    doc.addEventListener("pointerdown", () => this.motion.setPointerDown(true), true);
+    doc.addEventListener("pointerdown", () => {
+      window.postMessage({ type: "HIDE_CONTEXT_MENU" }, "*");
+      this.motion.setPointerDown(true);
+    }, true);
     this.iframe?.contentWindow?.addEventListener("pointerup", () => this.motion.setPointerDown(false), true);
     this.iframe?.contentWindow?.addEventListener("pointercancel", () => this.motion.setPointerDown(false), true);
     this.iframe?.contentWindow?.addEventListener("blur", () => {

@@ -14,7 +14,7 @@ describe("preview dock layout", () => {
     expect(app).toContain("this.layoutController.setDockedInputWidthPct(state.layout.inputContainerWidthPct)");
   });
 
-  test("stops shrinking once the visible preview toolbar is packed", () => {
+  test("stops shrinking once the essential preview toolbar controls are packed", () => {
     expect(clampEditorPreviewSplitPct(80, 1000, 420)).toBe(58);
     expect(clampEditorPreviewSplitPct(40, 1000, 420)).toBe(40);
     expect(clampEditorPreviewSplitPct(95, 1000, 1200)).toBe(10);

@@ -1837,6 +1837,30 @@ body.typsastra-resizing #input-container-wrapper::after {
   flex: 0 0 auto;
 }
 
+@container preview-pane (max-width: 620px) {
+  #undock-preview-btn {
+    display: none !important;
+  }
+}
+
+@container preview-pane (max-width: 570px) {
+  #preview-recompile-btn {
+    display: none !important;
+  }
+}
+
+@container preview-pane (max-width: 520px) {
+  #preview-forward-sync-btn {
+    display: none !important;
+  }
+}
+
+@container preview-pane (max-width: 430px) {
+  .preview-zoom-controls {
+    display: none !important;
+  }
+}
+
 .preview-image-warning-button {
   width: 36px;
   height: 28px;

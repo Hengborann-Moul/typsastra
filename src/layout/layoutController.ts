@@ -70,12 +70,14 @@ export class LayoutController {
     }
   }
 
-  private packedPreviewToolbarWidth(): number {
+  private minimumPreviewToolbarWidth(): number {
     const toolbar = document.querySelector<HTMLElement>(".preview-actions");
     if (!toolbar) return 0;
     const visibleControls = [...toolbar.children].filter(child => {
       const element = child as HTMLElement;
-      return !element.classList.contains("hidden") && getComputedStyle(element).display !== "none";
+      return !element.hasAttribute("data-preview-collapsible")
+        && !element.classList.contains("hidden")
+        && getComputedStyle(element).display !== "none";
     }) as HTMLElement[];
     if (visibleControls.length === 0) return 0;
     const toolbarStyle = getComputedStyle(toolbar);
@@ -159,7 +161,7 @@ export class LayoutController {
         this.onLayoutChanged();
       }, () => {
         viewportRect = viewport.getBoundingClientRect();
-        packedPreviewWidth = this.packedPreviewToolbarWidth();
+        packedPreviewWidth = this.minimumPreviewToolbarWidth();
         this.onEditorWidthResizeStart();
       });
     }

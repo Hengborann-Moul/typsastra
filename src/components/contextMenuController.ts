@@ -32,12 +32,6 @@ export type ContextMenuDependencies = {
   getPinnedMainFile: () => string | null;
 };
 
-const previewItems = `
-  <div class="dropdown-item" id="ctx-preview-undock">Undock Preview</div>
-  <div class="dropdown-item" id="ctx-preview-open-external">Open in External Viewer</div>
-  <div class="dropdown-separator"></div>
-  <div class="dropdown-item" id="ctx-export-pdf">Export PDF</div>`;
-
 export function explorerKeyboardAction(event: Pick<KeyboardEvent, "key" | "ctrlKey" | "metaKey" | "altKey" | "shiftKey">): "copy" | "paste" | "delete" | "rename" | null {
   const commandModifier = (event.ctrlKey || event.metaKey) && !event.altKey;
   const key = event.key.toLowerCase();
@@ -87,14 +81,44 @@ export class ContextMenuController {
     document.addEventListener("contextmenu", event => void this.showForTarget(event));
     document.getElementById("preview-menu-btn")?.addEventListener("click", event => {
       event.stopPropagation();
+      if (this.menu.style.display === "block" && this.menu.dataset.menuKind === "preview") {
+        this.hide();
+        return;
+      }
       const button = event.currentTarget as HTMLElement;
       const rect = button.getBoundingClientRect();
-      this.show(previewItems, rect.right, rect.bottom + 4, true);
+      this.show(this.previewItems(), rect.right, rect.bottom + 4, true, "preview");
     });
     window.addEventListener("message", event => this.handlePreviewMessage(event));
     document.getElementById("workspace-explorer-tree")?.addEventListener("keydown", event => {
       void this.handleExplorerKeydown(event);
     });
+  }
+
+  private previewItems(): string {
+    const available = (id: string): boolean => {
+      const element = document.getElementById(id) as HTMLButtonElement | null;
+      return Boolean(element && !element.classList.contains("hidden") && !element.disabled);
+    };
+    const typstActions = [
+      available("preview-forward-sync-btn")
+        ? '<div class="dropdown-item" id="ctx-preview-forward-sync">Reveal Cursor in Preview</div>'
+        : "",
+      available("preview-recompile-btn")
+        ? '<div class="dropdown-item" id="ctx-preview-recompile">Recompile Preview</div>'
+        : ""
+    ].filter(Boolean).join("");
+    const typstSeparator = typstActions ? '<div class="dropdown-separator"></div>' : "";
+    return `
+      <div class="dropdown-item" id="ctx-preview-zoom-out">Zoom Out</div>
+      <div class="dropdown-item" id="ctx-preview-zoom-fit">Fit to Width</div>
+      <div class="dropdown-item" id="ctx-preview-zoom-in">Zoom In</div>
+      <div class="dropdown-separator"></div>
+      ${typstActions}
+      ${typstSeparator}
+      <div class="dropdown-item" id="ctx-export-pdf">Export PDF</div>
+      <div class="dropdown-item" id="ctx-preview-open-external">Open in External Viewer</div>
+      <div class="dropdown-item" id="ctx-preview-undock">Undock Preview</div>`;
   }
 
   private async handleExplorerKeydown(event: KeyboardEvent): Promise<void> {
@@ -172,6 +196,11 @@ export class ContextMenuController {
       case "ctx-fs-copy-abs-path": if (this.targetPath) await writeText(this.targetPath); return;
       case "ctx-preview-open-external": return this.openPreviewPdf();
       case "ctx-preview-undock": document.getElementById("undock-preview-btn")?.click(); return;
+      case "ctx-preview-forward-sync": document.getElementById("preview-forward-sync-btn")?.click(); return;
+      case "ctx-preview-recompile": document.getElementById("preview-recompile-btn")?.click(); return;
+      case "ctx-preview-zoom-out": document.getElementById("preview-zoom-out-btn")?.click(); return;
+      case "ctx-preview-zoom-fit": document.getElementById("preview-zoom-fit-btn")?.click(); return;
+      case "ctx-preview-zoom-in": document.getElementById("preview-zoom-in-btn")?.click(); return;
       case "ctx-tab-close": if (this.targetPath) await this.dependencies.closeTabInteractive(this.targetPath); return;
       case "ctx-tab-close-others": if (this.targetPath) await this.dependencies.closeOtherTabs(this.targetPath); return;
       case "ctx-restart-workspace": await this.dependencies.restartWorkspace(); return;
@@ -463,8 +492,15 @@ export class ContextMenuController {
     this.show(items, event.clientX, event.clientY);
   }
 
-  private show(items: string, x: number, y: number, alignRight = false): void {
+  private show(
+    items: string,
+    x: number,
+    y: number,
+    alignRight = false,
+    menuKind = ""
+  ): void {
     this.menu.innerHTML = items;
+    this.menu.dataset.menuKind = menuKind;
     this.menu.style.display = "block";
     const rect = this.menu.getBoundingClientRect();
     if (alignRight) x -= rect.width;
@@ -472,7 +508,10 @@ export class ContextMenuController {
     this.menu.style.top = `${Math.max(0, Math.min(y, window.innerHeight - rect.height))}px`;
   }
 
-  private hide(): void { this.menu.style.display = "none"; }
+  private hide(): void {
+    this.menu.style.display = "none";
+    delete this.menu.dataset.menuKind;
+  }
 
   private textControlFor(target: HTMLElement): HTMLInputElement | HTMLTextAreaElement | null {
     const control = target.closest<HTMLInputElement | HTMLTextAreaElement>("input, textarea");
