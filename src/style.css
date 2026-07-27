@@ -2717,6 +2717,10 @@ body.typsastra-resizing #input-container-wrapper::after {
   flex-shrink: 0;
 }
 
+#status-bar.welcome-screen-active > * {
+  display: none;
+}
+
 .status-item {
   display: inline-flex;
   align-items: center;

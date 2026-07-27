@@ -23,7 +23,8 @@ Typsastra manages Tinymist, so a separate Typst installation is normally not
 required. PDF compilation is asynchronous; the workspace UI becomes ready
 before the first preview finishes. Choose **On type** for debounced PDF updates
 while editing a short document, or **On save** to reduce background work for a
-long or resource-intensive document.
+long or resource-intensive document. This choice is stored in the current
+workspace, so opening another project restores that project's own preview mode.
 
 Use the preview page field to jump to a page. Use **Reveal Cursor in Preview**
 or `Alt+Enter` (`Option+Enter` on macOS) for manual forward sync. Double-click

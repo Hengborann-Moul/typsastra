@@ -35,6 +35,9 @@ Keep project-wide typography and page configuration in the template applied by `
 - **On save** compiles only after a successful save and is recommended for long
   or resource-intensive documents.
 
+Typsastra stores this choice per workspace, so a lightweight article can retain
+On type while a large book independently remains on On save.
+
 A render failure is non-terminal: the queued latest revision is processed after the failed request completes. LSP restarts clear stale document and source-map session state before reopening the active document.
 
 ## External changes

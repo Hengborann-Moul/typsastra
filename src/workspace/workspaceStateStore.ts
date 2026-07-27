@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { TerminologyEntry } from "../settings";
+import type { PreviewRenderMode, TerminologyEntry } from "../settings";
 
 export type StoredWorkspaceToolchain = {
   tinymistVersion: string;
@@ -36,6 +36,7 @@ export type StoredWorkspaceState = {
   };
   selectedToolchain: StoredWorkspaceToolchain | null;
   previewContentMode: "normal" | "draft";
+  previewRenderMode: PreviewRenderMode | null;
 };
 
 export type WorkspaceMetadata = {
@@ -126,7 +127,10 @@ export function normalizeWorkspaceMetadata(
         sidebarVisible: typeof layout.sidebarVisible === "boolean" ? layout.sidebarVisible : true
       },
       selectedToolchain: toolchainOrNull(workspace.selectedToolchain),
-      previewContentMode: workspace.previewContentMode === "draft" ? "draft" : "normal"
+      previewContentMode: workspace.previewContentMode === "draft" ? "draft" : "normal",
+      previewRenderMode: workspace.previewRenderMode === "on-type"
+        ? "on-type"
+        : workspace.previewRenderMode === "on-save" ? "on-save" : null
     }
   };
 }

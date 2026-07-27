@@ -21,7 +21,7 @@ import type { EditorDiagnostic, EditorDiagnosticSeverity } from "./editor/diagno
 import { WorkspaceExplorer } from "./components/explorer";
 import { TinymistLspClient } from "./compiler/lsp";
 import { isTinymistStoppedRequestError, type EditorTextEdit, type LspDiagnostic, type LspInverseSyncResult, type LspLogEntry, type LspSourcePosition, type LspStatus, type PreviewDocumentPosition } from "./compiler/lsp";
-import type { AppSettings, DeveloperLogCategory } from "./settings";
+import type { AppSettings, DeveloperLogCategory, PreviewRenderMode } from "./settings";
 import { SettingsController } from "./settingsController";
 import { fileNameFromPath, filePathFromUri, filePathKey, filePathToUri, nativeFilePath, relativeFilePath, remapFilePath } from "./platform/paths";
 import { isBinaryImagePath, isSupportedInAppPath, isTypstDocumentPath, fileExtension } from "./platform/fileTypes";
@@ -722,6 +722,29 @@ export class TypsastraWorkspaceController {
   private lspStatusDot = this.lspStatus.querySelector(".status-dot") as HTMLElement;
   private lspStatusText = this.lspStatus.querySelector(".status-text") as HTMLElement;
 
+  private get effectivePreviewRenderMode(): PreviewRenderMode {
+    return this.workspaceMetadata?.workspace.previewRenderMode
+      ?? this.settingsController.value.preview.renderMode;
+  }
+
+  private async setPreviewRenderMode(mode: PreviewRenderMode): Promise<void> {
+    if (!this.workspaceMetadata) {
+      this.settingsController.update(settings => {
+        settings.preview.renderMode = mode;
+      });
+      return;
+    }
+    if (this.workspaceMetadata.workspace.previewRenderMode === mode) return;
+    this.workspaceMetadata.workspace.previewRenderMode = mode;
+    this.settingsController.setWorkspacePreviewRenderMode(
+      mode,
+      nextMode => void this.setPreviewRenderMode(nextMode)
+    );
+    this.applySettingsToRuntime(this.settingsController.value);
+    this.updateImageHeavyPreviewWarning(this.previewImageProfile);
+    await this.saveWorkspaceState();
+  }
+
   public async bootstrap() {
     const isPreviewWindow = isPreviewOnlyWindow();
     if (isPreviewWindow) {
@@ -857,8 +880,10 @@ export class TypsastraWorkspaceController {
     const sidebarActivityBar = document.getElementById("sidebar-activity-bar");
     const appMenus = document.getElementById("app-menus");
     const loading = document.getElementById("workspace-loading");
+    const statusBar = document.getElementById("status-bar");
     const viewport = workspaceViewportState(this.activeFilePath, this.workspaceRootPath, this.workspaceLoading);
     loading?.classList.toggle("hidden", !viewport.showLoading);
+    statusBar?.classList.toggle("welcome-screen-active", viewport.showWelcome);
 
     if (viewport.showWelcome) {
       welcomeScreen?.classList.remove("hidden");
@@ -972,9 +997,10 @@ export class TypsastraWorkspaceController {
 
     const khmerPrepChanged = this.lastKhmerRenderPrepState !== undefined && this.lastKhmerRenderPrepState !== preview.khmerRenderPreparation;
     this.lastKhmerRenderPrepState = preview.khmerRenderPreparation;
-    const previewRenderModeChanged = this.lastPreviewRenderMode !== undefined && this.lastPreviewRenderMode !== preview.renderMode;
-    this.lastPreviewRenderMode = preview.renderMode;
-    if (previewRenderModeChanged && preview.renderMode !== "on-type") {
+    const renderMode = this.effectivePreviewRenderMode;
+    const previewRenderModeChanged = this.lastPreviewRenderMode !== undefined && this.lastPreviewRenderMode !== renderMode;
+    this.lastPreviewRenderMode = renderMode;
+    if (previewRenderModeChanged && renderMode !== "on-type") {
       if (this.pdfPreviewTimer) {
         window.clearTimeout(this.pdfPreviewTimer);
         this.pdfPreviewTimer = null;
@@ -1698,7 +1724,7 @@ export class TypsastraWorkspaceController {
     const startsTypingSequence = this.pendingEditorMutation === null;
     if (
       startsTypingSequence
-      && this.settingsController.value.preview.renderMode === "on-type"
+      && this.effectivePreviewRenderMode === "on-type"
       && activeFileCanRenderPreview(
         this.activeFilePath,
         this.pinnedMainFilePath,
@@ -1718,7 +1744,7 @@ export class TypsastraWorkspaceController {
     // user is typing. For on-type preview, copy one settled snapshot to
     // Tinymist at the configured preview debounce boundary rather than after
     // every input transaction.
-    const delay = this.settingsController.value.preview.renderMode === "on-type"
+    const delay = this.effectivePreviewRenderMode === "on-type"
       ? Math.min(300, this.settingsController.value.preview.syncDebounceMs)
       : 300;
     this.pendingEditorMutationTimer = window.setTimeout(() => {
@@ -2163,7 +2189,7 @@ export class TypsastraWorkspaceController {
       return;
     }
 
-    const renderMode = this.settingsController.value.preview.renderMode;
+    const renderMode = this.effectivePreviewRenderMode;
     const timing = renderMode === "on-type"
       ? "Live preview may update slowly while typing."
       : "Preview may take longer to update after each save.";
@@ -2242,7 +2268,7 @@ export class TypsastraWorkspaceController {
     const additional = profile.images.length > visibleItems.length
       ? ` and ${profile.images.length - visibleItems.length} more`
       : "";
-    const renderMode = this.settingsController.value.preview.renderMode;
+    const renderMode = this.effectivePreviewRenderMode;
     const actions = [{ id: "close", label: "Close", primary: false }];
     if (optimizationCandidates.length > 0) {
       actions.push({ id: "view-images", label: "View Images", primary: false });
@@ -2269,9 +2295,7 @@ export class TypsastraWorkspaceController {
       return;
     }
     if (action !== "switch-on-save") return;
-    this.settingsController.update(settings => {
-      settings.preview.renderMode = "on-save";
-    });
+    await this.setPreviewRenderMode("on-save");
     this.updateImageHeavyPreviewWarning(profile);
     this.appendDeveloperLog({
       kind: "info",
@@ -3133,7 +3157,7 @@ export class TypsastraWorkspaceController {
       if (
         savedChangedRevision
         && participatesInPreviewCompilation(this.activeFilePath, this.pinnedMainFilePath, this.previewImported)
-        && this.settingsController.value.preview.renderMode === "on-save"
+        && this.effectivePreviewRenderMode === "on-save"
         && !this.previewDisabled
       ) {
         void this.renderPdfPreview(content);
@@ -3595,7 +3619,7 @@ export class TypsastraWorkspaceController {
   }
 
   private applyPreviewTargetToTab(tab: EditorTab, target: PreviewTarget): void {
-    const style = previewRefreshStyle(this.settingsController.value.preview.renderMode);
+    const style = previewRefreshStyle(this.effectivePreviewRenderMode);
     const document = target.rootPath
       ? researchDocumentIdentity(this.workspaceRootPath ?? target.rootPath, target.mainPath, tab.path)
       : null;
@@ -3712,7 +3736,7 @@ export class TypsastraWorkspaceController {
 
       const identity = previewSessionIdentity(
         activePath,
-        previewRefreshStyle(this.settingsController.value.preview.renderMode),
+        previewRefreshStyle(this.effectivePreviewRenderMode),
         researchDocumentIdentity(this.workspaceRootPath, target.mainPath, activePath)
       );
       const previewPath = await join(
@@ -3862,7 +3886,7 @@ export class TypsastraWorkspaceController {
     this.appendDeveloperLog({
       kind: "info",
       source: "preview scheduler",
-      message: `Render generation ${generation} started: refresh=${this.settingsController.value.preview.renderMode}; content=${generationContentMode}; active=${this.activeFilePath}; sourceUtf16=${contents.length}.`
+      message: `Render generation ${generation} started: refresh=${this.effectivePreviewRenderMode}; content=${generationContentMode}; active=${this.activeFilePath}; sourceUtf16=${contents.length}.`
     });
     if (reportRenderStatus) {
       this.setLspStatus({ kind: "syncing", message: "Compiling preview" });
@@ -3907,7 +3931,7 @@ export class TypsastraWorkspaceController {
         this.appendDeveloperLog({
           kind: "info",
           source: "preview scheduler",
-          message: `Render generation ${generation}: invalidated ${preparedPaths.length} prepared file(s) and synchronized ${syncedPreparedDocuments} in-memory document(s) in Tinymist for ${this.settingsController.value.preview.renderMode}.`
+          message: `Render generation ${generation}: invalidated ${preparedPaths.length} prepared file(s) and synchronized ${syncedPreparedDocuments} in-memory document(s) in Tinymist for ${this.effectivePreviewRenderMode}.`
         });
       }
       // Register the configured private output before awaiting the RPC because
@@ -3970,7 +3994,7 @@ export class TypsastraWorkspaceController {
       }
       const sourceMapTaskId = previewSessionIdentity(
         previewPath,
-        previewRefreshStyle(this.settingsController.value.preview.renderMode)
+        previewRefreshStyle(this.effectivePreviewRenderMode)
       ).taskId;
       // Source-map tasks are reconciled lazily by ensurePdfSourceMapSocket.
       // Never let optional cursor-sync lifecycle work block PDF presentation.
@@ -4033,7 +4057,7 @@ export class TypsastraWorkspaceController {
       if (
         error instanceof PreviewPreparationInterrupted
         || (
-          this.settingsController.value.preview.renderMode === "on-type"
+          this.effectivePreviewRenderMode === "on-type"
           && preparationRevision !== this.pdfPreparationRevision
         )
       ) {
@@ -4100,7 +4124,7 @@ export class TypsastraWorkspaceController {
 
   private ensurePreviewPreparationCurrent(revision: number): void {
     if (
-      this.settingsController.value.preview.renderMode === "on-type"
+      this.effectivePreviewRenderMode === "on-type"
       && revision !== this.pdfPreparationRevision
     ) {
       throw new PreviewPreparationInterrupted();
@@ -4290,8 +4314,8 @@ export class TypsastraWorkspaceController {
       });
       return;
     }
-    if (this.settingsController.value.preview.renderMode !== "on-type") {
-      this.appendDeveloperLog({ kind: "info", source: "preview scheduler", message: `On-type schedule skipped: mode=${this.settingsController.value.preview.renderMode}.` });
+    if (this.effectivePreviewRenderMode !== "on-type") {
+      this.appendDeveloperLog({ kind: "info", source: "preview scheduler", message: `On-type schedule skipped: mode=${this.effectivePreviewRenderMode}.` });
       return;
     }
     if (this.pdfPreviewTimer) {
@@ -4338,14 +4362,14 @@ export class TypsastraWorkspaceController {
     );
     if (!this.isLoadingFile && canRenderPreview) {
       this.pdfPreparationRevision += 1;
-      if (this.settingsController.value.preview.renderMode === "on-type") {
+      if (this.effectivePreviewRenderMode === "on-type") {
         void invoke("cancel_render_preparation").catch(() => {});
       }
     }
     this.appendDeveloperLog({
       kind: "info",
       source: "preview scheduler",
-      message: `Document mutation: active=${this.activeFilePath ?? "none"}; sourceUtf16=${rawText.length}; loading=${this.isLoadingFile}; preparationRevision=${this.pdfPreparationRevision}; mode=${this.settingsController.value.preview.renderMode}; disabled=${this.previewDisabled}; lspReady=${this.lspReady}.`
+      message: `Document mutation: active=${this.activeFilePath ?? "none"}; sourceUtf16=${rawText.length}; loading=${this.isLoadingFile}; preparationRevision=${this.pdfPreparationRevision}; mode=${this.effectivePreviewRenderMode}; disabled=${this.previewDisabled}; lspReady=${this.lspReady}.`
     });
     if (this.activeFilePath && this.activeFilePath.toLowerCase().endsWith(".typ")) {
       this.scheduleDocumentOutlineUpdate(this.activeFilePath);
@@ -4366,7 +4390,7 @@ export class TypsastraWorkspaceController {
       if (
         this.previewImported
         && allowsStandalonePreview(rawText) !== this.previewStandalone
-        && this.settingsController.value.preview.renderMode === "on-type"
+        && this.effectivePreviewRenderMode === "on-type"
       ) {
         void this.refreshActivePreviewRoot();
       }
@@ -4388,7 +4412,7 @@ export class TypsastraWorkspaceController {
       && this.activeFilePath
       && this.activeFilePath.toLowerCase().endsWith(".typ")
       && canRenderPreview
-      && this.settingsController.value.preview.renderMode === "on-type"
+      && this.effectivePreviewRenderMode === "on-type"
       && !this.previewDisabled
     ) {
       const remainingPreviewDebounceMs = Math.max(
@@ -4613,7 +4637,7 @@ export class TypsastraWorkspaceController {
     this.pendingLspSyncVersion = null;
 
     this.previewSyncController.reset();
-    if (this.workspaceRootPath && this.previewStandalone && this.settingsController.value.preview.renderMode === "on-type") {
+    if (this.workspaceRootPath && this.previewStandalone && this.effectivePreviewRenderMode === "on-type") {
       let target = await invoke<PreviewTarget>("resolve_preview_main", {
         filePath: path,
         workspaceRootPath: this.workspaceRootPath,
@@ -5143,12 +5167,12 @@ export class TypsastraWorkspaceController {
     this.appendDeveloperLog({
       kind: "info",
       source,
-      message: `Starting hidden Tinymist source-map session: root=${rootPath}; task=${sourceMapTaskId}; mode=${previewRefreshStyle(this.settingsController.value.preview.renderMode)}; active=${this.activeFilePath ?? "n/a"}.`
+      message: `Starting hidden Tinymist source-map session: root=${rootPath}; task=${sourceMapTaskId}; mode=${previewRefreshStyle(this.effectivePreviewRenderMode)}; active=${this.activeFilePath ?? "n/a"}.`
     });
     const url = await client.startPreview(
       nativeFilePath(rootPath),
       sourceMapTaskId,
-      previewRefreshStyle(this.settingsController.value.preview.renderMode),
+      previewRefreshStyle(this.effectivePreviewRenderMode),
       false
     );
     if (!url) {
@@ -5850,7 +5874,7 @@ export class TypsastraWorkspaceController {
       this.logConsoleController.setDiagnostics(originalPath, filteredDiagnostics.map((diagnostic) => this.logEntryFromDiagnostic(uri, diagnostic)));
     }
 
-    if (this.settingsController.value.preview.renderMode === "on-type") {
+    if (this.effectivePreviewRenderMode === "on-type") {
       if (this.logConsoleController.getErrorCount() > 0) {
         this.previewFrame.setError("Preview Render Failed", "The live preview cannot be updated because of compile errors.\nPlease check the Problems panel or Log Console for details.");
       } else {
@@ -6215,7 +6239,8 @@ export class TypsastraWorkspaceController {
           sidebarVisible: this.sidebarVisible
         },
         selectedToolchain: this.selectedWorkspaceToolchain,
-        previewContentMode: this.previewContentMode
+        previewContentMode: this.previewContentMode,
+        previewRenderMode: this.effectivePreviewRenderMode
       }
     };
     this.workspaceMetadata = metadata;
@@ -6839,7 +6864,7 @@ export class TypsastraWorkspaceController {
       && tab.path.toLowerCase().endsWith(".typ")
       && !tab.previewDisabled
     ) {
-      if (this.settingsController.value.preview.renderMode === "on-save") {
+      if (this.effectivePreviewRenderMode === "on-save") {
         void this.renderPdfPreview(contents);
       } else {
         this.schedulePdfPreview(contents);
@@ -7259,7 +7284,7 @@ export class TypsastraWorkspaceController {
     const identity = target.rootPath
       ? previewSessionIdentity(
           target.rootPath,
-          previewRefreshStyle(this.settingsController.value.preview.renderMode),
+          previewRefreshStyle(this.effectivePreviewRenderMode),
           docIdentity ?? undefined
         )
       : null;
@@ -7312,6 +7337,13 @@ export class TypsastraWorkspaceController {
       await invoke("cleanup_workspace_preview_files", { workspaceRootPath: selected });
       this.lspReady = false;
       this.workspaceMetadata = await this.loadWorkspaceMetadata(selected);
+      this.workspaceMetadata.workspace.previewRenderMode ??=
+        this.settingsController.value.preview.renderMode;
+      this.settingsController.setWorkspacePreviewRenderMode(
+        this.workspaceMetadata.workspace.previewRenderMode,
+        mode => void this.setPreviewRenderMode(mode)
+      );
+      this.lastPreviewRenderMode = this.workspaceMetadata.workspace.previewRenderMode;
       this.previewContentMode = this.workspaceMetadata.workspace.previewContentMode;
       this.presentedPreviewContentMode = "normal";
       this.updatePreviewContentModeControl();
@@ -7919,6 +7951,8 @@ export class TypsastraWorkspaceController {
 
     this.workspaceRootPath = null;
     this.workspaceMetadata = null;
+    this.settingsController.setWorkspacePreviewRenderMode(null);
+    this.lastPreviewRenderMode = this.settingsController.value.preview.renderMode;
     this.workspaceLoading = false;
     this.recommendedWorkspaceToolchain = null;
     this.selectedWorkspaceToolchain = null;

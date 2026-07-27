@@ -51,7 +51,8 @@ describe("workspace state store", () => {
         expandedDirectories: ["chapters"],
         layout: { inputContainerWidthPct: 60, explorerSidebarWidthPx: 300, sidebarVisible: false },
         selectedToolchain: null,
-        previewContentMode: "normal"
+        previewContentMode: "normal",
+        previewRenderMode: null
       }
     });
   });
@@ -122,6 +123,25 @@ describe("workspace state store", () => {
     expect(draft.workspace.previewContentMode).toBe("draft");
     expect(draft.workspace.schemaVersion).toBe(2);
     expect(legacy.workspace.previewContentMode).toBe("normal");
+  });
+
+  test("persists preview refresh mode per workspace and leaves legacy state unset", () => {
+    const onType = normalizeWorkspaceMetadata({
+      project: null,
+      workspace: { previewRenderMode: "on-type" }
+    });
+    const onSave = normalizeWorkspaceMetadata({
+      project: null,
+      workspace: { previewRenderMode: "on-save" }
+    });
+    const legacy = normalizeWorkspaceMetadata({
+      project: null,
+      workspace: { schemaVersion: 2 }
+    });
+
+    expect(onType.workspace.previewRenderMode).toBe("on-type");
+    expect(onSave.workspace.previewRenderMode).toBe("on-save");
+    expect(legacy.workspace.previewRenderMode).toBeNull();
   });
 
   test("reads and removes legacy absolute-path state for one-time migration", () => {

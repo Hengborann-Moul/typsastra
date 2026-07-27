@@ -1,7 +1,14 @@
 import { invoke } from "@tauri-apps/api/core";
 import { confirm, message } from "@tauri-apps/plugin-dialog";
 import { relaunch } from "@tauri-apps/plugin-process";
-import { cloneDefaultAppSettings, normalizeAppSettings, type AppSettings, type TerminologyEntry, type ThemeName } from "./settings";
+import {
+  cloneDefaultAppSettings,
+  normalizeAppSettings,
+  type AppSettings,
+  type PreviewRenderMode,
+  type TerminologyEntry,
+  type ThemeName
+} from "./settings";
 import {
   unicodeEditorFonts,
   unicodeFontPreferenceOptions,
@@ -61,6 +68,8 @@ export class SettingsController {
   private languageCatalogQuery = "";
   private languageProviderOperationInProgress = false;
   private updateProjectTerminology: (entries: TerminologyEntry[]) => void = () => {};
+  private workspacePreviewRenderMode: PreviewRenderMode | null = null;
+  private updateWorkspacePreviewRenderMode: (mode: PreviewRenderMode) => void = () => {};
 
   constructor(
     private readonly applySettings: (settings: AppSettings) => void,
@@ -135,6 +144,15 @@ export class SettingsController {
     this.populateTerminology();
   }
 
+  public setWorkspacePreviewRenderMode(
+    mode: PreviewRenderMode | null,
+    update?: (mode: PreviewRenderMode) => void
+  ): void {
+    this.workspacePreviewRenderMode = mode;
+    this.updateWorkspacePreviewRenderMode = update ?? (() => {});
+    this.populatePanel();
+  }
+
   public initializePanel() {
     const overlay = document.getElementById("settings-overlay");
     if (!overlay) return;
@@ -196,8 +214,18 @@ export class SettingsController {
     onChange("settings-word-completion", (settings, control) => { settings.editor.wordCompletion = (control as HTMLInputElement).checked; });
     onChange("settings-show-zws", (settings, control) => { settings.editor.showZws = (control as HTMLInputElement).checked; });
     onChange("settings-format-on-save", (settings, control) => { settings.editor.formatOnSave = (control as HTMLInputElement).checked; });
-    onChange("settings-preview-render-mode", (settings, control) => {
-      settings.preview.renderMode = control.value === "on-type" ? "on-type" : "on-save";
+    document.getElementById("settings-preview-render-mode")?.addEventListener("change", event => {
+      const control = event.currentTarget as HTMLSelectElement;
+      const mode: PreviewRenderMode = control.value === "on-type" ? "on-type" : "on-save";
+      if (this.workspacePreviewRenderMode !== null) {
+        this.workspacePreviewRenderMode = mode;
+        this.updateWorkspacePreviewRenderMode(mode);
+        this.populatePanel();
+        return;
+      }
+      this.update(settings => {
+        settings.preview.renderMode = mode;
+      });
     });
     onChange("settings-cursor-sync", (settings, control) => { settings.preview.cursorSync = (control as HTMLInputElement).checked; });
     onChange("settings-sync-debounce", (settings, control) => { settings.preview.syncDebounceMs = Number(control.value); });
@@ -299,7 +327,8 @@ export class SettingsController {
     setValue("settings-code-font", editor.codeFont);
     setValue("settings-unicode-font", editor.unicodeFont);
     setValue("settings-tab-size", String(editor.tabSize));
-    setValue("settings-preview-render-mode", preview.renderMode);
+    const effectivePreviewRenderMode = this.workspacePreviewRenderMode ?? preview.renderMode;
+    setValue("settings-preview-render-mode", effectivePreviewRenderMode);
     setValue("settings-sync-debounce", String(preview.syncDebounceMs));
     setValue("settings-forward-sync-timeout", String(preview.forwardSyncTimeoutMs));
     setValue("settings-highlight-duration", String(preview.highlightDurationMs));
@@ -320,16 +349,19 @@ export class SettingsController {
     }
     const previewRenderMode = document.getElementById("settings-preview-render-mode") as HTMLSelectElement | null;
     if (previewRenderMode) {
-      previewRenderMode.value = preview.renderMode;
+      previewRenderMode.value = effectivePreviewRenderMode;
       previewRenderMode.disabled = false;
-      previewRenderMode.title = preview.renderMode === "on-type"
-        ? "Update the PDF preview after typing pauses."
-        : "Update the PDF preview after saving.";
+      const scope = this.workspacePreviewRenderMode === null
+        ? "This is the default for workspaces without a saved preference."
+        : "This preference is stored in the current workspace.";
+      previewRenderMode.title = effectivePreviewRenderMode === "on-type"
+        ? `Update the PDF preview after typing pauses. ${scope}`
+        : `Update the PDF preview after saving. ${scope}`;
     }
     const previewDebounce = document.getElementById("settings-sync-debounce") as HTMLInputElement | null;
     if (previewDebounce) {
-      previewDebounce.disabled = preview.renderMode !== "on-type";
-      previewDebounce.title = preview.renderMode === "on-type"
+      previewDebounce.disabled = effectivePreviewRenderMode !== "on-type";
+      previewDebounce.title = effectivePreviewRenderMode === "on-type"
         ? "Wait this long after the latest edit before updating the preview."
         : "Available when Render preview is set to On type.";
     }

@@ -18,7 +18,7 @@ describe("large-image preview recommendation", () => {
     expect(controller).toContain('title: "Image-heavy Document"');
     expect(controller).toContain('{ id: "view-images", label: "View Images", primary: false }');
     expect(controller).toContain('{ id: "switch-on-save", label: "Use On Save", primary: true }');
-    expect(controller).toContain('settings.preview.renderMode = "on-save"');
+    expect(controller).toContain('await this.setPreviewRenderMode("on-save")');
     expect(controller).toContain("Compilation will continue normally");
     const renderStart = controller.indexOf("private async renderPdfPreview");
     const renderEnd = controller.indexOf("private schedulePdfPreview", renderStart);
