@@ -4164,10 +4164,12 @@ export class TypsastraWorkspaceController {
       this.presentedPreviewContentMode !== "draft"
       || !/^[a-f0-9]{24}$/.test(id)
     ) return null;
-    const assetRoot = this.draftAssetRootPath ?? this.workspaceRootPath;
-    if (!assetRoot) return null;
     const asset = this.draftImageAssets.get(id);
-    if (!asset || relativeFilePath(assetRoot, asset.path) === null) return null;
+    // Draft assets are canonicalized and checked against the workspace root by
+    // the backend before they enter this generation-scoped manifest. Repeating
+    // that check with frontend path strings rejects equivalent Windows paths
+    // when one side uses an extended-length or 8.3 representation.
+    if (!asset) return null;
     const response = await invoke<ArrayBuffer | Uint8Array | number[]>("read_binary_file", {
       path: asset.path
     });

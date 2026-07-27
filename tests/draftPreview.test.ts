@@ -40,6 +40,15 @@ describe("Draft Preview", () => {
     expect(plan).toContain("including its raw path label");
   });
 
+  test("loads hovered images from the backend-validated generation manifest", () => {
+    const loaderStart = controller.indexOf("private async loadDraftPreviewImage");
+    const loaderEnd = controller.indexOf("private async syncPreparedPreviewDocuments", loaderStart);
+    const loader = controller.slice(loaderStart, loaderEnd);
+    expect(loader).toContain("this.draftImageAssets.get(id)");
+    expect(loader).toContain('invoke<ArrayBuffer | Uint8Array | number[]>("read_binary_file"');
+    expect(loader).not.toContain("relativeFilePath(");
+  });
+
   test("documents exact intrinsic ratio and original-image export guarantees", () => {
     expect(plan).toMatch(/exact\s+intrinsic aspect ratio/);
     expect(plan).toContain("PDF export always uses Normal Preview");
