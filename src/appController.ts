@@ -913,6 +913,7 @@ export class TypsastraWorkspaceController {
 
     if (inputWrapper) {
       inputWrapper.style.width = `${DEFAULT_INPUT_WIDTH_PCT}%`;
+      this.layoutController.setDockedInputWidthPct(DEFAULT_INPUT_WIDTH_PCT);
       if (this.activeFilePath) inputWrapper.classList.remove("hidden");
     }
     if (previewWrapper) {
@@ -6175,7 +6176,6 @@ export class TypsastraWorkspaceController {
     
     this.persistActiveTabState();
     
-    const inputContainer = document.getElementById("input-container-wrapper");
     const explorerSidebar = document.getElementById("explorer-sidebar");
     
     const relative = (path: string | null): string | null => path && this.workspaceRootPath
@@ -6207,7 +6207,7 @@ export class TypsastraWorkspaceController {
           return directory ? [directory] : [];
         }),
         layout: {
-          inputContainerWidthPct: inputContainer?.style.width ? parseFloat(inputContainer.style.width) : DEFAULT_INPUT_WIDTH_PCT,
+          inputContainerWidthPct: this.layoutController.getDockedInputWidthPct(),
           explorerSidebarWidthPx: explorerSidebar?.style.width ? parseInt(explorerSidebar.style.width, 10) : DEFAULT_EXPLORER_WIDTH_PX,
           sidebarVisible: this.sidebarVisible
         },
@@ -6265,6 +6265,7 @@ export class TypsastraWorkspaceController {
       const project = metadata.project;
       const inputContainer = document.getElementById("input-container-wrapper");
       const previewContainerWrapper = document.getElementById("preview-container-wrapper");
+      this.layoutController.setDockedInputWidthPct(state.layout.inputContainerWidthPct);
       inputContainer!.style.width = `${state.layout.inputContainerWidthPct}%`;
       if (previewContainerWrapper) previewContainerWrapper.style.width = `${100 - state.layout.inputContainerWidthPct}%`;
       this.sidebarVisible = state.layout.sidebarVisible;

@@ -1,6 +1,7 @@
 export class LayoutController {
   private static readonly dragThresholdPx = 4;
   private readonly interruptResizeCallbacks = new Set<() => void>();
+  private dockedInputWidthPct = 50;
 
   constructor(
     private readonly onLayoutChanged: () => void,
@@ -24,6 +25,34 @@ export class LayoutController {
     document.body.style.cursor = "";
     document.body.style.userSelect = "";
     return wasResizing;
+  }
+
+  public setDockedInputWidthPct(value: number): void {
+    if (!Number.isFinite(value)) return;
+    this.dockedInputWidthPct = Math.max(10, Math.min(value, 90));
+  }
+
+  public getDockedInputWidthPct(): number {
+    return this.dockedInputWidthPct;
+  }
+
+  private captureDockedPaneSize(): void {
+    const input = document.getElementById("input-container-wrapper");
+    const viewport = document.getElementById("workspace-viewport");
+    if (!input || !viewport) return;
+    const inlineWidth = input.style.width.trim();
+    if (inlineWidth.endsWith("%")) {
+      const percentage = Number.parseFloat(inlineWidth);
+      if (Number.isFinite(percentage) && percentage < 100) {
+        this.setDockedInputWidthPct(percentage);
+        return;
+      }
+    }
+    const viewportWidth = viewport.getBoundingClientRect().width;
+    const inputWidth = input.getBoundingClientRect().width;
+    if (viewportWidth > 0 && inputWidth > 0 && inputWidth < viewportWidth) {
+      this.setDockedInputWidthPct((inputWidth / viewportWidth) * 100);
+    }
   }
 
   public dockPreview(): void {
@@ -50,7 +79,8 @@ export class LayoutController {
       resizer.style.display = "block";
     }
     input?.classList.remove("hidden");
-    if (input && input.style.width === "100%") input.style.width = "50%";
+    if (input) input.style.width = `${this.dockedInputWidthPct}%`;
+    if (previewWrapper) previewWrapper.style.width = `${100 - this.dockedInputWidthPct}%`;
     const after = previewWrapper
       ? `after class="${previewWrapper.className}", inline="${previewWrapper.style.display}", computed="${getComputedStyle(previewWrapper).display}", rect=${Math.round(previewWrapper.getBoundingClientRect().width)}x${Math.round(previewWrapper.getBoundingClientRect().height)}`
       : "after missing preview wrapper";
@@ -82,6 +112,7 @@ export class LayoutController {
         preview.style.width = `${100 - percentage}%`;
       }, () => {
         viewportRect = null;
+        this.captureDockedPaneSize();
         this.onEditorWidthResizeEnd();
         this.onLayoutChanged();
       }, () => {
@@ -112,6 +143,7 @@ export class LayoutController {
     if (!undock || !preview || !previewWrapper) return;
 
     undock.addEventListener("click", async () => {
+      this.captureDockedPaneSize();
       previewWrapper.style.display = "none";
       if (resizer) resizer.style.display = "none";
       if (input) input.style.width = "100%";
