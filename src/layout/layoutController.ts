@@ -51,6 +51,30 @@ export class LayoutController {
     return this.dockedInputWidthPct;
   }
 
+  public reconcileDockedPaneWidths(): void {
+    const input = document.getElementById("input-container-wrapper");
+    const preview = document.getElementById("preview-container-wrapper");
+    const viewport = document.getElementById("workspace-viewport");
+    if (
+      !input
+      || !preview
+      || !viewport
+      || input.classList.contains("hidden")
+      || preview.classList.contains("hidden")
+      || getComputedStyle(preview).display === "none"
+    ) {
+      return;
+    }
+    const inputWidthPct = clampEditorPreviewSplitPct(
+      this.dockedInputWidthPct,
+      viewport.getBoundingClientRect().width,
+      this.minimumPreviewToolbarWidth()
+    );
+    this.setDockedInputWidthPct(inputWidthPct);
+    input.style.width = `${inputWidthPct}%`;
+    preview.style.width = `${100 - inputWidthPct}%`;
+  }
+
   private captureDockedPaneSize(): void {
     const input = document.getElementById("input-container-wrapper");
     const viewport = document.getElementById("workspace-viewport");
@@ -131,6 +155,7 @@ export class LayoutController {
       this.installDragResize(explorerResizer, "col-resize", event => {
         explorerSidebar.style.width = `${Math.max(150, Math.min(event.clientX, 800))}px`;
       }, () => {
+        this.reconcileDockedPaneWidths();
         this.onEditorWidthResizeEnd();
         this.onLayoutChanged();
       }, this.onEditorWidthResizeStart);

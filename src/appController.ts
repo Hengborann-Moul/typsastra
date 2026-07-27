@@ -969,6 +969,7 @@ export class TypsastraWorkspaceController {
     explorerSidebar?.classList.toggle("hidden", !this.sidebarVisible);
     if (explorerSidebar) explorerSidebar.style.display = "";
     explorerResizer?.classList.toggle("hidden", !this.sidebarVisible);
+    this.layoutController.reconcileDockedPaneWidths();
     sidebarToggle?.setAttribute("aria-expanded", String(this.sidebarVisible));
     sidebarToggle?.setAttribute("aria-label", this.sidebarVisible ? "Hide sidebar" : "Show sidebar");
     if (sidebarToggle) sidebarToggle.title = this.sidebarVisible ? "Hide sidebar" : "Show sidebar";
