@@ -6,7 +6,7 @@ use super::draft::{
     prepare_draft_images, DraftImageAsset, DraftImageDiagnostic, DraftPreparation,
     PreviewContentMode,
 };
-use super::scanner::{scan_typst_content, ScanState};
+use super::scanner::{scan_typst_content, ScanState, ScopeState};
 use super::segment::{prepare_khmer_text_for_rendering, KhmerTextSegmenter};
 use super::sourcemap::{MappingKind, SourceMap, SOURCE_MAP_VERSION};
 
@@ -560,47 +560,34 @@ fn prepare_source_content(
 ) -> Result<String, String> {
     let mut generated = String::new();
     let mut replacement_index = 0usize;
+    let mut replaced_until = 0usize;
     for (state, start, end, scope) in scan_typst_content(source) {
         while replacement_index < draft.replacements.len()
-            && draft.replacements[replacement_index].end <= start
+            && draft.replacements[replacement_index].end <= replaced_until.max(start)
         {
             replacement_index += 1;
         }
-        let first_replacement = replacement_index;
-        let mut contained = Vec::new();
-        let mut index = first_replacement;
-        while index < draft.replacements.len() {
-            let replacement = &draft.replacements[index];
+        let mut cursor = start.max(replaced_until);
+        while replacement_index < draft.replacements.len() {
+            let replacement = &draft.replacements[replacement_index];
             if replacement.start >= end {
                 break;
             }
-            if replacement.start >= start && replacement.end <= end {
-                contained.push(replacement);
+            if replacement.end <= cursor {
+                replacement_index += 1;
+                continue;
             }
-            index += 1;
-        }
-        if contained.is_empty() {
-            let chunk = &source[start..end];
-            if options.enable_khmer_zws && state == ScanState::MarkupText {
-                let segmenter =
-                    segmenter.ok_or_else(|| "Khmer segmenter is unavailable.".to_string())?;
-                generated.push_str(&prepare_khmer_text_for_rendering(
-                    chunk,
-                    &segmenter.segmenter,
-                    &segmenter.hyphenation,
-                    start,
-                    generated.len(),
-                    sourcemap,
-                    scope,
-                ));
-            } else {
-                append_original(&mut generated, sourcemap, source, start, end);
-            }
-            continue;
-        }
-        let mut cursor = start;
-        for replacement in contained {
-            append_original(&mut generated, sourcemap, source, cursor, replacement.start);
+            append_prepared_original(
+                &mut generated,
+                sourcemap,
+                source,
+                cursor,
+                replacement.start,
+                state,
+                scope,
+                options,
+                segmenter,
+            )?;
             let generated_start = generated.len();
             generated.push_str(&replacement.generated);
             sourcemap.add_mapping(
@@ -611,11 +598,55 @@ fn prepare_source_content(
                 MappingKind::GeneratedWrapper,
             );
             cursor = replacement.end;
+            replaced_until = replacement.end;
             replacement_index += 1;
         }
-        append_original(&mut generated, sourcemap, source, cursor, end);
+        append_prepared_original(
+            &mut generated,
+            sourcemap,
+            source,
+            cursor,
+            end,
+            state,
+            scope,
+            options,
+            segmenter,
+        )?;
     }
     Ok(generated)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn append_prepared_original(
+    generated: &mut String,
+    sourcemap: &mut SourceMap,
+    source: &str,
+    start: usize,
+    end: usize,
+    state: ScanState,
+    scope: ScopeState,
+    options: &RenderPrepareOptions,
+    segmenter: Option<&KhmerTextSegmenter>,
+) -> Result<(), String> {
+    if start >= end {
+        return Ok(());
+    }
+    let chunk = &source[start..end];
+    if options.enable_khmer_zws && state == ScanState::MarkupText {
+        let segmenter = segmenter.ok_or_else(|| "Khmer segmenter is unavailable.".to_string())?;
+        generated.push_str(&prepare_khmer_text_for_rendering(
+            chunk,
+            &segmenter.segmenter,
+            &segmenter.hyphenation,
+            start,
+            generated.len(),
+            sourcemap,
+            scope,
+        ));
+    } else {
+        append_original(generated, sourcemap, source, start, end);
+    }
+    Ok(())
 }
 
 fn append_original(
@@ -848,8 +879,12 @@ mod tests {
         let first_draft = mirror_project_cancellable(&options, None, || false).unwrap();
         assert_eq!(first_draft.draft_assets.len(), 1);
         let draft_source = fs::read_to_string(cache_root.join("render/main.typ")).unwrap();
-        assert!(draft_source.contains("draft-preview.typsastra.invalid"));
-        assert!(draft_source.contains("#raw(\"photo.png\")"));
+        assert!(
+            draft_source.contains("draft-preview.typsastra.invalid"),
+            "prepared source did not contain the Draft link:\n{draft_source}"
+        );
+        assert!(draft_source.contains("font: \"New Computer Modern\", \"photo.png\""));
+        assert!(!draft_source.contains("#raw("));
 
         options.preview_content_mode = PreviewContentMode::Normal;
         mirror_project_cancellable(&options, None, || false).unwrap();
@@ -861,7 +896,176 @@ mod tests {
         mirror_project_cancellable(&options, None, || false).unwrap();
         let draft_source = fs::read_to_string(cache_root.join("render/main.typ")).unwrap();
         assert!(draft_source.contains("draft-preview.typsastra.invalid"));
-        assert!(draft_source.contains("#raw(\"photo.png\")"));
+        assert!(draft_source.contains("font: \"New Computer Modern\", \"photo.png\""));
+        assert!(!draft_source.contains("#raw("));
+    }
+
+    #[test]
+    fn draft_image_frame_uses_the_outer_viewport_in_prepared_source() {
+        let workspace = tempfile::tempdir().unwrap();
+        let main = workspace.path().join("main.typ");
+        let image = workspace.path().join("photo.png");
+        let cache_root = workspace.path().join(".typsastra/cache");
+        let mut png = vec![0u8; 24];
+        png[..8].copy_from_slice(b"\x89PNG\r\n\x1a\n");
+        png[16..20].copy_from_slice(&800u32.to_be_bytes());
+        png[20..24].copy_from_slice(&600u32.to_be_bytes());
+        fs::write(&image, png).unwrap();
+        fs::write(
+            &main,
+            "#block(width: 100%, height: 10cm, clip: true)[#move(dy: -2cm, [#image(\"photo.png\", width: 100%, height: 12cm, fit: \"cover\")])]",
+        )
+        .unwrap();
+        let options = RenderPrepareOptions {
+            enable_khmer_zws: false,
+            project_root: workspace.path().to_path_buf(),
+            entry_file: main,
+            cache_root: cache_root.clone(),
+            generate_source_map: true,
+            preview_content_mode: PreviewContentMode::Draft,
+        };
+
+        let prepared = mirror_project_cancellable(&options, None, || false).unwrap();
+        assert_eq!(prepared.draft_assets.len(), 1);
+        let draft_source = fs::read_to_string(cache_root.join("render/main.typ")).unwrap();
+        assert!(draft_source.contains("width: 100%"));
+        assert!(draft_source.contains("height: 10cm"));
+        assert!(
+            draft_source.contains("draft-preview.typsastra.invalid"),
+            "prepared source did not contain the Draft link:\n{draft_source}"
+        );
+        assert!(draft_source.contains("move(dy: -2cm"));
+        assert!(draft_source.contains("move(dy: -(-2cm),"));
+        assert!(!draft_source.contains("height: 12cm"));
+    }
+
+    #[test]
+    fn replaces_every_reference_to_the_same_draft_asset() {
+        let workspace = tempfile::tempdir().unwrap();
+        let main = workspace.path().join("main.typ");
+        let images = workspace.path().join("images");
+        let image = images.join("logo.png");
+        let cache_root = workspace.path().join(".typsastra/cache");
+        fs::create_dir_all(&images).unwrap();
+        let mut png = vec![0u8; 24];
+        png[..8].copy_from_slice(b"\x89PNG\r\n\x1a\n");
+        png[16..20].copy_from_slice(&1655u32.to_be_bytes());
+        png[20..24].copy_from_slice(&1655u32.to_be_bytes());
+        fs::write(&image, png).unwrap();
+        let source = r##"#set text(font: "Calibri", size: 11pt)
+#let ink = rgb("#11161C")
+#let steel = rgb("#596572")
+#let line-col = rgb("#C7CFD6")
+#set page(
+  paper: "a4",
+  margin: (top: 2cm, bottom: 2cm, left: 1.5cm, right: 1.5cm),
+  header: context [
+    #set text(size: 7.5pt, fill: steel)
+    #grid(
+      columns: (1fr, auto),
+      align: horizon,
+      [#text(weight: "bold", fill: ink)[Example] #h(5pt) Portfolio.],
+      [EVALUATION USE],
+    )
+    #v(5pt)
+    #line(length: 100%, stroke: 0.6pt + line-col)
+  ],
+  footer: context [
+    #set text(size: 7.5pt, fill: steel)
+    #line(length: 100%, stroke: 0.6pt + line-col)
+    #v(4pt)
+    #grid(columns: (1fr, auto), [Example · Restricted], [#counter(page).display()])
+  ],
+)
+#let cap(body) = text(size: 9pt, weight: "bold", fill: steel)[#body]
+#let title(body) = text(size: 30pt, weight: "bold", fill: ink)[#body]
+#let subtitle(body) = text(size: 13pt, fill: steel)[#body]
+#let bar = rect(width: 28mm, height: 4pt, stroke: none)
+#let pill(body) = box(inset: (x: 8pt, y: 4pt), radius: 2pt)[#set text(size: 7.5pt, weight: "bold"); #body]
+#let numbered(num, head, body) = grid(
+  columns: (10mm, 1fr),
+  column-gutter: 8pt,
+  [#text(size: 22pt, weight: "bold", fill: steel)[#num]],
+  [#text(weight: "bold", size: 12pt)[#head] #v(3pt) #text(fill: steel)[#body]],
+)
+
+#align(center + horizon)[
+  #v(2pt)
+  #image("images/logo.png", width: 3.2cm)
+  #v(9pt)
+  #cap[Cover]
+]
+
+#pagebreak()
+#align(center)[
+  #image("images/logo.png", width: 3.2cm)
+  #cap[Closing]
+]
+"##;
+        fs::write(&main, source).unwrap();
+        let options = RenderPrepareOptions {
+            enable_khmer_zws: false,
+            project_root: workspace.path().to_path_buf(),
+            entry_file: main,
+            cache_root: cache_root.clone(),
+            generate_source_map: true,
+            preview_content_mode: PreviewContentMode::Draft,
+        };
+
+        let prepared = mirror_project_cancellable(&options, None, || false).unwrap();
+        assert_eq!(prepared.draft_assets.len(), 1);
+        assert_eq!(prepared.draft_assets[0].references.len(), 2);
+        let draft_source = fs::read_to_string(cache_root.join("render/main.typ")).unwrap();
+        assert_eq!(
+            draft_source
+                .matches("https://draft-preview.typsastra.invalid/")
+                .count(),
+            2
+        );
+        assert!(!draft_source.contains("image(\"images/logo.png\""));
+    }
+
+    #[test]
+    fn applies_replacement_across_scanner_chunk_boundary() {
+        let workspace = tempfile::tempdir().unwrap();
+        let source = "#let value = [Hello]\nVisible text";
+        let chunks = scan_typst_content(source);
+        let boundary = chunks
+            .windows(2)
+            .find_map(|pair| {
+                let end = pair[0].2;
+                (end == pair[1].1 && end > 0 && end < source.len()).then_some(end)
+            })
+            .expect("fixture must contain adjacent scanner chunks");
+        let draft = DraftPreparation {
+            replacements: vec![crate::render_prepare::draft::DraftReplacement {
+                start: boundary - 1,
+                end: boundary + 1,
+                generated: "REPLACED".into(),
+            }],
+            ..DraftPreparation::default()
+        };
+        let options = RenderPrepareOptions {
+            enable_khmer_zws: false,
+            project_root: workspace.path().to_path_buf(),
+            entry_file: workspace.path().join("main.typ"),
+            cache_root: workspace.path().join(".typsastra/cache"),
+            generate_source_map: true,
+            preview_content_mode: PreviewContentMode::Draft,
+        };
+        let mut sourcemap = SourceMap::new("main.typ".into(), "render/main.typ".into());
+
+        let generated =
+            prepare_source_content(source, &options, None, &draft, &mut sourcemap).unwrap();
+        assert_eq!(
+            generated,
+            format!(
+                "{}REPLACED{}",
+                &source[..boundary - 1],
+                &source[boundary + 1..]
+            )
+        );
+        assert_eq!(generated.matches("REPLACED").count(), 1);
     }
 
     #[test]

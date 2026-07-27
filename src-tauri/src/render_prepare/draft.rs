@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
-use typst_syntax::ast::{Arg, AstNode, Expr, FuncCall};
+use typst_syntax::ast::{Arg, AstNode, ContentBlock, Expr, FuncCall};
 use typst_syntax::SyntaxNode;
 
 pub const DRAFT_LINK_PREFIX: &str = "https://draft-preview.typsastra.invalid/";
@@ -69,16 +69,16 @@ pub fn prepare_draft_images(
     let root = typst_syntax::parse(source);
     let mut calls = Vec::new();
     collect_image_calls(&root, 0, &mut calls);
-    calls.sort_by_key(|call| call.call_start);
+    calls.sort_by_key(|call| call.replacement_start);
 
     let mut result = DraftPreparation::default();
     for call in calls {
         let reference = DraftImageReference {
             source_path: source_path.to_path_buf(),
-            from_utf16: source[..call.call_start].encode_utf16().count(),
-            to_utf16: source[..call.call_end].encode_utf16().count(),
+            from_utf16: source[..call.image_start].encode_utf16().count(),
+            to_utf16: source[..call.image_end].encode_utf16().count(),
         };
-        let Some(raw_path) = call.literal_path else {
+        let Some(raw_path) = call.literal_path.as_deref() else {
             result.diagnostics.push(DraftImageDiagnostic {
                 source_path: source_path.to_path_buf(),
                 from_utf16: reference.from_utf16,
@@ -164,21 +164,38 @@ pub fn prepare_draft_images(
             .filter(|argument| !argument.is_empty())
             .map(|argument| format!("{argument},"))
             .collect::<Vec<_>>();
-        if !call.has_width {
+        if !call.has_width && !call.has_height {
             let normalized_width = f64::from(width) / f64::from(height) * 100.0;
             block_arguments.push(format!("width: {normalized_width:.6}pt,"));
         }
-        if !call.has_height {
+        if !call.has_width && !call.has_height {
             block_arguments.push("height: 100pt,".into());
         }
-        let generated = format!(
-            "link(\"{DRAFT_LINK_PREFIX}{id}\", block({arguments}stroke: 1pt + rgb(\"#7b8491\"), inset: 4pt, clip: true)[#align(center + horizon)[#text(size: 8pt, fill: rgb(\"#505762\"))[#raw(\"{label}\")]]])",
-            arguments = block_arguments.join(" "),
-            label = escape_typst_string(&raw_path),
-        );
+        let mut generated = if call.has_width == call.has_height {
+            fixed_draft_placeholder(&id, &raw_path, &block_arguments, &call)
+        } else {
+            intrinsic_ratio_draft_placeholder(
+                &id,
+                &raw_path,
+                width,
+                height,
+                &block_arguments,
+                call.has_width,
+            )
+        };
+        for movement in &call.counter_moves {
+            let mut arguments = Vec::new();
+            if let Some((start, end)) = movement.dx {
+                arguments.push(format!("dx: -({}),", source[start..end].trim()));
+            }
+            if let Some((start, end)) = movement.dy {
+                arguments.push(format!("dy: -({}),", source[start..end].trim()));
+            }
+            generated = format!("move({} [#{generated}])", arguments.join(" "));
+        }
         result.replacements.push(DraftReplacement {
-            start: call.call_start,
-            end: call.call_end,
+            start: call.replacement_start,
+            end: call.replacement_end,
             generated,
         });
         if let Some(asset) = result.assets.iter_mut().find(|asset| asset.id == id) {
@@ -201,69 +218,78 @@ pub fn prepare_draft_images(
     result
 }
 
+fn fixed_draft_placeholder(
+    id: &str,
+    raw_path: &str,
+    block_arguments: &[String],
+    call: &ImageCall,
+) -> String {
+    format!(
+        "link(\"{DRAFT_LINK_PREFIX}{id}\", block({arguments}{stroke}{inset}{clip})[#align(center + horizon)[#text(size: 8pt, fill: rgb(\"#505762\"), font: \"New Computer Modern\", \"{label}\")]])",
+        arguments = block_arguments.join(" "),
+        stroke = if call.has_stroke {
+            ""
+        } else {
+            "stroke: 1pt + rgb(\"#7b8491\"), "
+        },
+        inset = if call.has_inset { "" } else { "inset: 4pt, " },
+        clip = if call.has_clip { "" } else { "clip: true, " },
+        label = escape_typst_string(raw_path),
+    )
+}
+
+fn intrinsic_ratio_draft_placeholder(
+    id: &str,
+    raw_path: &str,
+    width: u32,
+    height: u32,
+    block_arguments: &[String],
+    width_is_explicit: bool,
+) -> String {
+    let spacer_axis = if width_is_explicit {
+        "width: 100%"
+    } else {
+        "height: 100%"
+    };
+    let svg =
+        format!("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 {width} {height}'></svg>");
+    format!(
+        "link(\"{DRAFT_LINK_PREFIX}{id}\", block({arguments}stroke: 1pt + rgb(\"#7b8491\"), clip: true)[#place(center + horizon)[#text(size: 8pt, fill: rgb(\"#505762\"), font: \"New Computer Modern\", \"{label}\")]#image(bytes(\"{svg}\"), {spacer_axis})])",
+        arguments = block_arguments.join(" "),
+        label = escape_typst_string(raw_path),
+    )
+}
+
 #[derive(Debug)]
 struct ImageCall {
-    call_start: usize,
-    call_end: usize,
+    image_start: usize,
+    image_end: usize,
+    replacement_start: usize,
+    replacement_end: usize,
     literal_path: Option<String>,
     layout_arguments: Vec<(usize, usize)>,
     has_width: bool,
     has_height: bool,
+    has_stroke: bool,
+    has_inset: bool,
+    has_clip: bool,
+    counter_moves: Vec<CounterMove>,
+}
+
+#[derive(Debug)]
+struct CounterMove {
+    dx: Option<(usize, usize)>,
+    dy: Option<(usize, usize)>,
 }
 
 fn collect_image_calls(node: &SyntaxNode, offset: usize, output: &mut Vec<ImageCall>) {
     if let Some(call) = node.cast::<FuncCall>() {
+        if let Some(frame) = image_frame_call(node, call, offset) {
+            output.push(frame);
+            return;
+        }
         if matches!(call.callee(), Expr::Ident(ident) if ident.as_str() == "image") {
-            let first = call.args().items().next();
-            let literal = match first {
-                Some(Arg::Pos(Expr::Str(value))) => Some(value),
-                _ => None,
-            };
-            if let Some(value) = literal {
-                let value_node = value.to_untyped();
-                if let Some(_relative) = relative_node_offset(node, value_node, 0) {
-                    let mut layout_arguments = Vec::new();
-                    let mut has_width = false;
-                    let mut has_height = false;
-                    for argument in call.args().items() {
-                        let Arg::Named(named) = argument else {
-                            continue;
-                        };
-                        let name = named.name().as_str();
-                        if name != "width" && name != "height" {
-                            continue;
-                        }
-                        has_width |= name == "width";
-                        has_height |= name == "height";
-                        let argument_node = named.to_untyped();
-                        if let Some(argument_relative) =
-                            relative_node_offset(node, argument_node, 0)
-                        {
-                            layout_arguments.push((
-                                offset + argument_relative,
-                                offset + argument_relative + argument_node.len(),
-                            ));
-                        }
-                    }
-                    output.push(ImageCall {
-                        call_start: offset,
-                        call_end: offset + node.len(),
-                        literal_path: Some(value.get().to_string()),
-                        layout_arguments,
-                        has_width,
-                        has_height,
-                    });
-                }
-            } else {
-                output.push(ImageCall {
-                    call_start: offset,
-                    call_end: offset + node.len(),
-                    literal_path: None,
-                    layout_arguments: Vec::new(),
-                    has_width: false,
-                    has_height: false,
-                });
-            }
+            output.push(image_call(node, call, offset));
             return;
         }
     }
@@ -271,6 +297,181 @@ fn collect_image_calls(node: &SyntaxNode, offset: usize, output: &mut Vec<ImageC
     for child in node.children() {
         collect_image_calls(child, child_offset, output);
         child_offset += child.len();
+    }
+}
+
+fn image_call(node: &SyntaxNode, call: FuncCall<'_>, offset: usize) -> ImageCall {
+    let first = call.args().items().next();
+    let literal_path = match first {
+        Some(Arg::Pos(Expr::Str(value))) => Some(value.get().to_string()),
+        _ => None,
+    };
+    let mut layout_arguments = Vec::new();
+    let mut has_width = false;
+    let mut has_height = false;
+    for argument in call.args().items() {
+        let Arg::Named(named) = argument else {
+            continue;
+        };
+        let name = named.name().as_str();
+        if name != "width" && name != "height" {
+            continue;
+        }
+        has_width |= name == "width";
+        has_height |= name == "height";
+        let argument_node = named.to_untyped();
+        if let Some(argument_relative) = relative_node_offset(node, argument_node, 0) {
+            layout_arguments.push((
+                offset + argument_relative,
+                offset + argument_relative + argument_node.len(),
+            ));
+        }
+    }
+    ImageCall {
+        image_start: offset,
+        image_end: offset + node.len(),
+        replacement_start: offset,
+        replacement_end: offset + node.len(),
+        literal_path,
+        layout_arguments,
+        has_width,
+        has_height,
+        has_stroke: false,
+        has_inset: false,
+        has_clip: false,
+        counter_moves: Vec::new(),
+    }
+}
+
+fn image_frame_call(node: &SyntaxNode, call: FuncCall<'_>, offset: usize) -> Option<ImageCall> {
+    if !matches!(call.callee(), Expr::Ident(ident) if ident.as_str() == "block") {
+        return None;
+    }
+
+    let mut body = None;
+    let mut layout_arguments = Vec::new();
+    let mut has_width = false;
+    let mut has_height = false;
+    let mut has_stroke = false;
+    let mut has_inset = false;
+    for argument in call.args().items() {
+        match argument {
+            Arg::Named(named) => {
+                let name = named.name().as_str();
+                has_width |= name == "width";
+                has_height |= name == "height";
+                has_stroke |= name == "stroke";
+                has_inset |= name == "inset";
+                if name == "width" || name == "height" {
+                    let argument_node = named.to_untyped();
+                    let relative = relative_node_offset(node, argument_node, 0)?;
+                    layout_arguments
+                        .push((offset + relative, offset + relative + argument_node.len()));
+                }
+            }
+            Arg::Pos(Expr::ContentBlock(content)) if body.is_none() => body = Some(content),
+            Arg::Pos(_) | Arg::Spread(_) => return None,
+        }
+    }
+
+    // Without an explicit viewport in both axes, replacing the frame would
+    // make its size depend on the placeholder label instead of the source.
+    if !has_width || !has_height {
+        return None;
+    }
+    // An inset changes the inner viewport dimensions. Without evaluating the
+    // Typst length expression, copying the outer width and height could make
+    // the interaction block overflow the visible frame again.
+    if has_inset {
+        return None;
+    }
+    let wrapped = single_wrapped_image(body?)?;
+    let image_node = wrapped.image;
+    let image_relative = relative_node_offset(node, image_node, 0)?;
+    let image_offset = offset + image_relative;
+    let image = image_node.cast::<FuncCall>()?;
+    let mut result = image_call(image_node, image, image_offset);
+    result.layout_arguments = layout_arguments;
+    result.has_width = true;
+    result.has_height = true;
+    result.has_stroke = has_stroke;
+    result.has_inset = false;
+    result.has_clip = false;
+    result.counter_moves = wrapped
+        .moves
+        .into_iter()
+        .map(|movement| {
+            let range = |expression: Option<&SyntaxNode>| {
+                expression.and_then(|expression| {
+                    let relative = relative_node_offset(node, expression, 0)?;
+                    Some((offset + relative, offset + relative + expression.len()))
+                })
+            };
+            CounterMove {
+                dx: range(movement.dx),
+                dy: range(movement.dy),
+            }
+        })
+        .collect();
+    Some(result)
+}
+
+struct WrappedImage<'a> {
+    image: &'a SyntaxNode,
+    moves: Vec<MoveNodes<'a>>,
+}
+
+struct MoveNodes<'a> {
+    dx: Option<&'a SyntaxNode>,
+    dy: Option<&'a SyntaxNode>,
+}
+
+fn single_wrapped_image(content: ContentBlock<'_>) -> Option<WrappedImage<'_>> {
+    let mut expressions = content
+        .body()
+        .exprs()
+        .filter(|expression| !matches!(expression, Expr::Space(_)));
+    let expression = expressions.next()?;
+    if expressions.next().is_some() {
+        return None;
+    }
+    wrapped_image(expression)
+}
+
+fn wrapped_image(expression: Expr<'_>) -> Option<WrappedImage<'_>> {
+    match expression {
+        Expr::FuncCall(call) if matches!(call.callee(), Expr::Ident(ident) if ident.as_str() == "image") => {
+            Some(WrappedImage {
+                image: call.to_untyped(),
+                moves: Vec::new(),
+            })
+        }
+        Expr::ContentBlock(content) => single_wrapped_image(content),
+        Expr::Parenthesized(group) => wrapped_image(group.expr()),
+        Expr::FuncCall(call) if matches!(call.callee(), Expr::Ident(ident) if ident.as_str() == "move") =>
+        {
+            let mut body = None;
+            let mut dx = None;
+            let mut dy = None;
+            for argument in call.args().items() {
+                match argument {
+                    Arg::Named(named) if named.name().as_str() == "dx" => {
+                        dx = Some(named.expr().to_untyped())
+                    }
+                    Arg::Named(named) if named.name().as_str() == "dy" => {
+                        dy = Some(named.expr().to_untyped())
+                    }
+                    Arg::Named(_) => return None,
+                    Arg::Pos(candidate) if body.is_none() => body = Some(candidate),
+                    Arg::Pos(_) => return None,
+                    Arg::Spread(_) => return None,
+                }
+            }
+            let mut nested = wrapped_image(body?)?;
+            nested.moves.push(MoveNodes { dx, dy });
+            Some(nested)
+        }
+        _ => None,
     }
 }
 
@@ -473,7 +674,8 @@ mod tests {
         assert!(prepared.replacements[0].generated.contains("height: 6cm"));
         assert!(prepared.replacements[0]
             .generated
-            .contains("#raw(\"wide.png\")"));
+            .contains("font: \"New Computer Modern\", \"wide.png\""));
+        assert!(!prepared.replacements[0].generated.contains("#raw("));
         assert!(prepared.replacements[0]
             .generated
             .contains("text(size: 8pt"));
@@ -500,6 +702,129 @@ mod tests {
             .generated
             .contains("width: 177.777778pt"));
         assert!(prepared.replacements[0].generated.contains("height: 100pt"));
+    }
+
+    #[test]
+    fn preserves_intrinsic_ratio_for_width_only_grid_images() {
+        let workspace = tempfile::tempdir().unwrap();
+        let image = workspace.path().join("wide.png");
+        let mut png = vec![0u8; 24];
+        png[..8].copy_from_slice(b"\x89PNG\r\n\x1a\n");
+        png[16..20].copy_from_slice(&1600u32.to_be_bytes());
+        png[20..24].copy_from_slice(&900u32.to_be_bytes());
+        fs::write(&image, png).unwrap();
+        let prepared = prepare_draft_images(
+            workspace.path(),
+            &workspace.path().join("main.typ"),
+            &workspace.path().join("cache/render/main.typ"),
+            &workspace.path().join("cache/render"),
+            "#grid(columns: (1fr, 1fr), image(\"wide.png\", width: 100%))",
+        );
+
+        let generated = &prepared.replacements[0].generated;
+        assert!(generated.contains("block(width: 100%,"));
+        assert!(generated.contains("viewBox='0 0 1600 900'"));
+        assert!(generated.contains("#image(bytes("));
+        assert!(generated.contains("width: 100%)"));
+        assert!(generated.contains("font: \"New Computer Modern\""));
+        assert!(!generated.contains("#raw("));
+        assert!(!generated.contains("height: 100pt"));
+        let parsed = typst_syntax::parse(&format!("#{generated}"));
+        assert!(
+            parsed.errors_and_warnings().0.is_empty(),
+            "generated width-only placeholder must remain valid Typst syntax"
+        );
+    }
+
+    #[test]
+    fn preserves_intrinsic_ratio_for_height_only_images() {
+        let workspace = tempfile::tempdir().unwrap();
+        let image = workspace.path().join("tall.png");
+        let mut png = vec![0u8; 24];
+        png[..8].copy_from_slice(b"\x89PNG\r\n\x1a\n");
+        png[16..20].copy_from_slice(&600u32.to_be_bytes());
+        png[20..24].copy_from_slice(&1200u32.to_be_bytes());
+        fs::write(&image, png).unwrap();
+        let prepared = prepare_draft_images(
+            workspace.path(),
+            &workspace.path().join("main.typ"),
+            &workspace.path().join("cache/render/main.typ"),
+            &workspace.path().join("cache/render"),
+            "#image(\"tall.png\", height: 6cm)",
+        );
+
+        let generated = &prepared.replacements[0].generated;
+        assert!(generated.contains("block(height: 6cm,"));
+        assert!(generated.contains("viewBox='0 0 600 1200'"));
+        assert!(generated.contains("height: 100%)"));
+        assert!(!generated.contains("width: 50.000000pt"));
+    }
+
+    #[test]
+    fn uses_a_dedicated_image_frame_as_the_placeholder_boundary() {
+        let workspace = tempfile::tempdir().unwrap();
+        let image = workspace.path().join("wide.png");
+        let mut png = vec![0u8; 24];
+        png[..8].copy_from_slice(b"\x89PNG\r\n\x1a\n");
+        png[16..20].copy_from_slice(&1600u32.to_be_bytes());
+        png[20..24].copy_from_slice(&900u32.to_be_bytes());
+        fs::write(&image, png).unwrap();
+        let source = "#block(width: 100%, height: 10cm, above: 0pt, below: 0pt, clip: true, stroke: 1pt + black)[\n  #move(dy: -2cm, [#image(\"wide.png\", width: 100%, height: 12cm, fit: \"cover\")])\n]";
+        let prepared = prepare_draft_images(
+            workspace.path(),
+            &workspace.path().join("main.typ"),
+            &workspace.path().join("cache/render/main.typ"),
+            &workspace.path().join("cache/render"),
+            source,
+        );
+
+        assert_eq!(prepared.replacements.len(), 1);
+        let replacement = &prepared.replacements[0];
+        assert_eq!(replacement.start, source.find("image(").unwrap());
+        assert!(source[replacement.start..replacement.end].starts_with("image("));
+        assert!(replacement.generated.contains("width: 100%"));
+        assert!(replacement.generated.contains("height: 10cm"));
+        assert_eq!(replacement.generated.matches("clip: true").count(), 1);
+        assert_eq!(replacement.generated.matches("stroke:").count(), 0);
+        assert!(replacement.generated.contains("move(dy: -(-2cm),"));
+        assert!(!replacement.generated.contains("height: 12cm"));
+        let parsed = typst_syntax::parse(&format!("#{}", replacement.generated));
+        assert!(
+            parsed.errors_and_warnings().0.is_empty(),
+            "generated frame placeholder must remain valid Typst syntax"
+        );
+        assert_eq!(
+            prepared.assets[0].references[0].from_utf16,
+            source[..source.find("image(").unwrap()]
+                .encode_utf16()
+                .count()
+        );
+    }
+
+    #[test]
+    fn keeps_image_level_replacement_for_mixed_content_blocks() {
+        let workspace = tempfile::tempdir().unwrap();
+        let image = workspace.path().join("wide.png");
+        let mut png = vec![0u8; 24];
+        png[..8].copy_from_slice(b"\x89PNG\r\n\x1a\n");
+        png[16..20].copy_from_slice(&1600u32.to_be_bytes());
+        png[20..24].copy_from_slice(&900u32.to_be_bytes());
+        fs::write(&image, png).unwrap();
+        let source = "#block(width: 100%, height: 10cm, clip: true)[\n  #move(dy: -2cm, [#image(\"wide.png\", height: 12cm)])\n  Caption\n]";
+        let prepared = prepare_draft_images(
+            workspace.path(),
+            &workspace.path().join("main.typ"),
+            &workspace.path().join("cache/render/main.typ"),
+            &workspace.path().join("cache/render"),
+            source,
+        );
+
+        assert_eq!(prepared.replacements.len(), 1);
+        assert_eq!(
+            prepared.replacements[0].start,
+            source.find("image(").unwrap()
+        );
+        assert!(prepared.replacements[0].generated.contains("height: 12cm"));
     }
 
     #[test]

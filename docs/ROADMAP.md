@@ -148,7 +148,7 @@ manageable without changing the portable Typst source model.
 - Add **Draft Preview**, a preview-only render mode that replaces statically
   resolvable image calls in Typsastra's private render mirror with lightweight
   layout-preserving placeholders. Each placeholder uses a linked Typst block
-  with a fixed-size raw relative-path label. Explicit `width` and `height`
+  with a fixed-size relative-path label. Explicit `width` and `height`
   values transfer to the block; missing dimensions use a normalized
   ratio-derived fallback, while image-only fitting options are omitted.
   Hovering a placeholder may load the real image as a

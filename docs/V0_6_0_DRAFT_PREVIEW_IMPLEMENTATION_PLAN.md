@@ -67,7 +67,7 @@ The overlay contract is:
 Generated wrappers are recorded in the private render source map. Unchanged
 source remains mapped normally, while each linked block maps back to the
 original image call. Hovering or keyboard-focusing a Draft placeholder inspects
-its original image. Clicking the block, including its raw path label, uses its
+its original image. Clicking the block, including its fixed-size path label, uses its
 generation manifest to inverse-sync directly to the original source
 `image(...)` call without asking Tinymist to resolve synthetic coordinates.
 

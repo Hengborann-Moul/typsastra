@@ -37,7 +37,7 @@ describe("Draft Preview", () => {
     expect(previewFrame).toContain("this.onPreviewClick({ draftImageId: annotationTarget.id })");
     expect(controller).toContain("await this.navigateToDraftPreviewImage(point.draftImageId)");
     expect(previewFrame).not.toContain('if (this.annotationTargets.get(annotationLink)?.kind === "draft-image")');
-    expect(plan).toContain("including its raw path label");
+    expect(plan).toContain("including its fixed-size path label");
   });
 
   test("loads hovered images from the backend-validated generation manifest", () => {
