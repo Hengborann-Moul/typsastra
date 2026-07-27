@@ -28,7 +28,7 @@ Khmer is the first language with deep support, including tailored cursor and del
 - Tinymist diagnostics and managed Typst tooling.
 - Virtualized PDF preview designed for long documents and constrained memory use.
 - Main-document preview workflows for multi-file projects.
-- Workspace support for templates, chapters, includes, bibliography files, figures, and external assets.
+- Project support for templates, chapters, includes, bibliography files, figures, and external assets.
 - Contributor framework for adding new complex-script languages without modifying core editor code.
 
 == Language support

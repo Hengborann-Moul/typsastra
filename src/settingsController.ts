@@ -352,8 +352,8 @@ export class SettingsController {
       previewRenderMode.value = effectivePreviewRenderMode;
       previewRenderMode.disabled = false;
       const scope = this.workspacePreviewRenderMode === null
-        ? "This is the default for workspaces without a saved preference."
-        : "This preference is stored in the current workspace.";
+        ? "This is the default for projects without a saved preference."
+        : "This preference is stored in the current project.";
       previewRenderMode.title = effectivePreviewRenderMode === "on-type"
         ? `Update the PDF preview after typing pauses. ${scope}`
         : `Update the PDF preview after saving. ${scope}`;

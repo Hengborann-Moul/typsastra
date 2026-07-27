@@ -185,7 +185,7 @@ Typst formatting is available from **Edit → Format Document** or `Ctrl+Shift+F
 ## Keyboard shortcuts
 
 - `Ctrl + N`: New File
-- `Ctrl + K`, `Ctrl + O`: Open Workspace
+- `Ctrl + K`, `Ctrl + O`: Open Project
 - `Ctrl + B`: Toggle Explorer Sidebar
 - `Ctrl + ,`: Open Settings
 - `Ctrl + Shift + F`: Format Document

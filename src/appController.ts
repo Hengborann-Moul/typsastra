@@ -3600,7 +3600,7 @@ export class TypsastraWorkspaceController {
 
   private async reloadWorkspaceFonts(): Promise<void> {
     if (!this.lspClient || !this.workspaceRootPath) return;
-    await this.restartTinymistSession("Reloading workspace fonts...");
+    await this.restartTinymistSession("Reloading project fonts...");
     const lspMainPath = this.cachedPreviewCompilerPath(this.previewStandalone
       ? this.previewRootPath
       : (this.previewMainPath ?? this.previewRootPath));
@@ -7388,7 +7388,7 @@ export class TypsastraWorkspaceController {
       this.openTabs = [];
       this.explorer.setActiveFile(null);
       this.renderEditorTabs();
-      await message(String(error), { title: "Unable to Open Workspace", kind: "error" });
+      await message(String(error), { title: "Unable to Open Project", kind: "error" });
       return;
     } finally {
       this.workspaceLoading = false;
@@ -7426,7 +7426,7 @@ export class TypsastraWorkspaceController {
       if (this.workspaceRootPath !== selected) return;
       if (this.lspClient) {
         try {
-          await this.restartTinymistSession("Connecting to new workspace root...");
+          await this.restartTinymistSession("Connecting to new project...");
           if (this.workspaceRootPath !== selected) return;
         } catch (error) {
           if (this.workspaceRootPath !== selected) return;
@@ -7889,7 +7889,7 @@ export class TypsastraWorkspaceController {
     const confirmUnsaved = options.confirmUnsaved ?? true;
     if (confirmUnsaved && this.openTabs.some(tab => tab.isDirty)) {
       const shouldClose = await confirm(
-        "Close this project with unsaved changes? The editor state will be kept for workspace recovery, but the files are not saved to disk.",
+        "Close this project with unsaved changes? The editor state will be kept for session recovery, but the files are not saved to disk.",
         { title: "Unsaved Changes", kind: "warning" }
       );
       if (!shouldClose) return false;
@@ -8256,7 +8256,7 @@ export class TypsastraWorkspaceController {
 
     document.getElementById("action-new-file")?.addEventListener("click", async () => {
       if (!this.workspaceRootPath) {
-        alert("Please open a project workspace first.");
+        alert("Please open a project first.");
         return;
       }
       const savePath = await save({
@@ -8383,7 +8383,7 @@ export class TypsastraWorkspaceController {
 
     document.getElementById("action-export-project")?.addEventListener("click", async () => {
       if (!this.workspaceRootPath) {
-        alert("Please open a project workspace first.");
+        alert("Please open a project first.");
         return;
       }
       if (this.openTabs.some(tab => tab.isDirty)) {
@@ -8438,7 +8438,7 @@ export class TypsastraWorkspaceController {
 
     document.getElementById("action-export-source-zip")?.addEventListener("click", async () => {
       if (!this.workspaceRootPath) {
-        alert("Please open a project workspace first.");
+        alert("Please open a project first.");
         return;
       }
       if (this.openTabs.some(tab => tab.isDirty)) {

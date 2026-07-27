@@ -3,7 +3,7 @@
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>Typsastra Workspace</title>
+        <title>Typsastra</title>
         <link rel="icon" type="image/png" href="/assets/typsastra-favicon.png" />
     </head>
     <body>
@@ -28,7 +28,7 @@
                                     class="dropdown-item"
                                     id="action-open-folder"
                                 >
-                                    Open Workspace...
+                                    Open Project...
                                     <span class="hotkey">Ctrl+K Ctrl+O</span>
                                 </div>
                                 <div
@@ -89,7 +89,7 @@
                                     class="dropdown-item"
                                     id="action-restart-workspace"
                                 >
-                                    Restart Workspace
+                                    Reload Project
                                 </div>
                                 <div
                                     class="dropdown-item"
@@ -276,7 +276,7 @@
                         <svg viewBox="0 0 16 16" width="15" height="15"></svg>
                     </button>
                 </nav>
-                <aside id="explorer-sidebar" aria-label="Workspace sidebar">
+                <aside id="explorer-sidebar" aria-label="Project sidebar">
                     <section class="sidebar-section workspace-explorer-section">
                         <div class="sidebar-section-header">
                             <span>EXPLORER</span>
@@ -318,7 +318,7 @@
                 <div id="workspace-viewport">
                     <div id="workspace-loading" class="workspace-loading hidden" role="status" aria-live="polite">
                         <div class="workspace-loading-spinner" aria-hidden="true"></div>
-                        <strong>Loading workspace…</strong>
+                        <strong>Loading project…</strong>
                         <span>Restoring project settings, tabs, and layout.</span>
                     </div>
                     <div id="welcome-screen">
@@ -2134,7 +2134,7 @@
                 <header class="settings-header">
                     <div>
                         <h2 id="recent-projects-title">Recent Projects</h2>
-                        <p>Search up to 32 recently opened workspaces</p>
+                        <p>Search up to 32 recent projects</p>
                     </div>
                     <button
                         id="recent-projects-close"
@@ -2543,7 +2543,7 @@
                                     <option value="on-save">On save</option>
                                 </select>
                                 <small
-                                    >Stored per workspace. On type updates the PDF preview after typing pauses. On save minimizes background compilation.</small
+                                    >Stored per project. On type updates the PDF preview after typing pauses. On save minimizes background compilation.</small
                                 >
                             </div>
                             <!-- TODO: Re-enable in prerelease v0.9.0 after improving performance and timeout reliability -->
@@ -2774,7 +2774,7 @@
                                 <label class="settings-toggle"
                                     ><input id="settings-dev-log-general" type="checkbox"
                                     /><span><strong>Layout and general</strong
-                                    ><small>Editor layout, workspace, typography, and other debug events.</small></span
+                                    ><small>Editor layout, project session, typography, and other debug events.</small></span
                                 ></label>
                             </div>
                         </div>

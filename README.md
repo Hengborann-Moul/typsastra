@@ -117,7 +117,7 @@ Typsastra also treats a document as a project rather than an isolated file. A re
 - Explicit source-to-preview navigation through the preview toolbar or keyboard shortcut.
 - Portable `.typsastra` workspace state, lazy restored tabs, and confirmation before loading large files.
 - Searchable recent-project history, signed update detection, and explicit Tinymist lifecycle management.
-- Workspace support for templates, chapters, includes, bibliography files, figures, and external assets.
+- Project support for templates, chapters, includes, bibliography files, figures, and external assets.
 - Contributor framework for adding new complex-script languages without modifying core editor code.
 
 ## Language support

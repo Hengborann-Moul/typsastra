@@ -74,7 +74,7 @@ export class WorkspaceExplorer {
   ) {
     this.container.tabIndex = 0;
     this.container.setAttribute("role", "tree");
-    this.container.setAttribute("aria-label", "Workspace Explorer");
+    this.container.setAttribute("aria-label", "Project Explorer");
     this.container.addEventListener("pointerdown", event => {
       if (!(event.target as HTMLElement).closest("input, textarea")) {
         this.container.focus({ preventScroll: true });
@@ -173,7 +173,7 @@ export class WorkspaceExplorer {
     initialExpandedPaths.forEach(path => viewState.expandedPaths.add(path));
     const isFirstLoad = !this.container.querySelector(".file-tree-branch");
     if (isFirstLoad) {
-      this.container.innerHTML = `<div class="explorer-loading">Scanning Workspace...</div>`;
+      this.container.innerHTML = `<div class="explorer-loading">Scanning Project...</div>`;
     }
     try {
       const nodes = await this.readDirectory(rootPath);
