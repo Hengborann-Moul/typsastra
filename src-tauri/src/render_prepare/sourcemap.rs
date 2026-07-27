@@ -25,6 +25,8 @@ pub struct SourceMap {
     pub source_file: String,
     pub generated_file: String,
     pub mappings: Vec<TextMapping>,
+    #[serde(default)]
+    pub preview_content_mode: String,
 }
 
 impl SourceMap {
@@ -34,6 +36,7 @@ impl SourceMap {
             source_file,
             generated_file,
             mappings: Vec::new(),
+            preview_content_mode: "normal".into(),
         }
     }
 

@@ -7,6 +7,8 @@ export type PerformanceMetricName =
   | "editor.input-frame"
   | "editor.long-task"
   | "preview.compile"
+  | "preview.draft-prepare"
+  | "preview.draft-hover"
   | "preview.load"
   | "preview.geometry"
   | "preview.canvas-render"

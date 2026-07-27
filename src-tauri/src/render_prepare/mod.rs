@@ -1,10 +1,12 @@
 #![allow(unused_imports)]
 
+pub mod draft;
 pub mod mirror;
 pub mod scanner;
 pub mod segment;
 pub mod sourcemap;
 
+pub use draft::{DraftImageAsset, DraftImageDiagnostic, PreviewContentMode};
 pub use mirror::{
     mirror_project_cancellable, prepare_single_in_memory_file,
     validate_existing_render_cache_owner, RenderPrepareOptions, RenderPrepareResult,
@@ -14,8 +16,10 @@ pub use segment::KhmerTextSegmenter;
 pub use sourcemap::SourceMap;
 
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 
 static RENDER_PREPARATION_EPOCH: AtomicU64 = AtomicU64::new(0);
+static RENDER_PREPARATION_LOCK: Mutex<()> = Mutex::new(());
 
 #[tauri::command]
 pub fn cancel_render_preparation() {
@@ -28,6 +32,9 @@ pub async fn prepare_render_project(
 ) -> Result<RenderPrepareResult, String> {
     let epoch = RENDER_PREPARATION_EPOCH.load(Ordering::Acquire);
     tokio::task::spawn_blocking(move || -> Result<RenderPrepareResult, String> {
+        let _preparation_guard = RENDER_PREPARATION_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let segmenter = if options.enable_khmer_zws {
             Some(KhmerTextSegmenter::new()?)
         } else {
@@ -46,6 +53,8 @@ pub async fn prepare_render_project(
 pub struct RenderPrepareFileResult {
     pub generated_path: String,
     pub prepared_text: String,
+    pub draft_assets: Vec<DraftImageAsset>,
+    pub draft_diagnostics: Vec<DraftImageDiagnostic>,
 }
 
 #[tauri::command]
@@ -56,6 +65,9 @@ pub async fn prepare_render_file(
 ) -> Result<RenderPrepareFileResult, String> {
     let epoch = RENDER_PREPARATION_EPOCH.load(Ordering::Acquire);
     tokio::task::spawn_blocking(move || -> Result<RenderPrepareFileResult, String> {
+        let _preparation_guard = RENDER_PREPARATION_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if RENDER_PREPARATION_EPOCH.load(Ordering::Acquire) != epoch {
             return Err("Render preparation cancelled.".to_string());
         }
@@ -65,14 +77,16 @@ pub async fn prepare_render_file(
             None
         };
         let path = std::path::Path::new(&file_path);
-        let dest = prepare_single_in_memory_file(&options, segmenter.as_ref(), path, &source_code)?;
+        let prepared =
+            prepare_single_in_memory_file(&options, segmenter.as_ref(), path, &source_code)?;
         if RENDER_PREPARATION_EPOCH.load(Ordering::Acquire) != epoch {
             return Err("Render preparation cancelled.".to_string());
         }
-        let prepared_text = std::fs::read_to_string(&dest).map_err(|e| e.to_string())?;
         Ok(RenderPrepareFileResult {
-            generated_path: dest.to_string_lossy().to_string(),
-            prepared_text,
+            generated_path: prepared.path.to_string_lossy().to_string(),
+            prepared_text: prepared.prepared_text,
+            draft_assets: prepared.draft.assets,
+            draft_diagnostics: prepared.draft.diagnostics,
         })
     })
     .await

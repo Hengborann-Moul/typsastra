@@ -1,6 +1,7 @@
 export type PreviewClickPoint = {
   pageNo?: number;
   documentPosition?: { page_no: number; x: number; y: number };
+  draftImageId?: string;
 };
 
 export type PreviewInteractionStatus = {
@@ -15,6 +16,14 @@ export type PreviewPageStatus = {
 };
 
 export type PreviewSurface = "live" | "pdf";
+
+export type DraftPreviewImage = {
+  bytes: Uint8Array;
+  mimeType: string;
+  filename: string;
+  width: number;
+  height: number;
+};
 
 export type PreviewMemorySnapshot = {
   pdfGeneration: number;
@@ -116,6 +125,9 @@ export class PreviewFrame {
   private lastPageStatusKey = "";
   private instantScrollTargetPage: number | null = null;
   private readonly annotationTargets = new WeakMap<HTMLElement, PreviewLinkTarget>();
+  private draftPopover: HTMLElement | null = null;
+  private draftObjectUrl: string | null = null;
+  private draftHoverGeneration = 0;
 
   constructor(
     private readonly pane: HTMLElement,
@@ -123,7 +135,8 @@ export class PreviewFrame {
     private readonly onInteractionStatus?: (status: PreviewInteractionStatus) => void,
     private readonly onZoomChanged?: (zoomPercent: number) => void,
     private readonly onPerformance?: (metric: Omit<PerformanceMetric, "recordedAt">) => void,
-    private readonly onPageChanged?: (status: PreviewPageStatus) => void
+    private readonly onPageChanged?: (status: PreviewPageStatus) => void,
+    private readonly onDraftImageRequest?: (id: string) => Promise<DraftPreviewImage | null>
   ) {
     this.pane.addEventListener("wheel", event => {
       if (event.ctrlKey) {
@@ -266,6 +279,7 @@ export class PreviewFrame {
   }
 
   private setZoom(percent: number, preservedAnchor?: ScrollAnchor | null): number {
+    this.hideDraftImagePopover();
     this.updateHorizontalOverflow();
     if (percent === this.previewZoomPercent) return percent;
     this.zoomStartedAt = performance.now();
@@ -296,6 +310,7 @@ export class PreviewFrame {
     sessionKey = identity,
     surface: PreviewSurface = "live",
   ): Promise<void> {
+    this.hideDraftImagePopover();
     const startedAt = performance.now();
     const generation = ++this.pdfGeneration;
     const obsoleteLoadingTask = this.pendingPdfLoadingTask;
@@ -446,6 +461,11 @@ export class PreviewFrame {
       @keyframes typsastra-forward-ripple{0%{opacity:0;transform:scale(.55);box-shadow:0 0 0 0 rgba(61,180,137,.38)}12%{opacity:1}100%{opacity:0;transform:scale(3.1);box-shadow:0 0 0 14px rgba(61,180,137,0)}}
       .annotation-link{position:absolute;display:block;box-sizing:border-box;cursor:default;text-decoration:none}
       .preview-link-modifier .annotation-link:hover{cursor:pointer;background:color-mix(in srgb,var(--preview-ui-accent) 14%,transparent)}
+      .annotation-link.draft-image-link{cursor:zoom-in;background:transparent}
+      .annotation-link.draft-image-link:hover,.annotation-link.draft-image-link:focus-visible{outline:2px solid color-mix(in srgb,var(--preview-ui-accent) 72%,transparent);outline-offset:-2px;background:color-mix(in srgb,var(--preview-ui-accent) 7%,transparent)}
+      .draft-image-popover{position:fixed;z-index:2147483646;box-sizing:border-box;max-width:60vw;max-height:60vh;padding:8px;border:1px solid var(--preview-ui-header);background:var(--preview-ui-bg);color:var(--preview-ui-header);box-shadow:0 8px 28px rgba(0,0,0,.35);pointer-events:none}
+      .draft-image-popover img{display:block;max-width:calc(60vw - 16px);max-height:calc(60vh - 42px);object-fit:contain}
+      .draft-image-popover-label{padding-top:6px;max-width:calc(60vw - 16px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}
       ::selection{background:rgba(0,120,215,.35)}
     </style></head><body><div id="viewer-container"></div></body></html>`;
     iframe.addEventListener("load", () => this.setupIframeInteractions());
@@ -873,9 +893,17 @@ export class PreviewFrame {
         const right = Math.max(rect[0], rect[2]);
         const bottom = Math.min(Number(viewport.height), Math.max(rect[1], rect[3]) + 2);
         const link = doc.createElement("a");
-        link.className = "annotation-link";
+        link.className = `annotation-link${target.kind === "draft-image" ? " draft-image-link" : ""}`;
         link.setAttribute("role", "link");
-        link.setAttribute("aria-label", target.kind === "external" ? target.url : "PDF document link");
+        link.setAttribute(
+          "aria-label",
+          target.kind === "external"
+            ? target.url
+            : target.kind === "draft-image"
+              ? "Draft image placeholder. Hover or focus to view the original image; click to reveal its source."
+              : "PDF document link"
+        );
+        if (target.kind === "draft-image") link.tabIndex = 0;
         this.annotationTargets.set(link, target);
         link.style.left = `${left}px`;
         link.style.top = `${top}px`;
@@ -1152,6 +1180,22 @@ export class PreviewFrame {
     doc.addEventListener("pointermove", event => {
       this.setPreviewLinkModifier(doc, previewLinkModifierPressed(event));
     }, { passive: true });
+    doc.addEventListener("pointerover", event => {
+      const link = (event.target as Element | null)?.closest<HTMLElement>(".draft-image-link");
+      if (link) void this.showDraftImagePopover(link);
+    });
+    doc.addEventListener("pointerout", event => {
+      const link = (event.target as Element | null)?.closest<HTMLElement>(".draft-image-link");
+      const related = event.relatedTarget as Node | null;
+      if (link && (!related || !link.contains(related))) this.hideDraftImagePopover();
+    });
+    doc.addEventListener("focusin", event => {
+      const link = (event.target as Element | null)?.closest<HTMLElement>(".draft-image-link");
+      if (link) void this.showDraftImagePopover(link);
+    });
+    doc.addEventListener("focusout", event => {
+      if ((event.target as Element | null)?.closest(".draft-image-link")) this.hideDraftImagePopover();
+    });
     doc.addEventListener("keydown", event => {
       this.setPreviewLinkModifier(doc, previewLinkModifierPressed(event) || event.key === "Control" || event.key === "Meta");
     });
@@ -1164,6 +1208,15 @@ export class PreviewFrame {
       const mouse = event as MouseEvent;
       if (annotationLink) {
         event.preventDefault();
+        const annotationTarget = this.annotationTargets.get(annotationLink);
+        if (annotationTarget?.kind === "draft-image") {
+          this.hideDraftImagePopover();
+          if (mouse.button === 0 && !previewLinkModifierPressed(mouse)) {
+            event.stopPropagation();
+            this.onPreviewClick({ draftImageId: annotationTarget.id });
+            return;
+          }
+        }
         if (mouse.button === 0 && previewLinkModifierPressed(mouse)) {
           event.stopPropagation();
           void this.activatePreviewLink(annotationLink);
@@ -1194,7 +1247,10 @@ export class PreviewFrame {
     }, { passive: false });
     this.iframe?.contentWindow?.addEventListener(
       "scroll",
-      () => this.deferPageRenderingDuringScroll(),
+      () => {
+        this.hideDraftImagePopover();
+        this.deferPageRenderingDuringScroll();
+      },
       { passive: true }
     );
   }
@@ -1206,6 +1262,7 @@ export class PreviewFrame {
   private async activatePreviewLink(link: HTMLElement): Promise<void> {
     const target = this.annotationTargets.get(link);
     if (!target) return;
+    if (target.kind === "draft-image") return;
     if (target.kind === "external") {
       try {
         await openUrl(target.url);
@@ -1276,6 +1333,7 @@ export class PreviewFrame {
   }
 
   public async clear(): Promise<void> {
+    this.hideDraftImagePopover();
     ++this.pdfGeneration;
     releaseCanvasResources(this.iframe?.contentDocument?.documentElement ?? null);
     this.iframe?.remove();
@@ -1291,7 +1349,72 @@ export class PreviewFrame {
     this.reportPageStatus(0);
   }
 
+  private async showDraftImagePopover(link: HTMLElement): Promise<void> {
+    const startedAt = performance.now();
+    const target = this.annotationTargets.get(link);
+    if (target?.kind !== "draft-image" || !this.onDraftImageRequest) return;
+    const generation = ++this.draftHoverGeneration;
+    await new Promise(resolve => window.setTimeout(resolve, 120));
+    if (generation !== this.draftHoverGeneration || !link.matches(":hover, :focus")) return;
+    const image = await this.onDraftImageRequest(target.id).catch(() => null);
+    if (generation !== this.draftHoverGeneration || !image) return;
+    this.hideDraftImagePopover(false);
+    const doc = this.iframe?.contentDocument;
+    if (!doc) return;
+    const objectUrl = URL.createObjectURL(
+      new Blob([Uint8Array.from(image.bytes).buffer], { type: image.mimeType })
+    );
+    this.draftObjectUrl = objectUrl;
+    const popover = doc.createElement("div");
+    popover.className = "draft-image-popover";
+    popover.setAttribute("role", "tooltip");
+    const preview = doc.createElement("img");
+    preview.src = objectUrl;
+    preview.alt = image.filename;
+    await preview.decode().catch(() => {});
+    if (generation !== this.draftHoverGeneration || !link.matches(":hover, :focus")) {
+      this.hideDraftImagePopover();
+      return;
+    }
+    const label = doc.createElement("div");
+    label.className = "draft-image-popover-label";
+    label.textContent = `${image.filename} - ${image.width.toLocaleString()} x ${image.height.toLocaleString()}`;
+    popover.append(preview, label);
+    doc.body.append(popover);
+    const anchor = link.getBoundingClientRect();
+    const width = Math.min(popover.offsetWidth, (this.iframe?.contentWindow?.innerWidth ?? 800) * 0.6);
+    const height = Math.min(popover.offsetHeight, (this.iframe?.contentWindow?.innerHeight ?? 600) * 0.6);
+    const viewportWidth = this.iframe?.contentWindow?.innerWidth ?? 800;
+    const viewportHeight = this.iframe?.contentWindow?.innerHeight ?? 600;
+    const left = Math.max(8, Math.min(anchor.left, viewportWidth - width - 8));
+    const preferredTop = anchor.bottom + 8;
+    const top = preferredTop + height <= viewportHeight
+      ? preferredTop
+      : Math.max(8, anchor.top - height - 8);
+    popover.style.left = `${left}px`;
+    popover.style.top = `${top}px`;
+    this.draftPopover = popover;
+    this.onPerformance?.({
+      name: "preview.draft-hover",
+      milliseconds: performance.now() - startedAt,
+      detail: {
+        sourceBytes: image.bytes.byteLength,
+        width: image.width,
+        height: image.height
+      }
+    });
+  }
+
+  private hideDraftImagePopover(invalidate = true): void {
+    if (invalidate) this.draftHoverGeneration += 1;
+    this.draftPopover?.remove();
+    this.draftPopover = null;
+    if (this.draftObjectUrl) URL.revokeObjectURL(this.draftObjectUrl);
+    this.draftObjectUrl = null;
+  }
+
   public setMessage(html: string): void {
+    this.hideDraftImagePopover();
     ++this.pdfGeneration;
     releaseCanvasResources(this.iframe?.contentDocument?.documentElement ?? null);
     this.iframe?.remove();

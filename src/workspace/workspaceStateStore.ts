@@ -25,7 +25,7 @@ export type StoredProjectState = {
 };
 
 export type StoredWorkspaceState = {
-  schemaVersion: 1;
+  schemaVersion: 2;
   activeFile: string | null;
   openTabs: StoredWorkspaceTab[];
   expandedDirectories: string[];
@@ -35,6 +35,7 @@ export type StoredWorkspaceState = {
     sidebarVisible: boolean;
   };
   selectedToolchain: StoredWorkspaceToolchain | null;
+  previewContentMode: "normal" | "draft";
 };
 
 export type WorkspaceMetadata = {
@@ -113,7 +114,7 @@ export function normalizeWorkspaceMetadata(
       terminology: normalizeProjectTerminology(project.terminology)
     },
     workspace: {
-      schemaVersion: 1,
+      schemaVersion: 2,
       activeFile: safeRelativeWorkspacePath(workspace.activeFile),
       openTabs,
       expandedDirectories: Array.isArray(workspace.expandedDirectories)
@@ -124,7 +125,8 @@ export function normalizeWorkspaceMetadata(
         explorerSidebarWidthPx: numberOr(layout.explorerSidebarWidthPx, 250),
         sidebarVisible: typeof layout.sidebarVisible === "boolean" ? layout.sidebarVisible : true
       },
-      selectedToolchain: toolchainOrNull(workspace.selectedToolchain)
+      selectedToolchain: toolchainOrNull(workspace.selectedToolchain),
+      previewContentMode: workspace.previewContentMode === "draft" ? "draft" : "normal"
     }
   };
 }

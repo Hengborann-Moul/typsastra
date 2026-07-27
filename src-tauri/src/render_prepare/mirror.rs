@@ -2,6 +2,10 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use super::draft::{
+    prepare_draft_images, DraftImageAsset, DraftImageDiagnostic, DraftPreparation,
+    PreviewContentMode,
+};
 use super::scanner::{scan_typst_content, ScanState};
 use super::segment::{prepare_khmer_text_for_rendering, KhmerTextSegmenter};
 use super::sourcemap::{MappingKind, SourceMap, SOURCE_MAP_VERSION};
@@ -9,6 +13,7 @@ use super::sourcemap::{MappingKind, SourceMap, SOURCE_MAP_VERSION};
 const RENDER_CACHE_LAYOUT_VERSION: &str = "3-flat-preview-output";
 const RENDER_CACHE_OWNER_SCHEMA_VERSION: u32 = 1;
 const RENDER_CACHE_OWNER_FILE: &str = "workspace-owner.json";
+const DRAFT_ASSET_DIRECTORY: &str = ".typsastra-draft-assets";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -32,6 +37,8 @@ pub struct RenderPrepareOptions {
     pub entry_file: PathBuf,
     pub cache_root: PathBuf,
     pub generate_source_map: bool,
+    #[serde(default)]
+    pub preview_content_mode: PreviewContentMode,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,6 +47,8 @@ pub struct RenderPrepareResult {
     pub generated_entry_file: PathBuf,
     pub changed_files: Vec<PathBuf>,
     pub warnings: Vec<RenderPrepareWarning>,
+    pub draft_assets: Vec<DraftImageAsset>,
+    pub draft_diagnostics: Vec<DraftImageDiagnostic>,
 }
 
 pub fn mirror_project_cancellable(
@@ -66,6 +75,8 @@ pub fn mirror_project_cancellable(
 
     let mut changed_files = Vec::new();
     let mut warnings = Vec::new();
+    let mut draft_assets = Vec::new();
+    let mut draft_diagnostics = Vec::new();
 
     let mut files_to_process = Vec::new();
     walk_project_dir(
@@ -104,10 +115,12 @@ pub fn mirror_project_cancellable(
                     &src_path, &dest_path, &rel_path, &maps_dir, options, segmenter,
                 );
                 match result {
-                    Ok(changed) => {
-                        if changed {
+                    Ok(processed) => {
+                        if processed.changed {
                             changed_files.push(dest_path.clone());
                         }
+                        merge_draft_assets(&mut draft_assets, processed.draft.assets);
+                        draft_diagnostics.extend(processed.draft.diagnostics);
                     }
                     Err(e) => {
                         warnings.push(RenderPrepareWarning {
@@ -151,6 +164,8 @@ pub fn mirror_project_cancellable(
         generated_entry_file,
         changed_files,
         warnings,
+        draft_assets,
+        draft_diagnostics,
     })
 }
 
@@ -292,6 +307,15 @@ fn walk_for_stale(
         let entry = entry?;
         let path = entry.path();
         let rel = path.strip_prefix(base_render).unwrap_or(&path);
+        // Draft placeholders are generated render inputs, not mirrors of
+        // workspace files. A cancelled Normal/Draft transition may overlap
+        // another preparation, so the ordinary stale-mirror sweep must never
+        // delete this directory out from under an active Draft generation.
+        if rel.components().next().is_some_and(|component| {
+            component.as_os_str() == std::ffi::OsStr::new(DRAFT_ASSET_DIRECTORY)
+        }) {
+            continue;
+        }
         let src_path = project_root.join(rel);
 
         if !src_path.exists() {
@@ -308,7 +332,7 @@ pub fn prepare_single_in_memory_file(
     segmenter: Option<&KhmerTextSegmenter>,
     file_path: &Path,
     source_code: &str,
-) -> Result<PathBuf, String> {
+) -> Result<PreparedInMemoryFile, String> {
     let project_root = &options.project_root;
     let cache_root = &options.cache_root;
 
@@ -327,37 +351,10 @@ pub fn prepare_single_in_memory_file(
         file_path.to_string_lossy().to_string(),
         dest_path.to_string_lossy().to_string(),
     );
-
-    let mut generated_content = String::new();
-    let chunks = scan_typst_content(source_code);
-
-    for (state, start, end, scope) in chunks {
-        let chunk_text = &source_code[start..end];
-        if options.enable_khmer_zws && state == ScanState::MarkupText {
-            let segmenter =
-                segmenter.ok_or_else(|| "Khmer segmenter is unavailable.".to_string())?;
-            let prepared = prepare_khmer_text_for_rendering(
-                chunk_text,
-                &segmenter.segmenter,
-                &segmenter.hyphenation,
-                start,
-                generated_content.len(),
-                &mut sourcemap,
-                scope,
-            );
-            generated_content.push_str(&prepared);
-        } else {
-            let gen_start = generated_content.len();
-            generated_content.push_str(chunk_text);
-            sourcemap.add_mapping(
-                gen_start,
-                generated_content.len(),
-                start,
-                end,
-                MappingKind::Original,
-            );
-        }
-    }
+    sourcemap.preview_content_mode = content_mode_key(options.preview_content_mode).into();
+    let draft = draft_preparation(options, file_path, &dest_path, source_code);
+    let generated_content =
+        prepare_source_content(source_code, options, segmenter, &draft, &mut sourcemap)?;
 
     fs::write(&dest_path, &generated_content).map_err(|e| e.to_string())?;
 
@@ -376,7 +373,18 @@ pub fn prepare_single_in_memory_file(
         fs::write(map_path, map_json).map_err(|e| e.to_string())?;
     }
 
-    Ok(dest_path)
+    Ok(PreparedInMemoryFile {
+        path: dest_path,
+        prepared_text: generated_content,
+        draft,
+    })
+}
+
+#[derive(Debug)]
+pub struct PreparedInMemoryFile {
+    pub path: PathBuf,
+    pub prepared_text: String,
+    pub draft: DraftPreparation,
 }
 
 fn walk_project_dir(
@@ -451,6 +459,11 @@ fn copy_asset_to_cache(src: &Path, dest: &Path) -> Result<bool, std::io::Error> 
     Ok(true)
 }
 
+struct ProcessedTypFile {
+    changed: bool,
+    draft: DraftPreparation,
+}
+
 fn process_typ_file(
     src: &Path,
     dest: &Path,
@@ -458,8 +471,11 @@ fn process_typ_file(
     maps_dir: &Path,
     options: &RenderPrepareOptions,
     segmenter: Option<&KhmerTextSegmenter>,
-) -> Result<bool, String> {
-    if dest.exists() {
+) -> Result<ProcessedTypFile, String> {
+    // Draft preparation also produces a generation-scoped asset manifest for
+    // hover previews. Re-analyze unchanged Typst files in Draft mode rather
+    // than returning a prepared file without its manifest.
+    if options.preview_content_mode == PreviewContentMode::Normal && dest.exists() {
         if let (Ok(src_meta), Ok(dest_meta)) = (fs::metadata(src), fs::metadata(dest)) {
             if let (Ok(src_mod), Ok(dest_mod)) = (src_meta.modified(), dest_meta.modified()) {
                 if src_mod <= dest_mod {
@@ -473,12 +489,19 @@ fn process_typ_file(
                         fs::read_to_string(maps_dir.join(map_rel))
                             .ok()
                             .and_then(|content| serde_json::from_str::<SourceMap>(&content).ok())
-                            .is_some_and(|map| map.version == SOURCE_MAP_VERSION)
+                            .is_some_and(|map| {
+                                map.version == SOURCE_MAP_VERSION
+                                    && map.preview_content_mode
+                                        == content_mode_key(options.preview_content_mode)
+                            })
                     } else {
                         true
                     };
                     if map_is_current {
-                        return Ok(false);
+                        return Ok(ProcessedTypFile {
+                            changed: false,
+                            draft: DraftPreparation::default(),
+                        });
                     }
                 }
             }
@@ -492,36 +515,10 @@ fn process_typ_file(
         dest.to_string_lossy().to_string(),
     );
 
-    let mut generated_content = String::new();
-    let chunks = scan_typst_content(&source_content);
-
-    for (state, start, end, scope) in chunks {
-        let chunk_text = &source_content[start..end];
-        if options.enable_khmer_zws && state == ScanState::MarkupText {
-            let segmenter =
-                segmenter.ok_or_else(|| "Khmer segmenter is unavailable.".to_string())?;
-            let prepared = prepare_khmer_text_for_rendering(
-                chunk_text,
-                &segmenter.segmenter,
-                &segmenter.hyphenation,
-                start,
-                generated_content.len(),
-                &mut sourcemap,
-                scope,
-            );
-            generated_content.push_str(&prepared);
-        } else {
-            let gen_start = generated_content.len();
-            generated_content.push_str(chunk_text);
-            sourcemap.add_mapping(
-                gen_start,
-                generated_content.len(),
-                start,
-                end,
-                MappingKind::Original,
-            );
-        }
-    }
+    sourcemap.preview_content_mode = content_mode_key(options.preview_content_mode).into();
+    let draft = draft_preparation(options, src, dest, &source_content);
+    let generated_content =
+        prepare_source_content(&source_content, options, segmenter, &draft, &mut sourcemap)?;
 
     fs::write(dest, &generated_content).map_err(|e| e.to_string())?;
 
@@ -540,7 +537,133 @@ fn process_typ_file(
         fs::write(map_path, map_json).map_err(|e| e.to_string())?;
     }
 
-    Ok(true)
+    Ok(ProcessedTypFile {
+        changed: true,
+        draft,
+    })
+}
+
+fn draft_preparation(
+    options: &RenderPrepareOptions,
+    source_path: &Path,
+    destination_path: &Path,
+    source: &str,
+) -> DraftPreparation {
+    if options.preview_content_mode != PreviewContentMode::Draft {
+        return DraftPreparation::default();
+    }
+    prepare_draft_images(
+        &options.project_root,
+        source_path,
+        destination_path,
+        &options.cache_root.join("render"),
+        source,
+    )
+}
+
+fn prepare_source_content(
+    source: &str,
+    options: &RenderPrepareOptions,
+    segmenter: Option<&KhmerTextSegmenter>,
+    draft: &DraftPreparation,
+    sourcemap: &mut SourceMap,
+) -> Result<String, String> {
+    let mut generated = String::new();
+    let mut replacement_index = 0usize;
+    for (state, start, end, scope) in scan_typst_content(source) {
+        while replacement_index < draft.replacements.len()
+            && draft.replacements[replacement_index].end <= start
+        {
+            replacement_index += 1;
+        }
+        let first_replacement = replacement_index;
+        let mut contained = Vec::new();
+        let mut index = first_replacement;
+        while index < draft.replacements.len() {
+            let replacement = &draft.replacements[index];
+            if replacement.start >= end {
+                break;
+            }
+            if replacement.start >= start && replacement.end <= end {
+                contained.push(replacement);
+            }
+            index += 1;
+        }
+        if contained.is_empty() {
+            let chunk = &source[start..end];
+            if options.enable_khmer_zws && state == ScanState::MarkupText {
+                let segmenter =
+                    segmenter.ok_or_else(|| "Khmer segmenter is unavailable.".to_string())?;
+                generated.push_str(&prepare_khmer_text_for_rendering(
+                    chunk,
+                    &segmenter.segmenter,
+                    &segmenter.hyphenation,
+                    start,
+                    generated.len(),
+                    sourcemap,
+                    scope,
+                ));
+            } else {
+                append_original(&mut generated, sourcemap, source, start, end);
+            }
+            continue;
+        }
+        let mut cursor = start;
+        for replacement in contained {
+            append_original(&mut generated, sourcemap, source, cursor, replacement.start);
+            let generated_start = generated.len();
+            generated.push_str(&replacement.generated);
+            sourcemap.add_mapping(
+                generated_start,
+                generated.len(),
+                replacement.start,
+                replacement.end,
+                MappingKind::GeneratedWrapper,
+            );
+            cursor = replacement.end;
+            replacement_index += 1;
+        }
+        append_original(&mut generated, sourcemap, source, cursor, end);
+    }
+    Ok(generated)
+}
+
+fn append_original(
+    generated: &mut String,
+    sourcemap: &mut SourceMap,
+    source: &str,
+    start: usize,
+    end: usize,
+) {
+    if start >= end {
+        return;
+    }
+    let generated_start = generated.len();
+    generated.push_str(&source[start..end]);
+    sourcemap.add_mapping(
+        generated_start,
+        generated.len(),
+        start,
+        end,
+        MappingKind::Original,
+    );
+}
+
+fn content_mode_key(mode: PreviewContentMode) -> &'static str {
+    match mode {
+        PreviewContentMode::Normal => "normal",
+        PreviewContentMode::Draft => "draft",
+    }
+}
+
+fn merge_draft_assets(target: &mut Vec<DraftImageAsset>, assets: Vec<DraftImageAsset>) {
+    for asset in assets {
+        if let Some(existing) = target.iter_mut().find(|existing| existing.id == asset.id) {
+            existing.references.extend(asset.references);
+        } else {
+            target.push(asset);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -691,6 +814,70 @@ mod tests {
     }
 
     #[test]
+    fn stale_mirror_cleanup_preserves_generated_draft_assets() {
+        let workspace = tempfile::tempdir().unwrap();
+        let render_dir = workspace.path().join(".typsastra/cache/render");
+        let maps_dir = workspace.path().join(".typsastra/cache/maps");
+        let draft_dir = render_dir.join(DRAFT_ASSET_DIRECTORY);
+        let placeholder = draft_dir.join("placeholder.svg");
+        let stale_mirror = render_dir.join("removed-from-project.png");
+        fs::create_dir_all(&draft_dir).unwrap();
+        fs::create_dir_all(&maps_dir).unwrap();
+        fs::write(&placeholder, b"<svg/>").unwrap();
+        fs::write(&stale_mirror, b"stale").unwrap();
+
+        clean_stale_cache_files(&render_dir, &maps_dir, workspace.path()).unwrap();
+
+        assert_eq!(fs::read(&placeholder).unwrap(), b"<svg/>");
+        assert!(!stale_mirror.exists());
+    }
+
+    #[test]
+    fn normal_draft_normal_draft_transition_keeps_required_placeholder() {
+        let workspace = tempfile::tempdir().unwrap();
+        let main = workspace.path().join("main.typ");
+        let image = workspace.path().join("photo.png");
+        let cache_root = workspace.path().join(".typsastra/cache");
+        let mut png = vec![0u8; 24];
+        png[..8].copy_from_slice(b"\x89PNG\r\n\x1a\n");
+        png[16..20].copy_from_slice(&800u32.to_be_bytes());
+        png[20..24].copy_from_slice(&600u32.to_be_bytes());
+        fs::write(&image, png).unwrap();
+        fs::write(&main, "#image(\"photo.png\", width: 50%)").unwrap();
+        let mut options = RenderPrepareOptions {
+            enable_khmer_zws: false,
+            project_root: workspace.path().to_path_buf(),
+            entry_file: main,
+            cache_root: cache_root.clone(),
+            generate_source_map: true,
+            preview_content_mode: PreviewContentMode::Normal,
+        };
+
+        mirror_project_cancellable(&options, None, || false).unwrap();
+        options.preview_content_mode = PreviewContentMode::Draft;
+        let first_draft = mirror_project_cancellable(&options, None, || false).unwrap();
+        let placeholder = cache_root
+            .join("render")
+            .join(DRAFT_ASSET_DIRECTORY)
+            .join(format!("{}.svg", first_draft.draft_assets[0].id));
+        assert!(placeholder.exists());
+
+        options.preview_content_mode = PreviewContentMode::Normal;
+        mirror_project_cancellable(&options, None, || false).unwrap();
+        assert!(placeholder.exists());
+        assert!(!fs::read_to_string(cache_root.join("render/main.typ"))
+            .unwrap()
+            .contains("draft-preview.typsastra.invalid"));
+
+        options.preview_content_mode = PreviewContentMode::Draft;
+        mirror_project_cancellable(&options, None, || false).unwrap();
+        assert!(placeholder.exists());
+        assert!(fs::read_to_string(cache_root.join("render/main.typ"))
+            .unwrap()
+            .contains("draft-preview.typsastra.invalid"));
+    }
+
+    #[test]
     fn prepares_khmer_hyphenation_boundaries_as_zws_only() {
         let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let project_root = manifest_dir
@@ -709,12 +896,13 @@ mod tests {
             entry_file: source_path.clone(),
             cache_root: cache_root.clone(),
             generate_source_map: true,
+            preview_content_mode: PreviewContentMode::Normal,
         };
 
-        let prepared_path =
+        let prepared_file =
             prepare_single_in_memory_file(&options, Some(&segmenter), &source_path, &source)
                 .unwrap();
-        let prepared = fs::read_to_string(prepared_path).unwrap();
+        let prepared = fs::read_to_string(prepared_file.path).unwrap();
         let _ = fs::remove_dir_all(&cache_root);
 
         assert!(

@@ -37,7 +37,7 @@ describe("workspace state store", () => {
         terminology: []
       },
       workspace: {
-        schemaVersion: 1,
+        schemaVersion: 2,
         activeFile: "chapters/one.typ",
         openTabs: [{
           path: "chapters/one.typ",
@@ -50,7 +50,8 @@ describe("workspace state store", () => {
         }],
         expandedDirectories: ["chapters"],
         layout: { inputContainerWidthPct: 60, explorerSidebarWidthPx: 300, sidebarVisible: false },
-        selectedToolchain: null
+        selectedToolchain: null,
+        previewContentMode: "normal"
       }
     });
   });
@@ -107,6 +108,20 @@ describe("workspace state store", () => {
     expect(metadata.workspace.openTabs[0].foldRanges).toBeNull();
     expect(metadata.workspace.openTabs[1].foldState).toBe("user");
     expect(metadata.workspace.openTabs[1].foldRanges).toEqual([{ from: 2, to: 30 }]);
+  });
+
+  test("persists Draft Preview per workspace and migrates older state to Normal", () => {
+    const draft = normalizeWorkspaceMetadata({
+      project: null,
+      workspace: { previewContentMode: "draft" }
+    });
+    const legacy = normalizeWorkspaceMetadata({
+      project: null,
+      workspace: { schemaVersion: 1 }
+    });
+    expect(draft.workspace.previewContentMode).toBe("draft");
+    expect(draft.workspace.schemaVersion).toBe(2);
+    expect(legacy.workspace.previewContentMode).toBe("normal");
   });
 
   test("reads and removes legacy absolute-path state for one-time migration", () => {

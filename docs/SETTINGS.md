@@ -60,6 +60,18 @@ in memory and starts a PDF update after `syncDebounceMs`; on-save updates only
 after a successful save. Both modes compile from a private mirror under
 `.typsastra/cache`, so live preview never creates `main.pdf` beside the source.
 Use on-save for long or resource-intensive documents.
+
+The live-preview toolbar also offers **Normal** and **Draft** content modes.
+Normal Preview compiles the original images. Draft Preview replaces eligible
+static local image calls only in Typsastra's private render mirror with
+lightweight placeholders that keep the source image's exact intrinsic aspect
+ratio and the original Typst sizing and fitting arguments. Hover or
+keyboard-focus a placeholder to inspect the original image on demand.
+
+The selected content mode is stored per workspace. Dynamic, remote, package,
+missing, and unsupported images remain unchanged and are listed in the Draft
+Preview details dialog. Final PDF export always uses the original images,
+regardless of the selected preview mode.
 Imported files continue to preview through their configured main document. The
 former standalone-preview directive remains disabled; its portable replacement
 is planned for v0.8.0 and hardened in v1.x.

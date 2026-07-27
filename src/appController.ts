@@ -226,6 +226,51 @@ type PdfUpdatePayload = {
   identity: string;
   sessionKey: string;
   surface: PreviewSurface;
+  contentMode?: PreviewContentMode;
+  draftAssets?: DraftImageAsset[];
+  draftAssetRootPath?: string;
+};
+
+type PreviewContentMode = "normal" | "draft";
+
+type DraftImageReference = {
+  sourcePath: string;
+  fromUtf16: number;
+  toUtf16: number;
+};
+
+type DraftImageAsset = {
+  id: string;
+  path: string;
+  mimeType: string;
+  width: number;
+  height: number;
+  sourceBytes: number;
+  estimatedDecodedBytes: number;
+  references: DraftImageReference[];
+};
+
+type DraftImageDiagnostic = DraftImageReference & { reason: string };
+
+type RenderPreparationResult = {
+  generatedEntryFile: string;
+  changedFiles: string[];
+  warnings: Array<{ filePath: string; message: string }>;
+  draftAssets: DraftImageAsset[];
+  draftDiagnostics: DraftImageDiagnostic[];
+};
+
+type RenderPreparationFileResult = {
+  generatedPath: string;
+  preparedText: string;
+  draftAssets: DraftImageAsset[];
+  draftDiagnostics: DraftImageDiagnostic[];
+};
+
+type PreparedPdfPreview = {
+  path: string;
+  draftAssets: Map<string, DraftImageAsset>;
+  draftDiagnostics: DraftImageDiagnostic[];
 };
 
 type ActivateEditorTabOptions = {
@@ -321,6 +366,12 @@ export class TypsastraWorkspaceController {
   private readonly inspectedPreviewRoots = new Set<string>();
   private blockedLargePreviewRoot: string | null = null;
   private previewImageProfile: PreviewImageProfile | null = null;
+  private previewContentMode: PreviewContentMode = "normal";
+  private presentedPreviewContentMode: PreviewContentMode = "normal";
+  private previewContentModeCompiling = false;
+  private draftImageAssets = new Map<string, DraftImageAsset>();
+  private draftImageDiagnostics: DraftImageDiagnostic[] = [];
+  private draftAssetRootPath: string | null = null;
   private wordWrapDeferredForResize = false;
   private recommendedWorkspaceToolchain: { tinymistVersion: string; typstVersion: string } | null = null;
   private selectedWorkspaceToolchain: { tinymistVersion: string; typstVersion: string } | null = null;
@@ -484,6 +535,8 @@ export class TypsastraWorkspaceController {
     this.performanceDiagnostics.recordFirst(metric) ?? this.performanceDiagnostics.record(metric);
   }, status => {
     this.updatePreviewPageStatus(status);
+  }, id => {
+    return this.loadDraftPreviewImage(id);
   });
   private readonly previewSyncController = new PreviewSyncController({
     getEditor: () => this.editorInstance,
@@ -768,6 +821,16 @@ export class TypsastraWorkspaceController {
             surface: "live" as const
           }
         : event.payload;
+      this.previewContentMode = update.contentMode ?? "normal";
+      this.presentedPreviewContentMode = update.contentMode ?? "normal";
+      this.draftImageAssets = new Map((update.draftAssets ?? []).map(asset => [asset.id, asset]));
+      this.draftAssetRootPath = update.draftAssetRootPath ?? null;
+      this.updatePreviewContentModeControl();
+      const contentModeControl = document.getElementById("preview-content-mode-control");
+      contentModeControl?.classList.remove("hidden");
+      for (const button of contentModeControl?.querySelectorAll("button") ?? []) {
+        (button as HTMLButtonElement).disabled = true;
+      }
       void this.loadPdfPath(update.path, update.identity, update.sessionKey, update.surface);
     });
 
@@ -2092,6 +2155,59 @@ export class TypsastraWorkspaceController {
     button.classList.remove("hidden");
   }
 
+  private updatePreviewContentModeControl(compiling?: boolean): void {
+    if (compiling !== undefined) this.previewContentModeCompiling = compiling;
+    const control = document.getElementById("preview-content-mode-control");
+    const normal = document.getElementById("preview-content-normal-btn") as HTMLButtonElement | null;
+    const draft = document.getElementById("preview-content-draft-btn") as HTMLButtonElement | null;
+    if (!control || !normal || !draft) return;
+    control.dataset.compiling = String(this.previewContentModeCompiling);
+    normal.classList.toggle("active", this.previewContentMode === "normal");
+    draft.classList.toggle("active", this.previewContentMode === "draft");
+    normal.setAttribute("aria-pressed", String(this.previewContentMode === "normal"));
+    draft.setAttribute("aria-pressed", String(this.previewContentMode === "draft"));
+    const presentedMismatch = this.presentedPreviewContentMode !== this.previewContentMode;
+    control.title = this.previewContentModeCompiling || presentedMismatch
+      ? `Preparing ${this.previewContentMode === "draft" ? "Draft" : "Normal"} Preview. The last successful ${this.presentedPreviewContentMode === "draft" ? "Draft" : "Normal"} Preview remains visible.`
+      : `${this.previewContentMode === "draft"
+          ? `Draft Preview is active. ${this.draftImageAssets.size} image asset(s) use ratio-preserving placeholders; ${this.draftImageDiagnostics.length} call(s) remain unchanged.`
+          : "Normal Preview is active."}`;
+  }
+
+  private async setPreviewContentMode(mode: PreviewContentMode): Promise<void> {
+    if (!this.workspaceRootPath) return;
+    if (mode === this.previewContentMode) {
+      if (mode === "draft" && this.presentedPreviewContentMode === "draft") {
+        await this.showDraftPreviewDetails();
+      }
+      return;
+    }
+    this.previewContentMode = mode;
+    this.updatePreviewContentModeControl(true);
+    await this.saveWorkspaceState();
+    this.invalidatePreviewWork(`preview content mode changed to ${mode}`);
+    await this.refreshActivePreviewRoot(true);
+  }
+
+  private async showDraftPreviewDetails(): Promise<void> {
+    const assets = [...this.draftImageAssets.values()];
+    const sourceBytes = assets.reduce((total, asset) => total + asset.sourceBytes, 0);
+    const decodedBytes = assets.reduce((total, asset) => total + asset.estimatedDecodedBytes, 0);
+    const unresolved = this.draftImageDiagnostics.slice(0, 5).map(diagnostic =>
+      `${fileNameFromPath(diagnostic.sourcePath)}: ${diagnostic.reason}`
+    );
+    const unresolvedSummary = this.draftImageDiagnostics.length === 0
+      ? "All statically detectable local image calls were replaced."
+      : `${this.draftImageDiagnostics.length} image call(s) remain unchanged.\n\n${unresolved.join("\n")}${this.draftImageDiagnostics.length > unresolved.length ? `\n…and ${this.draftImageDiagnostics.length - unresolved.length} more.` : ""}`;
+    await this.appDialogController.show({
+      title: "Draft Preview",
+      subtitle: `${assets.length.toLocaleString()} ratio-preserving placeholder${assets.length === 1 ? "" : "s"}`,
+      description: `Draft Preview keeps each source image's intrinsic aspect ratio and preserves the document's image sizing, fitting, and placement arguments. Hover or keyboard-focus a placeholder in the preview to inspect the original image.\n\nThe replaced images total ${formatFileSize(sourceBytes)} on disk and approximately ${formatFileSize(decodedBytes)} when decoded.\n\n${unresolvedSummary}\n\nPDF export always uses the original images.`,
+      actions: [{ id: "close", label: "Close", primary: true }],
+      cancelAction: "close"
+    });
+  }
+
   private async showImageHeavyPreviewDetails(): Promise<void> {
     const profile = this.previewImageProfile;
     if (!profile) return;
@@ -2110,6 +2226,9 @@ export class TypsastraWorkspaceController {
     if (renderMode === "on-type") {
       actions.push({ id: "switch-on-save", label: "Use On Save", primary: true });
     }
+    if (this.previewContentMode !== "draft") {
+      actions.push({ id: "use-draft", label: "Use Draft Preview", primary: renderMode !== "on-type" });
+    }
     const action = await this.appDialogController.show({
       title: "Image-heavy Document",
       subtitle: `${profile.uniqueImageCount} raster image${profile.uniqueImageCount === 1 ? "" : "s"} · ${formatFileSize(profile.estimatedTotalDecodedBytes)} estimated decoded`,
@@ -2119,6 +2238,10 @@ export class TypsastraWorkspaceController {
     });
     if (action === "view-images") {
       this.logConsoleController.showChannel("images");
+      return;
+    }
+    if (action === "use-draft") {
+      await this.setPreviewContentMode("draft");
       return;
     }
     if (action !== "switch-on-save") return;
@@ -3677,12 +3800,13 @@ export class TypsastraWorkspaceController {
     this.pdfPreviewRunning = true;
     const compileStartedAt = performance.now();
     const generation = ++this.pdfPreviewGeneration;
+    const generationContentMode = this.previewContentMode;
     const preparationRevision = this.pdfPreparationRevision;
     await this.logMemoryDiagnostics(`render ${generation}: before preparation`);
     this.appendDeveloperLog({
       kind: "info",
       source: "preview scheduler",
-      message: `Render generation ${generation} started: mode=${this.settingsController.value.preview.renderMode}; active=${this.activeFilePath}; sourceUtf16=${contents.length}.`
+      message: `Render generation ${generation} started: refresh=${this.settingsController.value.preview.renderMode}; content=${generationContentMode}; active=${this.activeFilePath}; sourceUtf16=${contents.length}.`
     });
     if (reportRenderStatus) {
       this.setLspStatus({ kind: "syncing", message: "Compiling preview" });
@@ -3694,8 +3818,23 @@ export class TypsastraWorkspaceController {
       await this.flushPendingLspSync();
       this.ensurePreviewPreparationCurrent(preparationRevision);
       this.appendDeveloperLog({ kind: "info", source: "preview scheduler", message: `Render generation ${generation}: LSP flush complete.` });
-      const previewPath = await this.preparePdfPreviewExportPath(contents, preparationRevision);
-      if (!previewPath) throw new Error("No PDF preview root is available.");
+      const draftPreparationStartedAt = performance.now();
+      const preparedPreview = await this.preparePdfPreviewExportPath(
+        contents,
+        preparationRevision,
+        generationContentMode
+      );
+      if (!preparedPreview) throw new Error("No PDF preview root is available.");
+      const previewPath = preparedPreview.path;
+      this.performanceDiagnostics.record({
+        name: "preview.draft-prepare",
+        milliseconds: performance.now() - draftPreparationStartedAt,
+        detail: {
+          contentMode: generationContentMode,
+          replacedAssets: preparedPreview.draftAssets.size,
+          unresolvedCalls: preparedPreview.draftDiagnostics.length
+        }
+      });
       this.ensurePreviewPreparationCurrent(preparationRevision);
       this.appendDeveloperLog({ kind: "info", source: "preview scheduler", message: `Render generation ${generation}: preview root prepared at ${previewPath}.` });
       if (this.settingsController.value.preview.renderMode === "on-type") {
@@ -3783,6 +3922,17 @@ export class TypsastraWorkspaceController {
       this.pdfPreviewSourceMapTaskId = sourceMapTaskId;
       this.lastPdfPath = pdfPath;
       await this.loadPdfPath(pdfPath, previewPath, this.previewSessionKey ?? previewPath);
+      this.presentedPreviewContentMode = generationContentMode;
+      this.draftImageAssets = generationContentMode === "draft"
+        ? preparedPreview.draftAssets
+        : new Map();
+      this.draftImageDiagnostics = generationContentMode === "draft"
+        ? preparedPreview.draftDiagnostics
+        : [];
+      this.draftAssetRootPath = generationContentMode === "draft"
+        ? this.workspaceRootPath
+        : null;
+      this.updatePreviewContentModeControl(false);
       if (reportRenderStatus) {
         this.setLspStatus({ kind: "preview-ready", message: "Preview ready" });
       }
@@ -3809,7 +3959,10 @@ export class TypsastraWorkspaceController {
           path: pdfPath,
           identity: previewPath,
           sessionKey: this.previewSessionKey ?? previewPath,
-          surface: "live"
+          surface: "live",
+          contentMode: generationContentMode,
+          draftAssets: generationContentMode === "draft" ? [...this.draftImageAssets.values()] : [],
+          draftAssetRootPath: generationContentMode === "draft" ? this.draftAssetRootPath ?? undefined : undefined
         } satisfies PdfUpdatePayload);
       }).catch(err => console.error("Error emitting pdf-update", err));
     } catch (error) {
@@ -3850,10 +4003,10 @@ export class TypsastraWorkspaceController {
         return;
       }
       console.error("PDF Preview compilation failed:", JSON.stringify(error, null, 2));
-      this.previewFrame.setError(
-        "Preview Render Failed",
-        String(error)
-      );
+      if (!this.previewFrame.currentUrl) {
+        this.previewFrame.setError("Preview Render Failed", String(error));
+      }
+      this.updatePreviewContentModeControl(false);
       this.setLspStatus({ kind: "preview-ready", message: "PDF compile failed" });
       this.pdfPreviewFailureAt ??= performance.now();
     } finally {
@@ -3898,7 +4051,11 @@ export class TypsastraWorkspaceController {
     }
   }
 
-  private async preparePdfPreviewExportPath(contents: string, preparationRevision = this.pdfPreparationRevision): Promise<string | null> {
+  private async preparePdfPreviewExportPath(
+    contents: string,
+    preparationRevision = this.pdfPreparationRevision,
+    contentMode = this.previewContentMode
+  ): Promise<PreparedPdfPreview | null> {
     if (!this.activeFilePath) return null;
     const rootPath = this.previewStandalone ? (this.previewRootPath ?? this.activeFilePath) : (this.previewMainPath ?? this.previewRootPath ?? this.activeFilePath);
     if (!rootPath) return null;
@@ -3919,10 +4076,13 @@ export class TypsastraWorkspaceController {
       projectRoot: this.workspaceRootPath,
       entryFile: originalRootPath,
       cacheRoot,
-      generateSourceMap: true
+      generateSourceMap: true,
+      previewContentMode: contentMode
     };
-    const result = await invoke<{ generatedEntryFile: string }>("prepare_render_project", { options });
+    const result = await invoke<RenderPreparationResult>("prepare_render_project", { options });
     this.ensurePreviewPreparationCurrent(preparationRevision);
+    const draftAssets = new Map(result.draftAssets.map(asset => [asset.id, asset]));
+    const draftDiagnostics = [...result.draftDiagnostics];
     const tabsToOverlay = this.openTabs
       .filter(tab => tab.contentLoaded)
       .filter(tab => tab.path.toLowerCase().endsWith(".typ"))
@@ -3934,24 +4094,39 @@ export class TypsastraWorkspaceController {
       const sourceCode = filePathKey(originalTabPath) === filePathKey(originalActivePath)
         ? contents
         : tab.content;
-      const generated = await invoke<{ generatedPath: string; preparedText: string }>("prepare_render_file", {
+      const generated = await invoke<RenderPreparationFileResult>("prepare_render_file", {
         options,
         filePath: originalTabPath,
         sourceCode
       });
       this.ensurePreviewPreparationCurrent(preparationRevision);
       this.pdfPreviewGeneratedFiles.set(filePathKey(originalTabPath), generated);
+      for (const asset of generated.draftAssets) draftAssets.set(asset.id, asset);
+      draftDiagnostics.push(...generated.draftDiagnostics);
     }
     if (!overlaid.has(filePathKey(originalActivePath))) {
-      const activeGenerated = await invoke<{ generatedPath: string; preparedText: string }>("prepare_render_file", {
+      const activeGenerated = await invoke<RenderPreparationFileResult>("prepare_render_file", {
         options,
         filePath: originalActivePath,
         sourceCode: contents
       });
       this.ensurePreviewPreparationCurrent(preparationRevision);
       this.pdfPreviewGeneratedFiles.set(filePathKey(originalActivePath), activeGenerated);
+      for (const asset of activeGenerated.draftAssets) draftAssets.set(asset.id, asset);
+      draftDiagnostics.push(...activeGenerated.draftDiagnostics);
     }
-    return result.generatedEntryFile;
+    this.appendDeveloperLog({
+      kind: "info",
+      source: "preview scheduler",
+      message: contentMode === "draft"
+        ? `Draft preparation replaced ${draftAssets.size} unique image asset(s); ${draftDiagnostics.length} image call(s) remained unchanged.`
+        : "Normal preview preparation retained all document images."
+    });
+    return {
+      path: result.generatedEntryFile,
+      draftAssets: contentMode === "draft" ? draftAssets : new Map(),
+      draftDiagnostics: contentMode === "draft" ? draftDiagnostics : []
+    };
   }
 
   private async loadPdfPath(
@@ -3982,6 +4157,32 @@ export class TypsastraWorkspaceController {
       this.lastPdfSurface = surface;
     }
     return byteLength;
+  }
+
+  private async loadDraftPreviewImage(id: string) {
+    if (
+      this.presentedPreviewContentMode !== "draft"
+      || !/^[a-f0-9]{24}$/.test(id)
+    ) return null;
+    const assetRoot = this.draftAssetRootPath ?? this.workspaceRootPath;
+    if (!assetRoot) return null;
+    const asset = this.draftImageAssets.get(id);
+    if (!asset || relativeFilePath(assetRoot, asset.path) === null) return null;
+    const response = await invoke<ArrayBuffer | Uint8Array | number[]>("read_binary_file", {
+      path: asset.path
+    });
+    const bytes = response instanceof Uint8Array
+      ? response
+      : response instanceof ArrayBuffer
+        ? new Uint8Array(response)
+        : new Uint8Array(response);
+    return {
+      bytes,
+      mimeType: asset.mimeType,
+      filename: fileNameFromPath(asset.path),
+      width: asset.width,
+      height: asset.height
+    };
   }
 
   private async syncPreparedPreviewDocuments(previewPath: string): Promise<number> {
@@ -4937,6 +5138,10 @@ export class TypsastraWorkspaceController {
       }).catch(err => console.error("Error emitting pdf-click", err));
       return;
     }
+    if (point.draftImageId) {
+      await this.navigateToDraftPreviewImage(point.draftImageId);
+      return;
+    }
     if (!this.activeFilePath || !isTypstDocumentPath(this.activeFilePath)) {
       this.appendDeveloperLog({
         kind: "info",
@@ -4993,6 +5198,30 @@ export class TypsastraWorkspaceController {
       message: `Sending compiler inverse position: page=${position.page_no}, x=${position.x.toFixed(2)}, y=${position.y.toFixed(2)}, root=${rootPath}.`
     });
     sourceMapSession.socket.send(`src-point ${JSON.stringify(position)}`);
+  }
+
+  private async navigateToDraftPreviewImage(id: string): Promise<void> {
+    if (this.presentedPreviewContentMode !== "draft" || !/^[a-f0-9]{24}$/.test(id)) return;
+    const asset = this.draftImageAssets.get(id);
+    if (!asset || asset.references.length === 0) return;
+    const activePathKey = filePathKey(this.activeFilePath ?? "");
+    const reference = asset.references.find(candidate =>
+      filePathKey(candidate.sourcePath) === activePathKey
+    ) ?? asset.references[0];
+    this.appendDeveloperLog({
+      kind: "info",
+      source: "inverse sync",
+      message: `Draft placeholder resolved directly to ${reference.sourcePath}:${reference.fromUtf16}.`
+    });
+    await this.navigateToLogEntry({
+      kind: "info",
+      source: "inverse sync",
+      message: "Draft Preview image",
+      filePath: reference.sourcePath,
+      fileName: fileNameFromPath(reference.sourcePath),
+      offset: reference.fromUtf16,
+      toOffset: reference.toUtf16
+    });
   }
 
   private async ensurePdfSyncSocket(url: string, source: "forward sync" | "inverse sync"): Promise<WebSocket | null> {
@@ -5302,6 +5531,7 @@ export class TypsastraWorkspaceController {
     previewActions.classList.remove("hidden");
 
     const showTypstOnly = !isImage && !isPdf;
+    const contentModeControl = document.getElementById("preview-content-mode-control");
 
     const syncBtn = document.getElementById("preview-forward-sync-btn");
     const recompileBtn = document.getElementById("preview-recompile-btn");
@@ -5325,6 +5555,8 @@ export class TypsastraWorkspaceController {
       "hidden",
       !showTypstOnly || imageWarningBtn.dataset.active !== "true"
     );
+    contentModeControl?.classList.toggle("hidden", !showTypstOnly);
+    this.updatePreviewContentModeControl();
   }
 
   private zoomIn(): void {
@@ -5902,7 +6134,7 @@ export class TypsastraWorkspaceController {
         recommendedToolchain: this.recommendedWorkspaceToolchain
       },
       workspace: {
-        schemaVersion: 1,
+        schemaVersion: 2,
         activeFile: relative(this.activeFilePath),
         openTabs: this.openTabs.flatMap(tab => {
           const path = relative(tab.path);
@@ -5925,7 +6157,8 @@ export class TypsastraWorkspaceController {
           explorerSidebarWidthPx: explorerSidebar?.style.width ? parseInt(explorerSidebar.style.width, 10) : DEFAULT_EXPLORER_WIDTH_PX,
           sidebarVisible: this.sidebarVisible
         },
-        selectedToolchain: this.selectedWorkspaceToolchain
+        selectedToolchain: this.selectedWorkspaceToolchain,
+        previewContentMode: this.previewContentMode
       }
     };
     this.workspaceMetadata = metadata;
@@ -7015,6 +7248,9 @@ export class TypsastraWorkspaceController {
       await invoke("cleanup_workspace_preview_files", { workspaceRootPath: selected });
       this.lspReady = false;
       this.workspaceMetadata = await this.loadWorkspaceMetadata(selected);
+      this.previewContentMode = this.workspaceMetadata.workspace.previewContentMode;
+      this.presentedPreviewContentMode = "normal";
+      this.updatePreviewContentModeControl();
       this.spellcheckController.setTerminology(
         this.settingsController.value.editor.globalTerminology,
         this.workspaceMetadata.project.terminology,
@@ -7594,6 +7830,12 @@ export class TypsastraWorkspaceController {
     this.inspectedPreviewRoots.clear();
     this.blockedLargePreviewRoot = null;
     this.previewImageProfile = null;
+    this.previewContentMode = "normal";
+    this.presentedPreviewContentMode = "normal";
+    this.draftImageAssets.clear();
+    this.draftImageDiagnostics = [];
+    this.draftAssetRootPath = null;
+    this.updatePreviewContentModeControl();
     this.updateImageHeavyPreviewWarning(null);
     this.publishImageOptimizationWarnings(null);
     this.lastTypographyInternalScaleError = "";
@@ -7690,7 +7932,14 @@ export class TypsastraWorkspaceController {
             path: this.lastPdfPath,
             identity: this.lastPdfIdentity || this.pdfPreviewSourceMapRootPath || this.previewRootPath || "preview",
             sessionKey: this.lastPdfSessionKey || this.previewSessionKey || this.lastPdfIdentity || "preview",
-            surface: this.lastPdfSurface
+            surface: this.lastPdfSurface,
+            contentMode: this.presentedPreviewContentMode,
+            draftAssets: this.presentedPreviewContentMode === "draft"
+              ? [...this.draftImageAssets.values()]
+              : [],
+            draftAssetRootPath: this.presentedPreviewContentMode === "draft"
+              ? this.draftAssetRootPath ?? undefined
+              : undefined
           } satisfies PdfUpdatePayload);
         }
       });
@@ -7864,6 +8113,12 @@ export class TypsastraWorkspaceController {
     document.getElementById("preview-image-warning-btn")?.addEventListener("click", () => {
       void this.showImageHeavyPreviewDetails();
     });
+    document.getElementById("preview-content-normal-btn")?.addEventListener("click", () => {
+      void this.setPreviewContentMode("normal");
+    });
+    document.getElementById("preview-content-draft-btn")?.addEventListener("click", () => {
+      void this.setPreviewContentMode("draft");
+    });
 
     const previewForwardSyncButton = document.getElementById("preview-forward-sync-btn");
     previewForwardSyncButton?.addEventListener("pointerdown", event => {
@@ -7977,7 +8232,9 @@ export class TypsastraWorkspaceController {
               projectRoot: this.workspaceRootPath,
               entryFile: originalRootPath,
               cacheRoot,
-              generateSourceMap: false
+              generateSourceMap: false,
+              // User-facing export must never compile Draft Preview placeholders.
+              previewContentMode: "normal"
             };
 
             const result = await invoke<{ generatedEntryFile: string }>("prepare_render_project", { options });
@@ -8539,7 +8796,8 @@ export class TypsastraWorkspaceController {
           projectRoot: this.workspaceRootPath,
           entryFile,
           cacheRoot,
-          generateSourceMap: true
+          generateSourceMap: true,
+          previewContentMode: "normal"
         }
       });
     } catch (e) {

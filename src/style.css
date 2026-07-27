@@ -1833,13 +1833,65 @@ body.typsastra-resizing #input-container-wrapper::after {
 .preview-image-warning-button {
   width: 36px;
   height: 28px;
-  margin-right: auto;
+  margin-right: 0;
   padding: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   color: var(--ui-warning-icon-color);
   cursor: pointer;
+}
+
+.preview-content-mode-control {
+  display: inline-flex;
+  align-items: center;
+  margin-right: auto;
+  border: 1px solid var(--ui-border);
+  background: var(--ui-control-bg);
+}
+
+.preview-content-mode-button {
+  position: relative;
+  flex: 0 0 58px;
+  width: 58px;
+  height: 26px;
+  padding: 0 9px;
+  border: 0;
+  border-right: 1px solid var(--ui-border);
+  border-radius: 0;
+  color: var(--ui-muted-text);
+  background: transparent;
+  font: inherit;
+  font-size: var(--ui-font-size);
+  cursor: pointer;
+}
+
+.preview-content-mode-button:last-child {
+  border-right: 0;
+}
+
+.preview-content-mode-button:hover {
+  color: var(--ui-text);
+  background: var(--ui-hover);
+}
+
+.preview-content-mode-button.active {
+  color: var(--ui-header-text);
+  background: var(--ui-active-selection);
+}
+
+.preview-content-mode-control[data-compiling="true"] .preview-content-mode-button.active::after {
+  content: "…";
+  position: absolute;
+  top: 50%;
+  right: 3px;
+  line-height: 1;
+  transform: translateY(-56%);
+  pointer-events: none;
+}
+
+.preview-content-mode-control.hidden {
+  display: none;
 }
 
 .preview-image-warning-button:hover {

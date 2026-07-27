@@ -19,4 +19,18 @@ describe("PDF preview links", () => {
     expect(previewLinkModifierPressed({ ctrlKey: false, metaKey: true })).toBeTrue();
     expect(previewLinkModifierPressed({ ctrlKey: false, metaKey: false })).toBeFalse();
   });
+
+  test("recognizes opaque Draft Preview image annotations without treating them as external URLs", () => {
+    expect(previewLinkTarget({
+      subtype: "Link",
+      url: "https://draft-preview.typsastra.invalid/0123456789abcdef01234567"
+    })).toEqual({
+      kind: "draft-image",
+      id: "0123456789abcdef01234567"
+    });
+    expect(previewLinkTarget({
+      subtype: "Link",
+      url: "https://draft-preview.typsastra.invalid/../../secret"
+    })).toBeNull();
+  });
 });
