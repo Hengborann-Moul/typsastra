@@ -51,4 +51,18 @@ Content
 
     expect(performance.now() - startedAt).toBeLessThan(1_000);
   });
+
+  test("opens unfolded and restores only explicitly user-created folds", async () => {
+    const controller = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
+    const extensions = await Bun.file(new URL("../src/editor/extensions.ts", import.meta.url)).text();
+    const restoreStart = controller.indexOf("private restoreTabFoldState");
+    const restoreEnd = controller.indexOf("private activateSpellcheckDocument", restoreStart);
+    const restore = controller.slice(restoreStart, restoreEnd);
+
+    expect(restore).toContain("if (!tab.foldStateExplicit)");
+    expect(restore).toContain("this.applyFoldRanges([])");
+    expect(restore).not.toContain("foldAll(");
+    expect(controller).not.toContain("scheduleLargeDocumentDefaultFolding");
+    expect(extensions).toContain("This content is folded. Click to expand.");
+  });
 });

@@ -45,6 +45,7 @@ describe("workspace state store", () => {
           selectionHead: 5,
           scrollTop: undefined,
           scrollLeft: undefined,
+          foldState: null,
           foldRanges: null
         }],
         expandedDirectories: ["chapters"],
@@ -85,6 +86,27 @@ describe("workspace state store", () => {
       ["main.typ", 4],
       ["chapter.typ", 8]
     ]);
+  });
+
+  test("restores only explicitly user-owned fold state", () => {
+    const metadata = normalizeWorkspaceMetadata({
+      project: { projectId: "project-1" },
+      workspace: {
+        openTabs: [
+          { path: "legacy.typ", foldRanges: [{ from: 1, to: 20 }] },
+          {
+            path: "manual.typ",
+            foldState: "user",
+            foldRanges: [{ from: 2, to: 30 }]
+          }
+        ]
+      }
+    });
+
+    expect(metadata.workspace.openTabs[0].foldState).toBeNull();
+    expect(metadata.workspace.openTabs[0].foldRanges).toBeNull();
+    expect(metadata.workspace.openTabs[1].foldState).toBe("user");
+    expect(metadata.workspace.openTabs[1].foldRanges).toEqual([{ from: 2, to: 30 }]);
   });
 
   test("reads and removes legacy absolute-path state for one-time migration", () => {

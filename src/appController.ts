@@ -8,7 +8,7 @@ import { dirname, join } from "@tauri-apps/api/path";
 import { EditorState, Transaction, type Text } from "@codemirror/state";
 import { EditorView, highlightActiveLine, highlightActiveLineGutter, lineNumbers } from "@codemirror/view";
 import { undo, redo, undoDepth } from "@codemirror/commands";
-import { foldAll, foldable, foldEffect, foldedRanges, indentUnit, unfoldAll, unfoldEffect } from "@codemirror/language";
+import { foldAll, foldEffect, foldedRanges, indentUnit, unfoldAll, unfoldEffect } from "@codemirror/language";
 import { closeBrackets, completionStatus } from "@codemirror/autocomplete";
 import { getEditorExtensions, themeCompartment, getThemeExtension, applyUIThemeVariables, wrapCompartment, lineNumbersCompartment, activeLineCompartment, closeBracketsCompartment, indentationGuidesCompartment, tabSizeCompartment, completionCompartment, languageCompartment, showZwsCompartment, showZeroWidthSpaces, visibleIndentationMarkers } from "./editor/extensions";
 import { typstLanguage } from "./editor/typstLanguage";
@@ -210,7 +210,7 @@ type EditorTab = {
   scrollTop?: number;
   scrollLeft?: number;
   foldRanges: EditorFoldRange[] | null;
-  defaultFoldPending?: boolean;
+  foldStateExplicit: boolean;
   sizeBytes?: number;
   lineCount?: number;
   temporary?: boolean;
@@ -341,7 +341,6 @@ export class TypsastraWorkspaceController {
   private diagnosticWaitStartedAt: number | null = null;
   private openTabs: EditorTab[] = [];
   private suppressFoldStatePersistence = false;
-  private defaultFoldGeneration = 0;
   private documentOutlineUpdateTimer: number | null = null;
   private documentOutlineUpdateGeneration = 0;
   private readonly openedDocumentUris = new Set<string>();
@@ -1171,17 +1170,9 @@ export class TypsastraWorkspaceController {
             )) {
               const tab = this.getActiveTab();
               if (tab) {
-                tab.defaultFoldPending = false;
-                this.defaultFoldGeneration += 1;
+                tab.foldStateExplicit = true;
                 tab.foldRanges = this.collectCurrentFoldRanges();
                 void this.saveWorkspaceState();
-              }
-            }
-            if (update.docChanged && !this.isLoadingFile) {
-              const tab = this.getActiveTab();
-              if (tab?.defaultFoldPending) {
-                tab.defaultFoldPending = false;
-                this.defaultFoldGeneration += 1;
               }
             }
             if (!update.docChanged && this.shouldForwardSyncSelectionUpdate(update)) {
@@ -1452,7 +1443,7 @@ export class TypsastraWorkspaceController {
     tab.selectionHead = selection.head;
     tab.scrollTop = this.editorInstance.scrollDOM.scrollTop;
     tab.scrollLeft = this.editorInstance.scrollDOM.scrollLeft;
-    if (!tab.defaultFoldPending) tab.foldRanges = this.collectCurrentFoldRanges();
+    tab.foldRanges = tab.foldStateExplicit ? this.collectCurrentFoldRanges() : [];
   }
 
   private collectCurrentFoldRanges(): EditorFoldRange[] {
@@ -1470,21 +1461,12 @@ export class TypsastraWorkspaceController {
   }
 
   private restoreTabFoldState(tab: EditorTab) {
-    const generation = ++this.defaultFoldGeneration;
     this.suppressFoldStatePersistence = true;
     try {
-      if (tab.foldRanges === null) {
+      if (!tab.foldStateExplicit) {
+        tab.foldRanges = [];
         this.applyFoldRanges([]);
-        if (this.editorInstance.state.doc.lines <= 4_000) {
-          foldAll(this.editorInstance);
-          tab.foldRanges = this.collectCurrentFoldRanges();
-          tab.defaultFoldPending = false;
-        } else {
-          tab.defaultFoldPending = true;
-          this.scheduleLargeDocumentDefaultFolding(tab, generation, 1);
-        }
       } else {
-        tab.defaultFoldPending = false;
         const ranges = this.normalizeFoldRanges(tab.foldRanges, this.editorInstance.state.doc.length);
         tab.foldRanges = ranges;
         this.applyFoldRanges(ranges);
@@ -1492,62 +1474,6 @@ export class TypsastraWorkspaceController {
     } finally {
       this.suppressFoldStatePersistence = false;
     }
-  }
-
-  private scheduleLargeDocumentDefaultFolding(tab: EditorTab, generation: number, startLine: number): void {
-    const schedule = (callback: (deadline?: IdleDeadline) => void) => {
-      if (typeof window.requestIdleCallback === "function") {
-        window.requestIdleCallback(callback, { timeout: 100 });
-      } else {
-        window.setTimeout(() => callback(), 0);
-      }
-    };
-
-    schedule(deadline => {
-      if (
-        generation !== this.defaultFoldGeneration
-        || !tab.defaultFoldPending
-        || filePathKey(tab.path) !== filePathKey(this.activeFilePath ?? "")
-      ) return;
-
-      const state = this.editorInstance.state;
-      const effects = [];
-      let lineNumber = startLine;
-      let visited = 0;
-      const startedAt = performance.now();
-      while (lineNumber <= state.doc.lines && visited < 400) {
-        const budgetSpent = deadline && !deadline.didTimeout
-          ? deadline.timeRemaining() < 2
-          : performance.now() - startedAt >= 8;
-        if (visited > 0 && budgetSpent) break;
-        const line = state.doc.line(lineNumber);
-        const range = foldable(state, line.from, line.to);
-        visited += 1;
-        if (range) {
-          effects.push(foldEffect.of(range));
-          lineNumber = state.doc.lineAt(Math.min(range.to, state.doc.length)).number + 1;
-        } else {
-          lineNumber += 1;
-        }
-      }
-
-      if (effects.length > 0) {
-        this.suppressFoldStatePersistence = true;
-        try {
-          this.editorInstance.dispatch({ effects });
-        } finally {
-          this.suppressFoldStatePersistence = false;
-        }
-      }
-
-      if (lineNumber <= state.doc.lines) {
-        this.scheduleLargeDocumentDefaultFolding(tab, generation, lineNumber);
-        return;
-      }
-      tab.defaultFoldPending = false;
-      tab.foldRanges = this.collectCurrentFoldRanges();
-      void this.saveWorkspaceState();
-    });
   }
 
   private activateSpellcheckDocument(path: string | null): void {
@@ -1603,18 +1529,16 @@ export class TypsastraWorkspaceController {
 
   private foldCurrentFile(): void {
     if (!this.getActiveTab() || !isSupportedInAppPath(this.activeFilePath ?? "") || isBinaryImagePath(this.activeFilePath ?? "") || fileExtension(this.activeFilePath ?? "") === "pdf") return;
-    this.defaultFoldGeneration += 1;
     const tab = this.getActiveTab();
-    if (tab) tab.defaultFoldPending = false;
+    if (tab) tab.foldStateExplicit = true;
     foldAll(this.editorInstance);
     this.editorInstance.focus();
   }
 
   private unfoldCurrentFile(): void {
     if (!this.getActiveTab() || !isSupportedInAppPath(this.activeFilePath ?? "") || isBinaryImagePath(this.activeFilePath ?? "") || fileExtension(this.activeFilePath ?? "") === "pdf") return;
-    this.defaultFoldGeneration += 1;
     const tab = this.getActiveTab();
-    if (tab) tab.defaultFoldPending = false;
+    if (tab) tab.foldStateExplicit = true;
     unfoldAll(this.editorInstance);
     this.editorInstance.focus();
   }
@@ -2867,7 +2791,8 @@ export class TypsastraWorkspaceController {
         latestVersion: 1,
         selectionAnchor: 0,
         selectionHead: 0,
-        foldRanges: null,
+        foldRanges: [],
+        foldStateExplicit: false,
         temporary: options.temporary
       };
 
@@ -5987,7 +5912,8 @@ export class TypsastraWorkspaceController {
             selectionHead: tab.selectionHead,
             scrollTop: tab.scrollTop,
             scrollLeft: tab.scrollLeft,
-            foldRanges: tab.foldRanges
+            foldState: tab.foldStateExplicit ? "user" : null,
+            foldRanges: tab.foldStateExplicit ? tab.foldRanges : null
           }] : [];
         }),
         expandedDirectories: this.explorer.expandedDirectoryPaths().flatMap(path => {
@@ -6097,7 +6023,10 @@ export class TypsastraWorkspaceController {
           scrollTop: tabInfo.scrollTop,
           scrollLeft: tabInfo.scrollLeft,
           // Bounds are validated after this tab is hydrated.
-          foldRanges: Array.isArray(tabInfo.foldRanges) ? tabInfo.foldRanges as EditorFoldRange[] : null
+          foldRanges: tabInfo.foldState === "user" && Array.isArray(tabInfo.foldRanges)
+            ? tabInfo.foldRanges as EditorFoldRange[]
+            : [],
+          foldStateExplicit: tabInfo.foldState === "user"
         });
       }
       this.renderEditorTabs();

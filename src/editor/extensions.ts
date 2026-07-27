@@ -361,6 +361,7 @@ function foldedTypstPlaceholderDOM(_view: EditorView, onclick: (event: Event) =>
   const placeholder = document.createElement("span");
   placeholder.className = "cm-foldPlaceholder";
   placeholder.textContent = ` ... ${suffix ?? ""}`;
+  placeholder.title = "This content is folded. Click to expand.";
   placeholder.addEventListener("click", onclick);
   return placeholder;
 }

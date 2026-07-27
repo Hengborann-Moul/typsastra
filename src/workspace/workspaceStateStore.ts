@@ -12,6 +12,7 @@ export type StoredWorkspaceTab = {
   selectionHead: number;
   scrollTop?: number;
   scrollLeft?: number;
+  foldState?: "user" | null;
   foldRanges?: unknown[] | null;
 };
 
@@ -88,7 +89,10 @@ export function normalizeWorkspaceMetadata(
           selectionHead: numberOr(tab.selectionHead, 0),
           scrollTop: typeof tab.scrollTop === "number" ? tab.scrollTop : undefined,
           scrollLeft: typeof tab.scrollLeft === "number" ? tab.scrollLeft : undefined,
-          foldRanges: Array.isArray(tab.foldRanges) ? tab.foldRanges : null
+          foldState: tab.foldState === "user" ? "user" as const : null,
+          foldRanges: tab.foldState === "user" && Array.isArray(tab.foldRanges)
+            ? tab.foldRanges
+            : null
         }];
       })
     : [];
@@ -160,7 +164,10 @@ export class WorkspaceStateStore {
               selectionHead: numberOr(tab.selectionHead, 0),
               scrollTop: typeof tab.scrollTop === "number" ? tab.scrollTop : undefined,
               scrollLeft: typeof tab.scrollLeft === "number" ? tab.scrollLeft : undefined,
-              foldRanges: Array.isArray(tab.foldRanges) ? tab.foldRanges : null
+              // Legacy state cannot distinguish automatic folds from folds the
+              // user created, so it must reopen fully expanded.
+              foldState: null,
+              foldRanges: null
             }];
           })
         : [];
