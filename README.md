@@ -10,11 +10,26 @@ Typsastra has pre-built desktop releases.
 
 Available packages:
 
-- Windows: `.msi`
+- Windows: `.msi` installer, or a portable build via [Scoop](#install-on-windows-with-scoop)
 - Linux: `.AppImage` and `.deb`
 - macOS: experimental, unsigned and unnotarized build
 
 Typsastra is currently beta software. The latest release is v0.5.2.
+
+### Install on Windows with Scoop
+
+Typsastra publishes a [Scoop](https://scoop.sh) manifest in this repository's
+[`bucket/`](./bucket) folder. Add the bucket and install:
+
+```powershell
+scoop bucket add typsastra https://github.com/Sovichea/typsastra
+scoop install typsastra/typsastra
+```
+
+The Scoop build is portable and updates through `scoop update`, so its in-app
+self-updater stays disabled. Use the `.msi` if you prefer a system-wide install
+with the built-in updater. See [`bucket/README.md`](./bucket/README.md) for
+packaging details.
 
 Typsastra is an open-source project and does not plan to purchase Apple
 Developer ID signing or notarization. On macOS, Gatekeeper may therefore report

@@ -1,5 +1,6 @@
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
+import { invoke } from "@tauri-apps/api/core";
 import { AppDialogController } from "./ui/appDialog";
 
 type UpdateState = "available" | "downloading" | "ready" | "installing";
@@ -35,6 +36,10 @@ export class AppUpdateController {
 
   private async checkSilently(): Promise<void> {
     try {
+      // Package-managed installs (e.g. Scoop) update through their own manager,
+      // so skip the self-updater entirely rather than showing an update badge
+      // the user can't act on cleanly.
+      if (await updaterDisabled()) return;
       const update = await check({ timeout: 10_000 });
       if (!update) return;
       this.update = update;
@@ -246,6 +251,15 @@ export class AppUpdateController {
 
 function displayVersion(version: string): string {
   return version.startsWith("v") ? version : `v${version}`;
+}
+
+async function updaterDisabled(): Promise<boolean> {
+  try {
+    return await invoke<boolean>("updater_disabled");
+  } catch {
+    // If the check itself fails, fall back to the normal updater flow.
+    return false;
+  }
 }
 
 function developmentUpdateVersion(): string | null {

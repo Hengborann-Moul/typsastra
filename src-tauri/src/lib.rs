@@ -649,6 +649,20 @@ fn workspace_path_exists(path: String) -> bool {
     std::path::Path::new(&path).exists()
 }
 
+/// Reports whether an external package manager owns updates for this install.
+///
+/// Package-managed builds (e.g. the Scoop portable archive) ship a
+/// `.updater-disabled` marker next to the executable so the in-app updater
+/// stays out of the way of `scoop update`. The MSI build has no marker and
+/// keeps its self-updater.
+#[tauri::command]
+fn updater_disabled() -> bool {
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|dir| dir.join(".updater-disabled").exists()))
+        .unwrap_or(false)
+}
+
 struct TempFileGuard {
     path: std::path::PathBuf,
 }
@@ -3343,6 +3357,7 @@ pub fn run() {
             open_file_externally,
             read_workspace_file_as_base64,
             workspace_path_exists,
+            updater_disabled,
             cleanup_workspace_preview_files,
             export_source_zip,
             export_typsastra_project,

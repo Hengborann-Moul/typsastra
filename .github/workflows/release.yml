@@ -86,3 +86,31 @@ jobs:
           args: ${{ matrix.args }}
           uploadUpdaterJson: true
           uploadUpdaterSignatures: true
+
+      # Portable zip for the Scoop bucket (github.com/Sovichea/scoop-typsastra).
+      # Scoop prefers a portable archive over an installer, so we assemble the
+      # compiled exe plus its declared bundle resources and attach it to the
+      # same draft release the manifest points at.
+      - name: Package Portable Zip (Windows)
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          $staging = "portable/Typsastra"
+          New-Item -ItemType Directory -Force -Path $staging | Out-Null
+          Copy-Item "src-tauri/target/release/Typsastra.exe" -Destination $staging
+          # Mirror the bundle resource mapping from tauri.conf.json
+          # ("resources/examples/" -> "examples/") next to the executable.
+          Copy-Item "src-tauri/resources/examples" -Destination "$staging/examples" -Recurse
+          # Marker read by the `updater_disabled` command: package-managed
+          # installs (Scoop) let their manager handle updates, so the in-app
+          # self-updater stays silent. The MSI build ships without it.
+          New-Item -ItemType File -Path "$staging/.updater-disabled" | Out-Null
+          $zip = "Typsastra_${version}_x64_portable.zip"
+          # -Force on Get-ChildItem ensures the dotfile marker is included.
+          $items = (Get-ChildItem -Path $staging -Force).FullName
+          Compress-Archive -Path $items -DestinationPath $zip -Force
+          gh release upload "v$version" $zip --clobber --repo $env:GITHUB_REPOSITORY
+          Write-Host "sha256: $((Get-FileHash $zip -Algorithm SHA256).Hash.ToLower())"

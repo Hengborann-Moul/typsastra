@@ -1,0 +1,29 @@
+{
+    "version": "0.5.2",
+    "description": "A complex-script-first Typst environment for research and long-form multilingual writing.",
+    "homepage": "https://github.com/Sovichea/typsastra",
+    "license": "MIT",
+    "architecture": {
+        "64bit": {
+            "url": "https://github.com/Sovichea/typsastra/releases/download/v0.5.2/Typsastra_0.5.2_x64_portable.zip",
+            "hash": "REPLACE_WITH_SHA256_OF_PORTABLE_ZIP"
+        }
+    },
+    "bin": "Typsastra.exe",
+    "shortcuts": [
+        [
+            "Typsastra.exe",
+            "Typsastra"
+        ]
+    ],
+    "checkver": {
+        "github": "https://github.com/Sovichea/typsastra"
+    },
+    "autoupdate": {
+        "architecture": {
+            "64bit": {
+                "url": "https://github.com/Sovichea/typsastra/releases/download/v$version/Typsastra_$version_x64_portable.zip"
+            }
+        }
+    }
+}
