@@ -86,6 +86,11 @@ describe("Draft Preview", () => {
     expect(loader).toContain('invoke<DraftThumbnailStatus>("get_draft_thumbnail_status"');
     expect(loader).toContain('invoke<ArrayBuffer | Uint8Array | number[]>("read_binary_file"');
     expect(loader).toContain("path: status.path");
+    expect(loader).toContain("width: status.sourceWidth");
+    expect(loader).toContain("height: status.sourceHeight");
+    expect(loader).toContain("sourceBytes: status.sourceBytes");
+    expect(loader).not.toContain("width: status.thumbnailWidth");
+    expect(loader).not.toContain("sourceBytes: status.thumbnailBytes");
     expect(loader).not.toContain("path: asset.path");
     expect(loader).not.toContain("relativeFilePath(");
     expect(previewFrame).toContain("Preparing image preview…");
@@ -105,6 +110,10 @@ describe("Draft Preview", () => {
     expect(plan).toContain("capped at 340 by 300 CSS pixels");
     expect(previewFrame).toContain("max-width:min(340px,calc(100vw - 16px))");
     expect(previewFrame).toContain("max-height:min(240px,calc(100vh - 58px))");
+    expect(previewFrame).toContain("maximumImageHeight / naturalHeight");
+    expect(previewFrame).toContain("popover.style.width = `${renderedImageWidth + 16}px`");
+    expect(previewFrame).toContain("formatFileSize(image.sourceBytes)");
+    expect(previewFrame).not.toContain("`${image.filename} - ${image.width.toLocaleString()}");
   });
 
   test("documents exact intrinsic ratio and original-image export guarantees", () => {

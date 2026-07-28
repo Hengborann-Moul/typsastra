@@ -24,6 +24,7 @@ export type DraftPreviewImage = {
   filename: string;
   width: number;
   height: number;
+  sourceBytes: number;
 };
 
 export type DraftPreviewImageResult = DraftPreviewImage | {
@@ -45,6 +46,7 @@ export type PreviewMemorySnapshot = {
 
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { PERFORMANCE_BUDGETS, type PerformanceMetric } from "../performance/diagnostics";
+import { formatFileSize } from "../workspace/largeFileOpening";
 import { previewLinkModifierPressed, previewLinkTarget, type PreviewLinkTarget } from "./previewLinks";
 import { pageDimensionsChanged, pagesToEvict, visiblePageIndexes } from "./virtualization";
 import { PreviewMotionController } from "./previewMotion";
@@ -1431,16 +1433,30 @@ export class PreviewFrame {
       this.hideDraftImagePopover();
       return;
     }
+    const viewportWidth = this.iframe?.contentWindow?.innerWidth ?? 800;
+    const viewportHeight = this.iframe?.contentWindow?.innerHeight ?? 600;
+    const maximumImageWidth = Math.max(1, Math.min(320, viewportWidth - 32));
+    const maximumImageHeight = Math.max(1, Math.min(240, viewportHeight - 58));
+    const naturalWidth = Math.max(1, preview.naturalWidth);
+    const naturalHeight = Math.max(1, preview.naturalHeight);
+    const imageScale = Math.min(
+      1,
+      maximumImageWidth / naturalWidth,
+      maximumImageHeight / naturalHeight
+    );
+    const renderedImageWidth = Math.max(1, Math.round(naturalWidth * imageScale));
+    const renderedImageHeight = Math.max(1, Math.round(naturalHeight * imageScale));
+    preview.style.width = `${renderedImageWidth}px`;
+    preview.style.height = `${renderedImageHeight}px`;
     const label = doc.createElement("div");
     label.className = "draft-image-popover-label";
-    label.textContent = `${image.filename} - ${image.width.toLocaleString()} x ${image.height.toLocaleString()}`;
+    label.textContent = `${image.width.toLocaleString()} × ${image.height.toLocaleString()} px · ${formatFileSize(image.sourceBytes)} source`;
     popover.append(preview, label);
+    popover.style.width = `${renderedImageWidth + 16}px`;
     doc.body.append(popover);
     const anchor = link.getBoundingClientRect();
     const width = popover.offsetWidth;
     const height = popover.offsetHeight;
-    const viewportWidth = this.iframe?.contentWindow?.innerWidth ?? 800;
-    const viewportHeight = this.iframe?.contentWindow?.innerHeight ?? 600;
     const left = Math.max(8, Math.min(anchor.left, viewportWidth - width - 8));
     const preferredTop = anchor.bottom + 8;
     const top = preferredTop + height <= viewportHeight
@@ -1453,7 +1469,8 @@ export class PreviewFrame {
       name: "preview.draft-hover",
       milliseconds: performance.now() - startedAt,
       detail: {
-        sourceBytes: image.bytes.byteLength,
+        thumbnailBytes: image.bytes.byteLength,
+        sourceBytes: image.sourceBytes,
         width: image.width,
         height: image.height
       }

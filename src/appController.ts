@@ -284,10 +284,12 @@ type DraftThumbnailStatus = {
   status: "pending" | "generating" | "ready" | "failed";
   path?: string;
   mimeType?: string;
-  width: number;
-  height: number;
+  sourceWidth: number;
+  sourceHeight: number;
   sourceBytes: number;
-  outputBytes?: number;
+  thumbnailWidth?: number;
+  thumbnailHeight?: number;
+  thumbnailBytes?: number;
   queueClass: string;
 };
 
@@ -4401,8 +4403,9 @@ export class TypsastraWorkspaceController {
       bytes,
       mimeType: status.mimeType,
       filename: fileNameFromPath(asset.path),
-      width: asset.width,
-      height: asset.height
+      width: status.sourceWidth,
+      height: status.sourceHeight,
+      sourceBytes: status.sourceBytes
     };
   }
 

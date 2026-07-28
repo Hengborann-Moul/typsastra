@@ -74,10 +74,12 @@ pub struct DraftThumbnailStatus {
     pub status: String,
     pub path: Option<String>,
     pub mime_type: Option<String>,
-    pub width: u32,
-    pub height: u32,
+    pub source_width: u32,
+    pub source_height: u32,
     pub source_bytes: u64,
-    pub output_bytes: Option<u64>,
+    pub thumbnail_width: Option<u32>,
+    pub thumbnail_height: Option<u32>,
+    pub thumbnail_bytes: Option<u64>,
     pub queue_class: String,
 }
 
@@ -307,6 +309,9 @@ pub fn get_draft_thumbnail_status(
         .get(&id)
         .ok_or_else(|| "The Draft thumbnail is not part of the active manifest.".to_string())?;
     let ready = entry.status == ThumbnailStatus::Ready;
+    let thumbnail_dimensions = ready
+        .then(|| image::image_dimensions(&entry.cache_path).ok())
+        .flatten();
     Ok(DraftThumbnailStatus {
         status: match entry.status {
             ThumbnailStatus::Pending => "pending",
@@ -317,10 +322,12 @@ pub fn get_draft_thumbnail_status(
         .into(),
         path: ready.then(|| entry.cache_path.to_string_lossy().to_string()),
         mime_type: ready.then(|| entry.mime_type.clone()),
-        width: entry.width,
-        height: entry.height,
+        source_width: entry.width,
+        source_height: entry.height,
         source_bytes: entry.source_bytes,
-        output_bytes: ready
+        thumbnail_width: thumbnail_dimensions.map(|dimensions| dimensions.0),
+        thumbnail_height: thumbnail_dimensions.map(|dimensions| dimensions.1),
+        thumbnail_bytes: ready
             .then(|| {
                 fs::metadata(&entry.cache_path)
                     .ok()
