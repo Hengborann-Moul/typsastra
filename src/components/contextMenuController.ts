@@ -441,55 +441,64 @@ export class ContextMenuController {
       return;
     }
     this.textControl = this.textControlFor(target);
-    const selection = window.getSelection();
-    this.selectedText = selection?.toString() ?? "";
-    const logEntry = target.closest<HTMLElement>(".log-entry");
-    this.contextText = logEntry?.querySelector<HTMLElement>(".log-entry-message")?.textContent ?? "";
-    if (logEntry && selection?.anchorNode && !logEntry.contains(selection.anchorNode)) this.selectedText = "";
     if (this.textControl) {
       event.preventDefault();
       this.show(this.nativeTextItems(!this.textControl.readOnly && !this.textControl.disabled), event.clientX, event.clientY);
       return;
     }
-    if (this.contextText || (this.selectedText && !target.closest(".cm-editor, #code-render-pane"))) {
+
+    const explorerItem = target.closest<HTMLElement>(".explorer-item-target");
+    if (explorerItem) {
+      this.contextMenuOpenedFromExplorer = true;
+      this.targetPath = explorerItem.dataset.path || "";
+      this.targetIsDirectory = explorerItem.dataset.isDir === "true";
       event.preventDefault();
-      this.show(this.nativeTextItems(false), event.clientX, event.clientY);
+      this.show(this.explorerItems(), event.clientX, event.clientY);
+      return;
+    }
+    if (target.closest(".workspace-explorer-section")) {
+      this.contextMenuOpenedFromExplorer = true;
+      this.targetPath = this.dependencies.getWorkspaceRoot() || "";
+      this.targetIsDirectory = !!this.targetPath;
+      event.preventDefault();
+      this.show(this.explorerBackgroundItems(), event.clientX, event.clientY);
+      return;
+    }
+
+    const editorTab = target.closest<HTMLElement>(".editor-tab");
+    if (editorTab) {
+      this.targetPath = editorTab.dataset.path || "";
+      this.targetIsDirectory = false;
+      event.preventDefault();
+      this.show(this.tabItems(), event.clientX, event.clientY);
       return;
     }
     if (target.closest("#document-outline-section")) {
       this.hide();
       return;
     }
-    const explorerItem = target.closest<HTMLElement>(".explorer-item-target");
-    this.targetPath = explorerItem?.dataset.path || "";
-    this.targetIsDirectory = explorerItem?.dataset.isDir === "true";
-    let items: string;
-    if (explorerItem) {
-      this.contextMenuOpenedFromExplorer = true;
-      items = this.explorerItems();
-    }
-    else if (target.closest(".workspace-explorer-section")) {
-      this.contextMenuOpenedFromExplorer = true;
-      this.targetPath = this.dependencies.getWorkspaceRoot() || "";
-      this.targetIsDirectory = !!this.targetPath;
-      items = this.explorerBackgroundItems();
-    } else if (target.closest(".cm-editor") || target.closest("#code-render-pane")) {
+    if (target.closest(".cm-editor") || target.closest("#code-render-pane")) {
       this.spellingIssue = this.dependencies.getSpellingIssue(event.clientX, event.clientY, target);
       this.spellingSuggestions = this.spellingIssue
         ? await this.dependencies.getSpellingSuggestions(this.spellingIssue)
         : [];
-      items = this.editorItems();
-    }
-    else if (target.closest(".editor-tab")) {
-      this.targetPath = target.closest<HTMLElement>(".editor-tab")?.dataset.path || "";
-      this.targetIsDirectory = false;
-      items = this.tabItems();
-    } else {
-      this.hide();
+      event.preventDefault();
+      this.show(this.editorItems(), event.clientX, event.clientY);
       return;
     }
-    event.preventDefault();
-    this.show(items, event.clientX, event.clientY);
+
+    const selection = window.getSelection();
+    this.selectedText = selection?.toString() ?? "";
+    const logEntry = target.closest<HTMLElement>(".log-entry");
+    this.contextText = logEntry?.querySelector<HTMLElement>(".log-entry-message")?.textContent ?? "";
+    if (logEntry && selection?.anchorNode && !logEntry.contains(selection.anchorNode)) this.selectedText = "";
+    if (this.contextText || this.selectedText) {
+      event.preventDefault();
+      this.show(this.nativeTextItems(false), event.clientX, event.clientY);
+      return;
+    }
+
+    this.hide();
   }
 
   private show(

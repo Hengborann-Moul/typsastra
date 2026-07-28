@@ -77,6 +77,19 @@ describe("workspace explorer", () => {
     expect(source).toContain("`${this.mainFileItem()}<div");
   });
 
+  test("gives explorer and tab targets precedence over text selected elsewhere", async () => {
+    const source = await Bun.file(new URL("../src/components/contextMenuController.ts", import.meta.url)).text();
+    const handler = source.indexOf("private async showForTarget");
+    const explorerTarget = source.indexOf('target.closest<HTMLElement>(".explorer-item-target")', handler);
+    const tabTarget = source.indexOf('target.closest<HTMLElement>(".editor-tab")', handler);
+    const browserSelection = source.indexOf("const selection = window.getSelection()", handler);
+
+    expect(handler).toBeGreaterThan(-1);
+    expect(explorerTarget).toBeGreaterThan(handler);
+    expect(tabTarget).toBeGreaterThan(explorerTarget);
+    expect(browserSelection).toBeGreaterThan(tabTarget);
+  });
+
   test("derives editable duplicate names without losing extensions", () => {
     expect(duplicateFileName("chapter.typ")).toBe("chapter copy.typ");
     expect(duplicateFileName("archive.tar.gz")).toBe("archive.tar copy.gz");
