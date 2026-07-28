@@ -207,6 +207,7 @@ export function initializeLucideIcons(): void {
   replaceContents("#document-outline-toggle .sidebar-section-chevron", "chevronDown", 14);
   replaceContents("#status-error-icon", "circleX", 13);
   replaceContents("#status-warning-icon", "triangleAlert", 13);
+  replaceContents("#settings-storage-warning", "triangleAlert", 18);
 }
 
 export function updateMaximizeIcon(maximized: boolean): void {

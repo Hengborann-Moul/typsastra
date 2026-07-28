@@ -6,6 +6,7 @@ const controller = readFileSync(new URL("../src/appController.ts", import.meta.u
 const explorer = readFileSync(new URL("../src/components/explorer.ts", import.meta.url), "utf8");
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const editorExtensions = readFileSync(new URL("../src/editor/extensions.ts", import.meta.url), "utf8");
+const icons = readFileSync(new URL("../src/ui/icons.ts", import.meta.url), "utf8");
 
 describe("theme-aware application accents", () => {
   test("uses the shared UI typography for log-console actions", async () => {
@@ -36,6 +37,9 @@ describe("theme-aware application accents", () => {
     expect(style).toMatch(/\.preview-image-warning-button\s*\{[\s\S]*?color:\s*var\(--ui-warning-icon-color\)/);
     expect(style).toMatch(/\.log-entry-warning \.log-entry-icon\s*\{[\s\S]*?color:\s*var\(--ui-warning-icon-color\)/);
     expect(style).toMatch(/\.cm-image-optimization-marker\s*\{[\s\S]*?color:\s*var\(--ui-warning-icon-color\)/);
+    expect(style).toMatch(/\.settings-nav-warning\s*\{[\s\S]*?color:\s*var\(--ui-warning-icon-color\)/);
+    expect(icons).toContain('replaceContents("#settings-storage-warning", "triangleAlert", 18)');
+    expect(html).not.toMatch(/id="settings-storage-warning"[\s\S]*?>!<\/span>/);
   });
 
   test("does not use the cursor color as a generic UI accent", () => {
