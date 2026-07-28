@@ -138,6 +138,7 @@ export class PreviewFrame {
   private draftHoverGeneration = 0;
   private draftHoverLink: HTMLElement | null = null;
   private draftPointerPosition: { x: number; y: number } | null = null;
+  private pendingRestoredScrollTop: number | null = null;
 
   constructor(
     private readonly pane: HTMLElement,
@@ -146,7 +147,8 @@ export class PreviewFrame {
     private readonly onZoomChanged?: (zoomPercent: number) => void,
     private readonly onPerformance?: (metric: Omit<PerformanceMetric, "recordedAt">) => void,
     private readonly onPageChanged?: (status: PreviewPageStatus) => void,
-    private readonly onDraftImageRequest?: (id: string) => Promise<DraftPreviewImageResult | null>
+    private readonly onDraftImageRequest?: (id: string) => Promise<DraftPreviewImageResult | null>,
+    private readonly onScrollPositionChanged?: (scrollTop: number) => void
   ) {
     this.pane.addEventListener("wheel", event => {
       if (event.ctrlKey) {
@@ -196,6 +198,12 @@ export class PreviewFrame {
 
   public get isFitMode(): boolean {
     return this.isFitToWidth;
+  }
+
+  public restoreWorkspaceScrollPosition(scrollTop: number): void {
+    this.pendingRestoredScrollTop = Number.isFinite(scrollTop)
+      ? Math.max(0, scrollTop)
+      : 0;
   }
 
   public syncTheme(): void {
@@ -326,7 +334,10 @@ export class PreviewFrame {
     const obsoleteLoadingTask = this.pendingPdfLoadingTask;
     this.pendingPdfLoadingTask = null;
     if (obsoleteLoadingTask) void obsoleteLoadingTask.destroy().catch(() => {});
-    const previousScroll = this.captureScrollAnchor();
+    const restoringWorkspacePosition = !this.pdfDoc && this.pendingRestoredScrollTop !== null;
+    const previousScrollTop = restoringWorkspacePosition
+      ? this.pendingRestoredScrollTop!
+      : this.captureScrollPosition();
     this.clearErrorOverlay();
     this.clearMessageHost();
 
@@ -397,7 +408,8 @@ export class PreviewFrame {
       this.updateHorizontalOverflow();
       this.setupIframeInteractions();
       this.installPageObserver(iframe);
-      this.restoreScrollAnchor(previousScroll);
+      this.restoreScrollPosition(previousScrollTop);
+      if (restoringWorkspacePosition) this.pendingRestoredScrollTop = null;
       this.reportPageStatus(this.visiblePageNumber());
       void this.hydratePageDimensions(pdfDoc, generation).catch(error => {
         if (generation === this.pdfGeneration && this.pdfDoc === pdfDoc) {
@@ -476,8 +488,13 @@ export class PreviewFrame {
       .draft-image-popover{position:fixed;z-index:2147483646;box-sizing:border-box;max-width:min(340px,calc(100vw - 16px));max-height:min(300px,calc(100vh - 16px));padding:8px;border:1px solid var(--preview-ui-header);background:var(--preview-ui-bg);color:var(--preview-ui-header);box-shadow:0 8px 28px rgba(0,0,0,.35);pointer-events:none}
       .draft-image-popover img{display:block;max-width:min(320px,calc(100vw - 32px));max-height:min(240px,calc(100vh - 58px));object-fit:contain}
       .draft-image-popover-label{padding-top:6px;max-width:min(320px,calc(100vw - 32px));overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}
+      #preview-go-first{position:fixed;right:26px;bottom:18px;z-index:2147483645;box-sizing:border-box;display:grid;place-items:center;width:38px;height:38px;padding:0;border:1px solid color-mix(in srgb,var(--preview-ui-header) 55%,transparent);border-radius:50%;background:color-mix(in srgb,var(--preview-ui-bg) 92%,transparent);color:var(--preview-ui-header);box-shadow:0 4px 14px rgba(0,0,0,.28);cursor:pointer;opacity:0;visibility:hidden;pointer-events:none;transform:translateY(5px);transition:opacity 120ms ease,transform 120ms ease,visibility 0s linear 120ms}
+      #preview-go-first svg{display:block;width:22px;height:22px;overflow:visible;stroke:currentColor;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round;fill:none}
+      #preview-go-first.is-visible{opacity:1;visibility:visible;pointer-events:auto;transform:translateY(0);transition-delay:0s}
+      #preview-go-first:hover,#preview-go-first:focus-visible{border-color:var(--preview-ui-accent);color:var(--preview-ui-accent);outline:2px solid color-mix(in srgb,var(--preview-ui-accent) 35%,transparent);outline-offset:2px}
+      @media (prefers-reduced-motion:reduce){#preview-go-first{transition:none}}
       ::selection{background:rgba(0,120,215,.35)}
-    </style></head><body><div id="viewer-container"></div></body></html>`;
+    </style></head><body><div id="viewer-container"></div><button id="preview-go-first" type="button" title="Go to first page" aria-label="Go to first page" aria-hidden="true" tabindex="-1"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20V4M5.5 10.5 12 4l6.5 6.5"/></svg></button></body></html>`;
     iframe.addEventListener("load", () => this.setupIframeInteractions());
     const loaded = new Promise<void>(resolve => iframe.addEventListener("load", () => resolve(), { once: true }));
     this.pane.appendChild(iframe);
@@ -1122,6 +1139,7 @@ export class PreviewFrame {
     this.queueViewportFinalRenders("first-stable");
     void this.pumpPageRenderQueue();
     this.reportPageStatus(pageNo);
+    this.onScrollPositionChanged?.(view.scrollY);
   }
 
   private reportPageStatus(currentPage: number): void {
@@ -1157,6 +1175,31 @@ export class PreviewFrame {
     return { pageNo: Number(anchor.dataset.pageNo), offset: anchor.getBoundingClientRect().top };
   }
 
+  private captureScrollPosition(): number {
+    const view = this.iframe?.contentWindow;
+    const doc = this.iframe?.contentDocument;
+    return Math.max(
+      0,
+      view?.scrollY
+        ?? doc?.documentElement.scrollTop
+        ?? doc?.body.scrollTop
+        ?? 0
+    );
+  }
+
+  private restoreScrollPosition(scrollTop: number): void {
+    if (!Number.isFinite(scrollTop)) return;
+    requestAnimationFrame(() => {
+      const view = this.iframe?.contentWindow;
+      const doc = this.iframe?.contentDocument;
+      if (!view || !doc) return;
+      const maximum = Math.max(0, doc.documentElement.scrollHeight - view.innerHeight);
+      const restoredTop = Math.min(Math.max(0, scrollTop), maximum);
+      this.jumpToPreviewOffset(restoredTop, this.pageNumberAtScrollTop(restoredTop));
+      this.updateGoToFirstPageButton();
+    });
+  }
+
   private restoreScrollAnchor(anchor: ScrollAnchor | null, afterLayout = false): void {
     if (!anchor) return;
     const restore = () => {
@@ -1182,9 +1225,19 @@ export class PreviewFrame {
     if (doc.documentElement.dataset.typsastraInteractions === "true") return;
     doc.documentElement.dataset.typsastraInteractions = "true";
     this.motion.reset(this.iframe?.contentWindow?.scrollY ?? 0, performance.now());
+    const goToFirstPageButton = doc.getElementById("preview-go-first") as HTMLButtonElement | null;
+    goToFirstPageButton?.addEventListener("click", event => {
+      event.preventDefault();
+      event.stopPropagation();
+      this.hideDraftImagePopover();
+      this.jumpToPreviewOffset(0, 1);
+      this.updateGoToFirstPageButton();
+    });
+    this.updateGoToFirstPageButton();
     this.debugInverse(`Interaction listener installed: readyState=${doc.readyState}, url=${doc.URL || "(empty)"}.`);
     doc.addEventListener("contextmenu", event => event.preventDefault());
     doc.addEventListener("pointerdown", event => {
+      if ((event.target as Element | null)?.closest("#preview-go-first")) return;
       this.rememberDraftPointer(event);
       window.postMessage({ type: "HIDE_CONTEXT_MENU" }, "*");
       this.motion.setPointerDown(true);
@@ -1228,6 +1281,7 @@ export class PreviewFrame {
     });
     doc.addEventListener("click", event => {
       const target = event.target as Element | null;
+      if (target?.closest("#preview-go-first")) return;
       const annotationLink = target?.closest<HTMLElement>(".annotation-link");
       const mouse = event as MouseEvent;
       if (annotationLink) {
@@ -1273,10 +1327,23 @@ export class PreviewFrame {
       "scroll",
       () => {
         this.hideDraftImagePopover();
+        this.updateGoToFirstPageButton();
+        this.onScrollPositionChanged?.(this.iframe?.contentWindow?.scrollY ?? 0);
         this.deferPageRenderingDuringScroll();
       },
       { passive: true }
     );
+  }
+
+  private updateGoToFirstPageButton(): void {
+    const doc = this.iframe?.contentDocument;
+    const view = this.iframe?.contentWindow;
+    const button = doc?.getElementById("preview-go-first") as HTMLButtonElement | null;
+    if (!button || !view) return;
+    const visible = view.scrollY > 48;
+    button.classList.toggle("is-visible", visible);
+    button.tabIndex = visible ? 0 : -1;
+    button.setAttribute("aria-hidden", visible ? "false" : "true");
   }
 
   private setPreviewLinkModifier(doc: Document, active: boolean): void {

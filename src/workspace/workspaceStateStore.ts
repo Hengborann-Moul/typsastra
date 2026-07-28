@@ -37,6 +37,7 @@ export type StoredWorkspaceState = {
   selectedToolchain: StoredWorkspaceToolchain | null;
   previewContentMode: "normal" | "draft";
   previewRenderMode: PreviewRenderMode | null;
+  previewScrollTop: number;
 };
 
 export type WorkspaceMetadata = {
@@ -130,7 +131,8 @@ export function normalizeWorkspaceMetadata(
       previewContentMode: workspace.previewContentMode === "draft" ? "draft" : "normal",
       previewRenderMode: workspace.previewRenderMode === "on-type"
         ? "on-type"
-        : workspace.previewRenderMode === "on-save" ? "on-save" : null
+        : workspace.previewRenderMode === "on-save" ? "on-save" : null,
+      previewScrollTop: Math.max(0, numberOr(workspace.previewScrollTop, 0))
     }
   };
 }

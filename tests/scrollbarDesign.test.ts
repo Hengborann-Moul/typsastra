@@ -50,6 +50,35 @@ describe("cross-platform scrollbar design", () => {
     expect(source).toContain("reportPageStatus");
   });
 
+  test("restores the raw preview scroll offset across PDF recompilation", async () => {
+    const source = await Bun.file(new URL("../src/preview/previewFrame.ts", import.meta.url)).text();
+    const loadStart = source.indexOf("public async loadPdfBytes");
+    const loadEnd = source.indexOf("private async pdfJs", loadStart);
+    const loadPdf = source.slice(loadStart, loadEnd);
+    expect(loadPdf).toContain(": this.captureScrollPosition()");
+    expect(loadPdf).toContain("this.restoreScrollPosition(previousScrollTop)");
+    expect(loadPdf).not.toContain("const previousScroll = this.captureScrollAnchor()");
+    expect(source).toContain("const restoredTop = Math.min(Math.max(0, scrollTop), maximum)");
+  });
+
+  test("restores the workspace preview offset on the first PDF presentation", async () => {
+    const source = await Bun.file(new URL("../src/preview/previewFrame.ts", import.meta.url)).text();
+    const controller = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
+    expect(source).toContain("restoreWorkspaceScrollPosition(scrollTop: number)");
+    expect(source).toContain("this.pendingRestoredScrollTop");
+    expect(controller).toContain("this.previewFrame.restoreWorkspaceScrollPosition(state.previewScrollTop)");
+    expect(controller).toContain("previewScrollTop: this.previewScrollTop");
+  });
+
+  test("provides an accessible floating control to return to the first page", async () => {
+    const source = await Bun.file(new URL("../src/preview/previewFrame.ts", import.meta.url)).text();
+    expect(source).toContain('id="preview-go-first"');
+    expect(source).toContain('aria-label="Go to first page"');
+    expect(source).toContain("this.jumpToPreviewOffset(0, 1)");
+    expect(source).toContain("this.updateGoToFirstPageButton()");
+    expect(source).toContain('target?.closest("#preview-go-first")');
+  });
+
   test("provides editable page navigation in the shared preview toolbar", async () => {
     const html = await Bun.file(new URL("../index.html", import.meta.url)).text();
     expect(html).toContain('id="preview-page-input"');

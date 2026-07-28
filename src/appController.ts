@@ -435,6 +435,8 @@ export class TypsastraWorkspaceController {
   private previewContentMode: PreviewContentMode = "normal";
   private presentedPreviewContentMode: PreviewContentMode = "normal";
   private previewContentModeCompiling = false;
+  private previewScrollTop = 0;
+  private previewScrollSaveTimer: number | null = null;
   private draftImageAssets = new Map<string, DraftImageAsset>();
   private draftImageDiagnostics: DraftImageDiagnostic[] = [];
   private draftAssetRootPath: string | null = null;
@@ -606,6 +608,14 @@ export class TypsastraWorkspaceController {
     this.updatePreviewPageStatus(status);
   }, id => {
     return this.loadDraftPreviewImage(id);
+  }, scrollTop => {
+    this.previewScrollTop = Math.max(0, scrollTop);
+    if (!this.workspaceRootPath || !this.workspaceMetadata) return;
+    if (this.previewScrollSaveTimer !== null) window.clearTimeout(this.previewScrollSaveTimer);
+    this.previewScrollSaveTimer = window.setTimeout(() => {
+      this.previewScrollSaveTimer = null;
+      void this.saveWorkspaceState();
+    }, 750);
   });
   private readonly previewSyncController = new PreviewSyncController({
     getEditor: () => this.editorInstance,
@@ -6477,7 +6487,8 @@ export class TypsastraWorkspaceController {
         },
         selectedToolchain: this.selectedWorkspaceToolchain,
         previewContentMode: this.previewContentMode,
-        previewRenderMode: this.effectivePreviewRenderMode
+        previewRenderMode: this.effectivePreviewRenderMode,
+        previewScrollTop: this.previewScrollTop
       }
     };
     this.workspaceMetadata = metadata;
@@ -6528,6 +6539,8 @@ export class TypsastraWorkspaceController {
     try {
       const state = metadata.workspace;
       const project = metadata.project;
+      this.previewScrollTop = state.previewScrollTop;
+      this.previewFrame.restoreWorkspaceScrollPosition(state.previewScrollTop);
       const inputContainer = document.getElementById("input-container-wrapper");
       const previewContainerWrapper = document.getElementById("preview-container-wrapper");
       this.layoutController.setDockedInputWidthPct(state.layout.inputContainerWidthPct);
@@ -8169,6 +8182,9 @@ export class TypsastraWorkspaceController {
     this.previewImageProfile = null;
     this.previewContentMode = "normal";
     this.presentedPreviewContentMode = "normal";
+    this.previewScrollTop = 0;
+    if (this.previewScrollSaveTimer !== null) window.clearTimeout(this.previewScrollSaveTimer);
+    this.previewScrollSaveTimer = null;
     this.draftImageAssets.clear();
     this.draftImageDiagnostics = [];
     this.draftAssetRootPath = null;

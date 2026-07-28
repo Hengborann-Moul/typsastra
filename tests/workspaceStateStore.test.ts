@@ -52,7 +52,8 @@ describe("workspace state store", () => {
         layout: { inputContainerWidthPct: 60, explorerSidebarWidthPx: 300, sidebarVisible: false },
         selectedToolchain: null,
         previewContentMode: "normal",
-        previewRenderMode: null
+        previewRenderMode: null,
+        previewScrollTop: 0
       }
     });
   });
@@ -142,6 +143,20 @@ describe("workspace state store", () => {
     expect(onType.workspace.previewRenderMode).toBe("on-type");
     expect(onSave.workspace.previewRenderMode).toBe("on-save");
     expect(legacy.workspace.previewRenderMode).toBeNull();
+  });
+
+  test("normalizes the raw preview scroll position per workspace", () => {
+    const stored = normalizeWorkspaceMetadata({
+      project: null,
+      workspace: { previewScrollTop: 4821.5 }
+    });
+    const invalid = normalizeWorkspaceMetadata({
+      project: null,
+      workspace: { previewScrollTop: -25 }
+    });
+
+    expect(stored.workspace.previewScrollTop).toBe(4821.5);
+    expect(invalid.workspace.previewScrollTop).toBe(0);
   });
 
   test("reads and removes legacy absolute-path state for one-time migration", () => {
