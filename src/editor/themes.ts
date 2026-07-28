@@ -26,20 +26,25 @@ export const baseEditorLayoutTheme = EditorView.theme({
   ".cm-foldGutter .cm-gutterElement": {
       fontFamily: "var(--font-family-sans) !important",
       fontSize: "12px !important",
-      fontWeight: "500 !important"
+      fontWeight: "500 !important",
+      width: "28px",
+      minWidth: "28px",
+      padding: "0 5px !important",
+      boxSizing: "border-box",
+      justifyContent: "center"
   },
   ".cm-foldGutter .cm-gutterElement > span": {
       display: "inline-grid",
       placeItems: "center",
-      width: "16px",
-      height: "16px",
+      width: "18px",
+      height: "18px",
       boxSizing: "border-box",
       padding: "0 !important",
       color: "var(--ui-text) !important",
       backgroundColor: "var(--ui-navigation-background)",
       border: "1px solid var(--ui-border)",
       borderRadius: "2px",
-      lineHeight: "14px",
+      lineHeight: "16px",
       verticalAlign: "middle",
       cursor: "pointer"
   },
@@ -62,6 +67,10 @@ export const baseEditorLayoutTheme = EditorView.theme({
       zIndex: "0 !important"
   },
   ".cm-gutters": { borderRight: "1px solid var(--ui-border)" },
+  ".cm-lineNumbers .cm-activeLineGutter": {
+      color: "color-mix(in srgb, var(--ui-accent-color) 58%, var(--ui-text)) !important",
+      fontWeight: "400 !important"
+  },
   ".cm-cursor, .cm-dropCursor": {
       borderLeftWidth: "0 !important",
       zIndex: "200 !important",

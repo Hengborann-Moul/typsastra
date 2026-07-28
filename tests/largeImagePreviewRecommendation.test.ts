@@ -54,7 +54,7 @@ describe("large-image preview recommendation", () => {
     expect(backend).toContain("reference_count");
   });
 
-  test("publishes oversized image references in the line-number gutter", async () => {
+  test("publishes oversized image references in a dedicated warning gutter", async () => {
     const controller = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
     const warnings = await Bun.file(new URL("../src/editor/imageWarnings.ts", import.meta.url)).text();
     const consoleController = await Bun.file(new URL("../src/diagnostics/logConsoleController.ts", import.meta.url)).text();
@@ -64,7 +64,8 @@ describe("large-image preview recommendation", () => {
     expect(controller).toContain('channel: "images"');
     expect(controller).toContain("Downscale its pixel dimensions");
     expect(controller).toContain("may reduce the exported PDF size");
-    expect(warnings).toContain("lineNumberMarkers.from(field)");
+    expect(warnings).toContain('class: "cm-warningGutter"');
+    expect(warnings).toContain("initialSpacer:");
     expect(warnings).toContain('marker.className = "cm-image-optimization-marker"');
     expect(consoleController).toContain('LogEntryChannel = "lsp" | "spellcheck" | "images" | "dev"');
     expect(consoleController).toContain('this.setTabCount("images", imageWarnings)');

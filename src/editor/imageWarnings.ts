@@ -1,6 +1,6 @@
 import { RangeSet, RangeSetBuilder, StateEffect, StateField } from "@codemirror/state";
 import type { Extension } from "@codemirror/state";
-import { GutterMarker, lineNumberMarkers } from "@codemirror/view";
+import { GutterMarker, gutter } from "@codemirror/view";
 import { createAppIcon } from "../ui/icons";
 
 export type ImageOptimizationWarning = {
@@ -38,6 +38,15 @@ class ImageOptimizationMarker extends GutterMarker {
   }
 }
 
+class ImageOptimizationSpacerMarker extends GutterMarker {
+  toDOM(): HTMLElement {
+    const marker = document.createElement("span");
+    marker.className = "cm-image-optimization-marker-spacer";
+    marker.setAttribute("aria-hidden", "true");
+    return marker;
+  }
+}
+
 const imageOptimizationWarningField = StateField.define<RangeSet<GutterMarker>>({
   create() {
     return RangeSet.empty;
@@ -65,7 +74,11 @@ const imageOptimizationWarningField = StateField.define<RangeSet<GutterMarker>>(
   },
 
   provide(field) {
-    return lineNumberMarkers.from(field);
+    return gutter({
+      class: "cm-warningGutter",
+      markers: (view) => view.state.field(field),
+      initialSpacer: () => new ImageOptimizationSpacerMarker()
+    });
   }
 });
 

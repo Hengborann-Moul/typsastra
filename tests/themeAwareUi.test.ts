@@ -43,6 +43,37 @@ describe("theme-aware application accents", () => {
     expect(html).not.toMatch(/id="settings-storage-warning"[\s\S]*?>!<\/span>/);
   });
 
+  test("uses a dedicated leftmost gutter for editor warnings", () => {
+    const warnings = readFileSync(new URL("../src/editor/imageWarnings.ts", import.meta.url), "utf8");
+    expect(editorExtensions.indexOf("imageOptimizationWarningsExtension")).toBeLessThan(
+      editorExtensions.indexOf("lineNumbersCompartment.of(lineNumbers())")
+    );
+    expect(warnings).toContain('class: "cm-warningGutter"');
+    expect(warnings).toContain("initialSpacer:");
+    expect(warnings).not.toContain("lineNumberMarkers");
+    expect(style).toMatch(/\.cm-warningGutter\s*\{[^}]*width:\s*28px[^}]*min-width:\s*28px/s);
+    expect(style).toMatch(
+      /\.cm-warningGutter \.cm-gutterElement\s*\{[^}]*width:\s*28px[^}]*padding:\s*0 5px/s
+    );
+    expect(editorThemes).toMatch(
+      /\.cm-foldGutter \.cm-gutterElement"[\s\S]*?width:\s*"28px"[\s\S]*?padding:\s*"0 5px !important"/
+    );
+    expect(editorThemes).toMatch(
+      /\.cm-foldGutter \.cm-gutterElement > span"[\s\S]*?width:\s*"18px"[\s\S]*?height:\s*"18px"/
+    );
+  });
+
+  test("uses color rather than font weight for active navigation state", () => {
+    expect(editorThemes).toMatch(
+      /\.cm-lineNumbers \.cm-activeLineGutter[\s\S]*?fontWeight:\s*"400 !important"/
+    );
+    expect(style).toMatch(/\.editor-tab\.active\s*\{[^}]*font-weight:\s*400/s);
+    expect(style).toMatch(/\.tree-item\.pinned-main\s*\{[^}]*font-weight:\s*400/s);
+    expect(style).toMatch(
+      /\.editor-tab\.pinned-main-tab \.editor-tab-title\s*\{[^}]*font-weight:\s*400/s
+    );
+  });
+
   test("does not use the cursor color as a generic UI accent", () => {
     expect(style).not.toMatch(/\.log-console-tab\.active\s*\{[^}]*editor-cursor-color/s);
     expect(style).toMatch(/\.workspace-loading-spinner\s*\{[^}]*var\(--ui-accent-color\)/s);

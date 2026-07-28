@@ -648,6 +648,7 @@ export function getEditorExtensions(
       }
     }),
     foldService.of(typstFunctionFoldService),
+    imageOptimizationWarningsExtension,
     lineNumbersCompartment.of(lineNumbers()),
     foldGutter({
       markerDOM: typstFoldMarkerDOM
@@ -662,7 +663,6 @@ export function getEditorExtensions(
       placeholderDOM: foldedTypstPlaceholderDOM
     }),
     editorDiagnosticsExtension,
-    imageOptimizationWarningsExtension,
     indentationGuidesCompartment.of(visibleIndentationMarkers()),
     tabSizeCompartment.of([EditorState.tabSize.of(2), indentUnit.of("  ")]),
     wrapCompartment.of(EditorView.lineWrapping),
