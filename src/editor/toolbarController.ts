@@ -69,6 +69,7 @@ const wrappers: Record<string, [string, string, string]> = {
 export class EditorToolbarController {
   private readonly toolbar = document.getElementById("editor-visual-toolbar")!;
   private systemFontFamilies: string[] = ["MiSans Latin", "Fira Mono"];
+  private privateFontFamilies: string[] = [];
   private scriptFontFamilies: Record<string, string[]> = {};
   private languageCatalog: LanguageCatalogCapabilities[] = [];
   private installedLanguageProviders: LanguageProviderCapabilities[] = [];
@@ -103,6 +104,7 @@ export class EditorToolbarController {
     window.addEventListener("pointerup", this.onTypographyPointerUp);
     window.addEventListener("pointercancel", this.onTypographyPointerUp);
     document.addEventListener("typsastra:system-fonts-changed", () => void this.initializeTypographyControls());
+    document.addEventListener("typsastra:private-fonts-changed", () => void this.initializeTypographyControls());
     document.addEventListener("typsastra:language-providers-changed", () => void this.initializeTypographyControls());
     document.getElementById("toolbar-typography-apply")?.addEventListener("click", event => {
       event.preventDefault();
@@ -166,12 +168,21 @@ export class EditorToolbarController {
     this.rememberedTypography = this.loadRememberedTypography();
     try {
       const [fontCatalog, languageCatalog, providers] = await Promise.all([
-        invoke<{ all: string[]; scripts: Record<string, string[]> }>("list_system_fonts"),
+        invoke<{
+          all: string[];
+          scripts: Record<string, string[]>;
+          privateLocal: string[];
+          documentAll: string[];
+          documentScripts: Record<string, string[]>;
+        }>("list_system_fonts"),
         invoke<unknown>("list_hunspell_catalog"),
         invoke<unknown>("get_provider_capabilities"),
       ]);
-      this.systemFontFamilies = [...new Set(fontCatalog.all)].sort((left, right) => left.localeCompare(right));
-      this.scriptFontFamilies = fontCatalog.scripts ?? {};
+      this.systemFontFamilies = [...new Set(fontCatalog.documentAll ?? fontCatalog.all)]
+        .sort((left, right) => left.localeCompare(right));
+      this.privateFontFamilies = [...new Set(fontCatalog.privateLocal ?? [])]
+        .sort((left, right) => left.localeCompare(right));
+      this.scriptFontFamilies = fontCatalog.documentScripts ?? fontCatalog.scripts ?? {};
       this.languageCatalog = parseLanguageCatalog(languageCatalog);
       this.installedLanguageProviders = parseLanguageProviderCapabilitiesList(providers);
     } catch (error) {
@@ -198,7 +209,12 @@ export class EditorToolbarController {
 
   private groupedFontOptions(families: readonly string[]): HTMLOptGroupElement[] {
     const internal = families.filter(family => isTypstInternalOnlyFont(family, this.systemFontFamilies));
-    const system = families.filter(family => !isTypstInternalOnlyFont(family, this.systemFontFamilies));
+    const privateKeys = new Set(this.privateFontFamilies.map(family => family.toLocaleLowerCase()));
+    const privateLocal = families.filter(family => privateKeys.has(family.toLocaleLowerCase()));
+    const system = families.filter(family =>
+      !isTypstInternalOnlyFont(family, this.systemFontFamilies)
+      && !privateKeys.has(family.toLocaleLowerCase())
+    );
     const group = (label: string, entries: readonly string[]) => {
       const element = document.createElement("optgroup");
       element.label = label;
@@ -207,6 +223,7 @@ export class EditorToolbarController {
     };
     return [
       ...(internal.length > 0 ? [group("Typst built-in", internal)] : []),
+      ...(privateLocal.length > 0 ? [group("Private local", privateLocal)] : []),
       ...(system.length > 0 ? [group("System fonts", system)] : []),
     ];
   }

@@ -74,6 +74,25 @@ variants live only in Typsastra's private global application-data cache, where
 they can be reused by other projects. No font data or cache path is written
 into `.typsastra` or included in project exports.
 
+## Use a font without installing it
+
+If a font must remain private or should not be installed into the operating
+system, open **Settings → Editor → Private local font directories** and add the
+folder containing it. Typsastra validates the folder before saving it and
+rejects family names that collide with an existing system or private font.
+
+Document Typography lists families in this order:
+
+1. **Typst built-in**
+2. **Private local**
+3. **System fonts**
+
+The directory is a global, machine-local setting. Typsastra passes it to
+diagnostics, live preview, source synchronization, and PDF export, but does not
+load those fonts into the source editor. It also never copies the original font
+files into `.typsastra` or a project export. A recipient therefore needs the
+same font dependency installed or configured on their own machine.
+
 Typsastra recommends no more than 10 cached scale variants per font face. It
 asks before creating another variant and keeps every existing variant until the
 user explicitly manages the cache. Cache inspection, deletion, and renewal

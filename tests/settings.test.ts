@@ -23,6 +23,7 @@ describe("application settings", () => {
     expect(settings.preview.forwardSyncTimeoutMs).toBe(5000);
     expect(settings.preview.khmerRenderPreparation).toBe(false);
     expect(settings.compatibility.disableWebkitDmabufRenderer).toBe(false);
+    expect(settings.fonts.privateDirectories).toEqual([]);
     expect(settings.toolchain.tinymistVersion).toBeNull();
   });
 
@@ -127,6 +128,25 @@ describe("application settings", () => {
     expect(normalizeAppSettings({
       compatibility: { disableWebkitDmabufRenderer: true }
     }).compatibility.disableWebkitDmabufRenderer).toBe(true);
+  });
+
+  test("normalizes global private font directories without duplicating paths", () => {
+    const settings = normalizeAppSettings({
+      fonts: {
+        privateDirectories: [
+          " C:\\Fonts\\Research ",
+          "c:\\fonts\\research\\",
+          "/home/author/fonts",
+          "",
+          42
+        ]
+      }
+    });
+
+    expect(settings.fonts.privateDirectories).toEqual([
+      "C:\\Fonts\\Research",
+      "/home/author/fonts"
+    ]);
   });
 
   test("normalizes and deduplicates personal dictionary words", () => {

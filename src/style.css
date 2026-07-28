@@ -1513,6 +1513,46 @@ body.typsastra-resizing #input-container-wrapper::after {
   font: inherit;
 }
 
+.settings-private-fonts-field {
+  align-items: start;
+}
+
+.settings-private-font-directories {
+  grid-column: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.settings-private-font-directory {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-private-font-path {
+  overflow: hidden;
+  color: var(--ui-text);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-private-font-empty {
+  color: var(--ui-header-text);
+}
+
+.settings-private-fonts-field > .settings-secondary-button {
+  grid-column: 2;
+  justify-self: start;
+}
+
+.settings-private-fonts-field > small {
+  grid-column: 2;
+}
+
 .settings-toggle input { margin: 0; }
 .settings-toggle span { display: flex; flex-direction: column; gap: 3px; }
 .settings-toggle small { color: var(--ui-header-text); font-size: 11px; }

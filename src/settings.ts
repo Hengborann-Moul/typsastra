@@ -68,6 +68,9 @@ export type AppSettings = {
   compatibility: {
     disableWebkitDmabufRenderer: boolean;
   };
+  fonts: {
+    privateDirectories: string[];
+  };
   toolchain: {
     tinymistVersion: string | null;
   };
@@ -123,6 +126,9 @@ export const defaultAppSettings: AppSettings = {
   },
   compatibility: {
     disableWebkitDmabufRenderer: false
+  },
+  fonts: {
+    privateDirectories: []
   },
   toolchain: {
     tinymistVersion: null
@@ -199,12 +205,29 @@ function unicodeFontPreferences(value: unknown): Record<string, UnicodeFontPrefe
     .map(([id, preference]) => [id, normalizeUnicodeFontPreference(preference)]));
 }
 
+function privateFontDirectories(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const directories: string[] = [];
+  for (const item of value) {
+    if (typeof item !== "string") continue;
+    const path = item.trim();
+    if (!path || path.length > 32_768 || /[\r\n\0]/.test(path)) continue;
+    const key = path.replace(/[\\/]+$/, "").toLocaleLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    directories.push(path);
+  }
+  return directories.slice(0, 32);
+}
+
 export function normalizeAppSettings(value: unknown): AppSettings {
   const root = objectValue(value);
   const appearance = objectValue(root.appearance);
   const editor = objectValue(root.editor);
   const preview = objectValue(root.preview);
   const compatibility = objectValue(root.compatibility);
+  const fonts = objectValue(root.fonts);
   const developerLogs = objectValue(root.developerLogs);
   const toolchain = objectValue(root.toolchain);
   const theme = themeNames.includes(appearance.theme as ThemeName)
@@ -274,6 +297,9 @@ export function normalizeAppSettings(value: unknown): AppSettings {
         compatibility.disableWebkitDmabufRenderer,
         defaultAppSettings.compatibility.disableWebkitDmabufRenderer
       )
+    },
+    fonts: {
+      privateDirectories: privateFontDirectories(fonts.privateDirectories)
     },
     toolchain: {
       tinymistVersion: typeof toolchain.tinymistVersion === "string" && /^\d+\.\d+\.\d+$/.test(toolchain.tinymistVersion)

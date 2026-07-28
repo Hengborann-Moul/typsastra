@@ -140,6 +140,19 @@ pub struct SystemFontCatalog {
     all: Vec<String>,
     monospace: Vec<String>,
     scripts: BTreeMap<String, Vec<String>>,
+    private_local: Vec<String>,
+    private_monospace: Vec<String>,
+    private_scripts: BTreeMap<String, Vec<String>>,
+    document_all: Vec<String>,
+    document_scripts: BTreeMap<String, Vec<String>>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrivateFontDirectoryInspection {
+    path: String,
+    families: Vec<String>,
+    collisions: Vec<String>,
 }
 
 const SCRIPT_SAMPLES: &[(&str, &[char])] = &[
@@ -292,9 +305,14 @@ pub fn remove_legacy_font_cache(data_dir: &Path) {
     }
 }
 
-pub fn list_system_fonts() -> SystemFontCatalog {
-    let mut database = fontdb::Database::new();
-    database.load_system_fonts();
+#[derive(Default)]
+struct FontInventory {
+    all: BTreeSet<String>,
+    monospace: BTreeSet<String>,
+    scripts: BTreeMap<String, BTreeSet<String>>,
+}
+
+fn font_inventory(database: &fontdb::Database) -> FontInventory {
     let mut all = BTreeSet::new();
     let mut monospace = BTreeSet::new();
     let mut scripts: BTreeMap<String, BTreeSet<String>> = SCRIPT_SAMPLES
@@ -330,17 +348,109 @@ pub fn list_system_fonts() -> SystemFontCatalog {
             }
         }
     }
-    SystemFontCatalog {
-        all: all.into_iter().collect(),
-        monospace: monospace.into_iter().collect(),
-        scripts: scripts
-            .into_iter()
-            .map(|(script, families)| (script, families.into_iter().collect()))
-            .collect(),
+    FontInventory {
+        all,
+        monospace,
+        scripts,
     }
 }
 
-pub fn font_families_supporting_text(families: &[String], characters: &str) -> Vec<String> {
+fn serialized_scripts(
+    scripts: BTreeMap<String, BTreeSet<String>>,
+) -> BTreeMap<String, Vec<String>> {
+    scripts
+        .into_iter()
+        .map(|(script, families)| (script, families.into_iter().collect()))
+        .collect()
+}
+
+pub fn list_system_fonts(private_directories: &[PathBuf]) -> SystemFontCatalog {
+    let mut system_database = fontdb::Database::new();
+    system_database.load_system_fonts();
+    let system = font_inventory(&system_database);
+
+    let mut private_database = fontdb::Database::new();
+    for directory in private_directories {
+        if directory.is_dir() {
+            private_database.load_fonts_dir(directory);
+        }
+    }
+    let private = font_inventory(&private_database);
+
+    let mut document_all = system.all.clone();
+    document_all.extend(private.all.iter().cloned());
+    let mut document_scripts = system.scripts.clone();
+    for (script, families) in &private.scripts {
+        document_scripts
+            .entry(script.clone())
+            .or_default()
+            .extend(families.iter().cloned());
+    }
+
+    SystemFontCatalog {
+        all: system.all.into_iter().collect(),
+        monospace: system.monospace.into_iter().collect(),
+        scripts: serialized_scripts(system.scripts),
+        private_local: private.all.into_iter().collect(),
+        private_monospace: private.monospace.into_iter().collect(),
+        private_scripts: serialized_scripts(private.scripts),
+        document_all: document_all.into_iter().collect(),
+        document_scripts: serialized_scripts(document_scripts),
+    }
+}
+
+pub fn inspect_private_font_directory(
+    path: &Path,
+    configured_private_directories: &[PathBuf],
+) -> Result<PrivateFontDirectoryInspection, String> {
+    if !path.is_absolute() {
+        return Err("Private font directories must use an absolute path.".to_string());
+    }
+    if !path.is_dir() {
+        return Err(format!(
+            "The private font directory does not exist: {}",
+            path.display()
+        ));
+    }
+
+    let mut candidate_database = fontdb::Database::new();
+    candidate_database.load_fonts_dir(path);
+    let candidate = font_inventory(&candidate_database);
+    if candidate.all.is_empty() {
+        return Err("No supported OpenType, TrueType, or font-collection files were found in this directory.".to_string());
+    }
+
+    let mut existing_database = fontdb::Database::new();
+    existing_database.load_system_fonts();
+    for directory in configured_private_directories {
+        if directory != path && directory.is_dir() {
+            existing_database.load_fonts_dir(directory);
+        }
+    }
+    let existing = font_inventory(&existing_database);
+    let existing_keys: BTreeMap<String, String> = existing
+        .all
+        .into_iter()
+        .map(|family| (family.to_lowercase(), family))
+        .collect();
+    let collisions = candidate
+        .all
+        .iter()
+        .filter_map(|family| existing_keys.get(&family.to_lowercase()).cloned())
+        .collect();
+
+    Ok(PrivateFontDirectoryInspection {
+        path: path.to_string_lossy().to_string(),
+        families: candidate.all.into_iter().collect(),
+        collisions,
+    })
+}
+
+pub fn font_families_supporting_text(
+    families: &[String],
+    characters: &str,
+    private_directories: &[PathBuf],
+) -> Vec<String> {
     let required: Vec<char> = characters
         .chars()
         .collect::<BTreeSet<_>>()
@@ -356,6 +466,11 @@ pub fn font_families_supporting_text(families: &[String], characters: &str) -> V
     let mut supported = BTreeSet::new();
     let mut database = fontdb::Database::new();
     database.load_system_fonts();
+    for directory in private_directories {
+        if directory.is_dir() {
+            database.load_fonts_dir(directory);
+        }
+    }
     for face in database.faces() {
         let matching: Vec<String> = face
             .families
@@ -551,10 +666,36 @@ mod tests {
     }
 
     #[test]
+    fn discovers_fonts_from_a_private_local_directory() {
+        let directory = tempfile::tempdir().unwrap();
+        let fira = BASE_FONTS
+            .iter()
+            .find(|font| font.file_name.contains("FiraMono-Regular"))
+            .expect("bundled Fira Mono");
+        std::fs::write(directory.path().join("Private-FiraMono.ttf"), fira.bytes).unwrap();
+
+        let inspection = inspect_private_font_directory(directory.path(), &[]).unwrap();
+        assert!(inspection
+            .families
+            .iter()
+            .any(|family| family == "Fira Mono"));
+
+        let catalog = list_system_fonts(&[directory.path().to_path_buf()]);
+        assert!(catalog
+            .private_local
+            .iter()
+            .any(|family| family == "Fira Mono"));
+        assert!(catalog
+            .document_all
+            .iter()
+            .any(|family| family == "Fira Mono"));
+    }
+
+    #[test]
     #[ignore = "installs fonts in the current user's operating-system font collection"]
     fn installs_and_enumerates_bundled_fonts() {
         ensure_base_fonts_installed().expect("install bundled fonts");
-        let catalog = list_system_fonts();
+        let catalog = list_system_fonts(&[]);
         assert!(catalog.all.iter().any(|family| family == "MiSans Latin"));
         assert!(catalog.monospace.iter().any(|family| family == "Fira Mono"));
     }

@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { confirm, message } from "@tauri-apps/plugin-dialog";
+import { confirm, message, open } from "@tauri-apps/plugin-dialog";
 import { relaunch } from "@tauri-apps/plugin-process";
 import {
   cloneDefaultAppSettings,
@@ -26,6 +26,11 @@ import {
 
 type SettingsPayload = { path: string; settings: unknown | null };
 type SystemFontCatalog = { all: string[]; monospace: string[] };
+type PrivateFontDirectoryInspection = {
+  path: string;
+  families: string[];
+  collisions: string[];
+};
 type LanguageProviderOption = LanguageProviderCapabilities;
 type HunspellCatalogEntry = LanguageCatalogCapabilities;
 type LinuxRendererCompatibility = {
@@ -73,7 +78,8 @@ export class SettingsController {
 
   constructor(
     private readonly applySettings: (settings: AppSettings) => void,
-    private readonly onLanguageProvidersChanged: (providers: LanguageProviderOption[]) => void = () => {}
+    private readonly onLanguageProvidersChanged: (providers: LanguageProviderOption[]) => void = () => {},
+    private readonly onPrivateFontDirectoriesChanged: () => void | Promise<void> = () => {}
   ) {}
 
   public get value(): AppSettings {
@@ -214,6 +220,9 @@ export class SettingsController {
     onChange("settings-word-completion", (settings, control) => { settings.editor.wordCompletion = (control as HTMLInputElement).checked; });
     onChange("settings-show-zws", (settings, control) => { settings.editor.showZws = (control as HTMLInputElement).checked; });
     onChange("settings-format-on-save", (settings, control) => { settings.editor.formatOnSave = (control as HTMLInputElement).checked; });
+    document.getElementById("settings-add-private-font-directory")?.addEventListener("click", () => {
+      void this.addPrivateFontDirectory();
+    });
     document.getElementById("settings-preview-render-mode")?.addEventListener("change", event => {
       const control = event.currentTarget as HTMLSelectElement;
       const mode: PreviewRenderMode = control.value === "on-type" ? "on-type" : "on-save";
@@ -341,6 +350,7 @@ export class SettingsController {
     setChecked("settings-word-completion", editor.wordCompletion);
     setChecked("settings-show-zws", editor.showZws);
     setChecked("settings-format-on-save", editor.formatOnSave);
+    this.populatePrivateFontDirectories();
     setChecked("settings-cursor-sync", preview.cursorSync);
     const cursorSync = document.getElementById("settings-cursor-sync") as HTMLInputElement | null;
     if (cursorSync) {
@@ -507,6 +517,112 @@ export class SettingsController {
       ...[...fallbackFamilies].sort().map(family => ({ id: family, label: family }))
     ]);
     this.populateUnicodeFontOverrides([...fallbackFamilies].sort());
+  }
+
+  private populatePrivateFontDirectories(): void {
+    const container = document.getElementById("settings-private-font-directories");
+    if (!container) return;
+    const rows = this.settings.fonts.privateDirectories.map(path => {
+      const text = document.createElement("span");
+      text.className = "settings-private-font-path";
+      text.textContent = path;
+      text.title = path;
+
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "settings-secondary-button";
+      remove.textContent = "Remove";
+      remove.setAttribute("aria-label", `Remove private font directory ${path}`);
+      remove.addEventListener("click", () => void this.removePrivateFontDirectory(path));
+
+      const row = document.createElement("div");
+      row.className = "settings-private-font-directory";
+      row.append(text, remove);
+      return row;
+    });
+
+    if (rows.length === 0) {
+      const empty = document.createElement("small");
+      empty.className = "settings-private-font-empty";
+      empty.textContent = "No private local font directory configured.";
+      container.replaceChildren(empty);
+      return;
+    }
+    container.replaceChildren(...rows);
+  }
+
+  private async addPrivateFontDirectory(): Promise<void> {
+    const selected = await open({
+      directory: true,
+      multiple: false,
+      title: "Choose Private Local Font Directory"
+    });
+    if (typeof selected !== "string") return;
+
+    try {
+      const inspection = await invoke<PrivateFontDirectoryInspection>(
+        "inspect_private_font_directory",
+        { path: selected }
+      );
+      if (inspection.collisions.length > 0) {
+        await message(
+          `This directory contains font families that are already available from the system or another private directory:\n\n${inspection.collisions.join("\n")}\n\nTypsastra does not add ambiguous font families because the compiler could select a different file between sessions.`,
+          { title: "Ambiguous Font Families", kind: "error" }
+        );
+        return;
+      }
+      await this.replacePrivateFontDirectories([
+        ...this.settings.fonts.privateDirectories,
+        inspection.path
+      ]);
+    } catch (error) {
+      await message(String(error), { title: "Unable to Add Font Directory", kind: "error" });
+    }
+  }
+
+  private async removePrivateFontDirectory(path: string): Promise<void> {
+    const accepted = await confirm(
+      `Remove this private font directory from Typsastra?\n\n${path}\n\nThe font files will not be deleted. Documents using these fonts may no longer compile.`,
+      {
+        title: "Remove Private Font Directory?",
+        kind: "warning",
+        okLabel: "Remove",
+        cancelLabel: "Cancel"
+      }
+    );
+    if (!accepted) return;
+    await this.replacePrivateFontDirectories(
+      this.settings.fonts.privateDirectories.filter(candidate => candidate !== path)
+    );
+  }
+
+  private async replacePrivateFontDirectories(paths: string[]): Promise<void> {
+    const previous = this.settings;
+    const next = normalizeAppSettings(this.settings);
+    next.fonts.privateDirectories = paths;
+    this.settings = normalizeAppSettings(next);
+    this.applySettings(this.settings);
+    this.populatePanel();
+    if (this.saveTimer) {
+      window.clearTimeout(this.saveTimer);
+      this.saveTimer = null;
+    }
+    if (!await this.persist()) {
+      this.settings = previous;
+      this.applySettings(this.settings);
+      this.populatePanel();
+      return;
+    }
+    await this.refreshSystemFonts();
+    document.dispatchEvent(new Event("typsastra:private-fonts-changed"));
+    try {
+      await this.onPrivateFontDirectoriesChanged();
+    } catch (error) {
+      await message(
+        `The font directory setting was saved, but the active compiler session could not be restarted: ${String(error)}\n\nRestart the workspace before using the updated font catalog.`,
+        { title: "Font Directory Saved", kind: "warning" }
+      );
+    }
   }
 
   private populateUnicodeFontOverrides(families: readonly string[]): void {

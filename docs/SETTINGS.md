@@ -110,6 +110,21 @@ Settings enumerates the operating system's fonts:
 - The Unicode fallback selector accepts any installed family.
 - Automatic detection recommends the matching MiSans family when one exists and a script-specific Noto Sans family otherwise.
 
+**Private local font directories** add folders that Typsastra may pass directly
+to Typst and Tinymist without installing their fonts into the operating system.
+The absolute paths are global machine-local settings and are never written into
+the project, `.typsastra`, or a project archive. Typsastra validates a directory
+before adding it and rejects family names that collide with a system font or
+another configured private directory.
+
+Document Typography groups available families in this order: **Typst
+built-in**, **Private local**, then **System fonts**. Private local fonts are
+available consistently to diagnostics, preview, source synchronization,
+generated scale variants, and PDF export. Changing the directory list restarts
+the active Tinymist session. These compiler-only paths do not add fonts to the
+CodeMirror code-font or Unicode UI-font selectors because the WebView cannot
+load an arbitrary filesystem font as an installed browser font.
+
 Typsastra never downloads fonts without confirmation and does not repeat a recommendation the user declines. MiSans downloads and use are subject to Xiaomi's [MiSans license agreement](https://hyperos.mi.com/font/en/download/); Noto fonts use the [SIL Open Font License](https://openfontlicense.org/).
 
 The selected Unicode fallback is also included in Typsastra's own UI font stack for app-rendered text such as search controls, hover popups, and preview status messages.

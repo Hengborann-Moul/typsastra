@@ -291,6 +291,7 @@ pub fn prepare_scaled_workspace_font(
     workspace_root: &Path,
     family: &str,
     scale: f32,
+    private_font_directories: &[PathBuf],
 ) -> Result<ScaledFontResult, String> {
     validate_request(workspace_root, family, scale)?;
 
@@ -327,6 +328,11 @@ pub fn prepare_scaled_workspace_font(
     if (scale - 1.0).abs() > 0.0001 {
         let mut database = fontdb::Database::new();
         database.load_system_fonts();
+        for directory in private_font_directories {
+            if directory.is_dir() {
+                database.load_fonts_dir(directory);
+            }
+        }
         let faces: Vec<_> = database
             .faces()
             .filter(|face| {
@@ -338,7 +344,7 @@ pub fn prepare_scaled_workspace_font(
             .collect();
         if faces.is_empty() {
             return Err(format!(
-                "The system font family {family:?} could not be located."
+                "The system or private local font family {family:?} could not be located."
             ));
         }
 
@@ -524,7 +530,7 @@ mod tests {
         )
         .unwrap());
         let result =
-            prepare_scaled_workspace_font(cache.path(), workspace.path(), "MiSans Khmer", 1.0)
+            prepare_scaled_workspace_font(cache.path(), workspace.path(), "MiSans Khmer", 1.0, &[])
                 .unwrap();
         assert!(!result.changed);
         assert!(result.generated_files.is_empty());

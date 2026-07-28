@@ -541,7 +541,8 @@ export class TypsastraWorkspaceController {
   private tinymistRestartSequence = 0;
   private readonly settingsController = new SettingsController(
     settings => this.applySettingsToRuntime(settings),
-    providers => this.handleLanguageProvidersChanged(providers)
+    providers => this.handleLanguageProvidersChanged(providers),
+    () => this.handlePrivateFontDirectoriesChanged()
   );
   private readonly toolchainController = new ToolchainController({
     getSelectedVersion: () => this.settingsController.value.toolchain.tinymistVersion,
@@ -3698,6 +3699,15 @@ export class TypsastraWorkspaceController {
     this.pdfSyncSocket?.close();
     this.pdfSyncSocket = null;
     this.pdfSyncSocketUrl = "";
+  }
+
+  private async handlePrivateFontDirectoriesChanged(): Promise<void> {
+    if (!this.workspaceRootPath || this.blockedLargePreviewRoot) return;
+    if (this.lspClient) {
+      await this.reloadWorkspaceFonts();
+      return;
+    }
+    await this.refreshActivePreviewRoot(true);
   }
 
   private applyPreviewTargetToTab(tab: EditorTab, target: PreviewTarget): void {

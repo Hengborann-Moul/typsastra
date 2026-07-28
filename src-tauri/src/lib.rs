@@ -48,12 +48,51 @@ fn workspace_font_directories(app_local_data_dir: &Path, start: &Path) -> Vec<st
     Vec::new()
 }
 
+fn configured_private_font_directories(app_handle: &tauri::AppHandle) -> Vec<PathBuf> {
+    let Ok(path) = settings_file_path(app_handle) else {
+        return Vec::new();
+    };
+    let Ok(contents) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let Ok(settings) = serde_json::from_str::<serde_json::Value>(&contents) else {
+        return Vec::new();
+    };
+    settings
+        .pointer("/fonts/privateDirectories")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute() && path.is_dir())
+        .take(32)
+        .collect()
+}
+
+fn compiler_font_directories(
+    app_handle: &tauri::AppHandle,
+    app_local_data_dir: &Path,
+    start: &Path,
+) -> Vec<PathBuf> {
+    let mut paths = workspace_font_directories(app_local_data_dir, start);
+    for private_path in configured_private_font_directories(app_handle) {
+        if !paths.iter().any(|path| path == &private_path) {
+            paths.push(private_path);
+        }
+    }
+    paths
+}
+
 fn apply_workspace_font_paths(
     command: &mut std::process::Command,
+    app_handle: &tauri::AppHandle,
     app_local_data_dir: &Path,
     start: &Path,
 ) {
-    let paths = workspace_font_directories(app_local_data_dir, start);
+    let paths = compiler_font_directories(app_handle, app_local_data_dir, start);
     if !paths.is_empty() {
         if let Ok(value) = std::env::join_paths(paths) {
             command.env("TYPST_FONT_PATHS", value);
@@ -62,13 +101,32 @@ fn apply_workspace_font_paths(
 }
 
 #[tauri::command]
-fn list_system_fonts() -> font_store::SystemFontCatalog {
-    font_store::list_system_fonts()
+fn list_system_fonts(app_handle: tauri::AppHandle) -> font_store::SystemFontCatalog {
+    font_store::list_system_fonts(&configured_private_font_directories(&app_handle))
 }
 
 #[tauri::command]
-fn font_families_supporting_text(families: Vec<String>, characters: String) -> Vec<String> {
-    font_store::font_families_supporting_text(&families, &characters)
+fn font_families_supporting_text(
+    app_handle: tauri::AppHandle,
+    families: Vec<String>,
+    characters: String,
+) -> Vec<String> {
+    font_store::font_families_supporting_text(
+        &families,
+        &characters,
+        &configured_private_font_directories(&app_handle),
+    )
+}
+
+#[tauri::command]
+fn inspect_private_font_directory(
+    app_handle: tauri::AppHandle,
+    path: String,
+) -> Result<font_store::PrivateFontDirectoryInspection, String> {
+    font_store::inspect_private_font_directory(
+        Path::new(&path),
+        &configured_private_font_directories(&app_handle),
+    )
 }
 
 #[tauri::command]
@@ -97,6 +155,7 @@ async fn prepare_scaled_workspace_font(
         Path::new(&workspace_root_path),
         &family,
         scale,
+        &configured_private_font_directories(&app_handle),
     )
 }
 
@@ -1885,7 +1944,7 @@ async fn check_typst_document(
 
     let mut command = std::process::Command::new(&tinymist_cmd);
     command.current_dir(parent);
-    apply_workspace_font_paths(&mut command, &data_dir, parent);
+    apply_workspace_font_paths(&mut command, &app_handle, &data_dir, parent);
     #[cfg(windows)]
     command.creation_flags(CREATE_NO_WINDOW);
 
@@ -1993,7 +2052,7 @@ async fn compile_typst_document(
 
     let mut command = std::process::Command::new(&tinymist_cmd);
     command.current_dir(parent);
-    apply_workspace_font_paths(&mut command, &data_dir, parent);
+    apply_workspace_font_paths(&mut command, &app_handle, &data_dir, parent);
     #[cfg(windows)]
     command.creation_flags(CREATE_NO_WINDOW);
 
@@ -2688,13 +2747,15 @@ async fn start_tinymist_lsp(
         .ok_or_else(|| "No managed Tinymist toolchain is installed.".to_string())?;
 
     let mut command = tokio::process::Command::new(&tinymist_exe);
-    if let Some(workspace_root) = workspace_root_path {
-        let workspace = Path::new(&workspace_root);
-        let paths = workspace_font_directories(&data_dir, workspace);
-        if !paths.is_empty() {
-            if let Ok(value) = std::env::join_paths(paths) {
-                command.env("TYPST_FONT_PATHS", value);
-            }
+    let font_paths = workspace_root_path
+        .as_deref()
+        .map(|workspace_root| {
+            compiler_font_directories(&app_handle, &data_dir, Path::new(workspace_root))
+        })
+        .unwrap_or_else(|| configured_private_font_directories(&app_handle));
+    if !font_paths.is_empty() {
+        if let Ok(value) = std::env::join_paths(font_paths) {
+            command.env("TYPST_FONT_PATHS", value);
         }
     }
     command.arg("lsp");
@@ -3504,6 +3565,7 @@ pub fn run() {
             get_toolchain_status,
             list_system_fonts,
             font_families_supporting_text,
+            inspect_private_font_directory,
             prepare_scaled_workspace_font,
             scaled_workspace_font_update_required,
             scaled_workspace_font_set_update_required,

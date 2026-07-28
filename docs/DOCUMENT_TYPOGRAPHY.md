@@ -105,6 +105,37 @@ migrated when Typsastra reads and reapplies the configuration. The former
 format that gave `Common` coverage to every row is interpreted as an override
 owned by its first row, preserving its effective shared-character priority.
 
+## Private local font directories
+
+Fonts do not have to be installed into the operating system to be used by
+Document Typography. Add one or more folders under **Settings → Editor →
+Private local font directories**. The font selector then groups families in
+this order:
+
+1. Typst built-in;
+2. Private local;
+3. System fonts.
+
+Typsastra stores these absolute paths in global machine-local application
+settings. It reads the font files in place and supplies the same directories to
+Tinymist diagnostics, live and draft preview, forward and inverse
+synchronization, scale-variant generation, and PDF export. Changing the list
+restarts the active Tinymist session so every compiler path sees the same
+catalog.
+
+A directory is rejected when it contains no supported fonts or when one of its
+family names is already supplied by the operating system or another private
+directory. This prevents an ambiguous family name from resolving to different
+font files between compiler sessions. Typsastra never copies these source font
+files into `.typsastra`, the global scaled-font cache, or a project export.
+Only a generated non-unit scale variant is written to Typsastra's private
+global cache under the existing scaling policy.
+
+Private local compiler fonts do not become CodeMirror editor or application UI
+fonts. Those selectors continue to use browser-accessible installed fonts.
+Recipients must configure or install the same family themselves; the Typst
+source remains ordinary and does not contain the private machine path.
+
 ## Uniform script scaling
 
 Every script entry accepts a uniform scale from `0.5` to `2.0`, relative to the

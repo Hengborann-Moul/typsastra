@@ -163,11 +163,12 @@ manageable without changing the portable Typst source model.
   variants by face, scale, disk usage, and last use; delete selected or unused
   variants; and renew stale variants under explicit user control.
 - Add private local font folders to Document Typography for fonts that users
-  do not want to install system-wide. Store absolute paths only in ignored
-  machine-local workspace state, show each font's origin, reject ambiguous
-  family collisions, restart Tinymist when paths change, and apply the same
-  paths to diagnostics, preview, source mapping, and PDF export. Never copy,
-  archive, redistribute, or write these font binaries into the project.
+  do not want to install system-wide. Store absolute paths only in global,
+  machine-local application settings, show each font's origin, reject
+  ambiguous family collisions, restart Tinymist when paths change, and apply
+  the same paths to diagnostics, preview, source mapping, and PDF export.
+  Never copy, archive, redistribute, or write these font binaries into the
+  project.
 - Add font-dependency health reporting for missing, moved, ambiguous, and
   unavailable system/private fonts without silently substituting or installing
   a replacement.
