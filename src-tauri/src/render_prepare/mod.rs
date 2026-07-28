@@ -59,6 +59,7 @@ pub struct RenderPrepareFileResult {
     pub prepared_text: String,
     pub draft_assets: Vec<DraftImageAsset>,
     pub draft_diagnostics: Vec<DraftImageDiagnostic>,
+    pub draft_cache_hit: bool,
 }
 
 #[tauri::command]
@@ -91,6 +92,7 @@ pub async fn prepare_render_file(
             prepared_text: prepared.prepared_text,
             draft_assets: prepared.draft.assets,
             draft_diagnostics: prepared.draft.diagnostics,
+            draft_cache_hit: prepared.draft_cache_hit,
         })
     })
     .await

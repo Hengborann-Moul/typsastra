@@ -88,22 +88,19 @@ pub struct DraftThumbnailStatus {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct DraftThumbnailMetric {
+pub struct DraftThumbnailQueueMetric {
     pub generation: u64,
-    pub id: String,
-    pub cache_hit: bool,
-    pub queue_class: String,
-    pub source_width: u32,
-    pub source_height: u32,
-    pub output_width: u32,
-    pub output_height: u32,
-    pub source_bytes: u64,
+    pub status: String,
+    pub total_images: usize,
+    pub cache_hits: usize,
+    pub generated: usize,
+    pub failed: usize,
+    pub skipped: usize,
     pub output_bytes: u64,
     pub decode_ms: f64,
     pub resize_ms: f64,
     pub encode_ms: f64,
     pub total_ms: f64,
-    pub failed: bool,
 }
 
 #[derive(Clone)]
@@ -113,8 +110,6 @@ struct ThumbnailJob {
 }
 
 struct GeneratedThumbnail {
-    output_width: u32,
-    output_height: u32,
     output_bytes: u64,
     decode_ms: f64,
     resize_ms: f64,
@@ -126,6 +121,7 @@ pub async fn start_draft_thumbnail_generation(
     app: AppHandle,
     request: StartDraftThumbnailRequest,
 ) -> Result<DraftThumbnailQueueSummary, String> {
+    let queue_started = Instant::now();
     let workspace_root = canonical_path(Path::new(&request.workspace_root))
         .ok_or_else(|| "The thumbnail workspace root is unavailable.".to_string())?;
     let cache_root = workspace_root
@@ -148,6 +144,7 @@ pub async fn start_draft_thumbnail_generation(
     let mut entries = HashMap::new();
     let mut jobs = Vec::new();
     let mut cache_hits = 0;
+    let mut cached_output_bytes = 0;
     for (_, asset) in indexed {
         let source_path = canonical_path(&asset.path)
             .ok_or_else(|| format!("Draft image is unavailable: {}", asset.path.display()))?;
@@ -187,31 +184,10 @@ pub async fn start_draft_thumbnail_generation(
         };
         if ready {
             cache_hits += 1;
-            let (output_width, output_height) = image::image_dimensions(&entry.cache_path)
-                .unwrap_or_else(|_| thumbnail_dimensions(entry.width, entry.height));
             let output_bytes = fs::metadata(&entry.cache_path)
                 .map(|metadata| metadata.len())
                 .unwrap_or(0);
-            emit_thumbnail_metric(
-                &app,
-                DraftThumbnailMetric {
-                    generation: request.generation,
-                    id: asset.id.clone(),
-                    cache_hit: true,
-                    queue_class: entry.queue_class.clone(),
-                    source_width,
-                    source_height,
-                    output_width,
-                    output_height,
-                    source_bytes: asset.source_bytes,
-                    output_bytes,
-                    decode_ms: 0.0,
-                    resize_ms: 0.0,
-                    encode_ms: 0.0,
-                    total_ms: 0.0,
-                    failed: false,
-                },
-            );
+            cached_output_bytes += output_bytes;
         } else {
             jobs.push(ThumbnailJob {
                 id: asset.id.clone(),
@@ -224,6 +200,7 @@ pub async fn start_draft_thumbnail_generation(
         .values()
         .map(|entry| entry.cache_path.clone())
         .collect::<HashSet<_>>();
+    let total_images = entries.len();
     {
         let mut state = THUMBNAIL_STATE
             .lock()
@@ -240,8 +217,12 @@ pub async fn start_draft_thumbnail_generation(
             &app,
             epoch,
             request.generation,
+            queue_started,
             &cache_root,
             &retained_paths,
+            total_images,
+            cache_hits,
+            cached_output_bytes,
             jobs,
         )
     });
@@ -356,20 +337,32 @@ fn run_thumbnail_queue(
     app: &AppHandle,
     epoch: u64,
     generation: u64,
+    queue_started: Instant,
     cache_root: &Path,
     retained_paths: &HashSet<PathBuf>,
+    total_images: usize,
+    cache_hits: usize,
+    cached_output_bytes: u64,
     jobs: Vec<ThumbnailJob>,
 ) {
     let _worker = THUMBNAIL_WORKER_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     remove_stale_cache_entries(cache_root, retained_paths);
+    let queued = jobs.len();
+    let mut generated = 0;
+    let mut failed = 0;
+    let mut output_bytes = cached_output_bytes;
+    let mut decode_ms = 0.0;
+    let mut resize_ms = 0.0;
+    let mut encode_ms = 0.0;
+    let mut interrupted = false;
     for job in jobs {
         if THUMBNAIL_EPOCH.load(Ordering::Acquire) != epoch {
+            interrupted = true;
             break;
         }
         update_status(generation, &job.id, ThumbnailStatus::Generating);
-        let started = Instant::now();
         let result = generate_thumbnail(&job.entry.source_path, &job.entry.cache_path);
         let status = if result.is_ok() {
             ThumbnailStatus::Ready
@@ -377,45 +370,46 @@ fn run_thumbnail_queue(
             ThumbnailStatus::Failed
         };
         update_status(generation, &job.id, status);
-        let total_ms = duration_ms(started);
-        let metric = match result {
-            Ok(result) => DraftThumbnailMetric {
-                generation,
-                id: job.id,
-                cache_hit: false,
-                queue_class: job.entry.queue_class,
-                source_width: job.entry.width,
-                source_height: job.entry.height,
-                output_width: result.output_width,
-                output_height: result.output_height,
-                source_bytes: job.entry.source_bytes,
-                output_bytes: result.output_bytes,
-                decode_ms: result.decode_ms,
-                resize_ms: result.resize_ms,
-                encode_ms: result.encode_ms,
-                total_ms,
-                failed: false,
-            },
-            Err(_) => DraftThumbnailMetric {
-                generation,
-                id: job.id,
-                cache_hit: false,
-                queue_class: job.entry.queue_class,
-                source_width: job.entry.width,
-                source_height: job.entry.height,
-                output_width: 0,
-                output_height: 0,
-                source_bytes: job.entry.source_bytes,
-                output_bytes: 0,
-                decode_ms: 0.0,
-                resize_ms: 0.0,
-                encode_ms: 0.0,
-                total_ms,
-                failed: true,
-            },
-        };
-        emit_thumbnail_metric(app, metric);
+        match result {
+            Ok(result) => {
+                generated += 1;
+                output_bytes += result.output_bytes;
+                decode_ms += result.decode_ms;
+                resize_ms += result.resize_ms;
+                encode_ms += result.encode_ms;
+            }
+            Err(_) => failed += 1,
+        }
     }
+    let current_epoch = THUMBNAIL_EPOCH.load(Ordering::Acquire);
+    let current_generation = THUMBNAIL_STATE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .generation;
+    let status = if !interrupted && current_epoch == epoch {
+        "completed"
+    } else if current_generation == 0 {
+        "cancelled"
+    } else {
+        "superseded"
+    };
+    emit_thumbnail_queue_metric(
+        app,
+        DraftThumbnailQueueMetric {
+            generation,
+            status: status.into(),
+            total_images,
+            cache_hits,
+            generated,
+            failed,
+            skipped: queued.saturating_sub(generated + failed),
+            output_bytes,
+            decode_ms,
+            resize_ms,
+            encode_ms,
+            total_ms: duration_ms(queue_started),
+        },
+    );
 }
 
 fn remove_stale_cache_entries(cache_root: &Path, retained_paths: &HashSet<PathBuf>) {
@@ -443,16 +437,7 @@ fn update_status(generation: u64, id: &str, status: ThumbnailStatus) {
 
 fn generate_thumbnail(source: &Path, destination: &Path) -> Result<GeneratedThumbnail, String> {
     if destination.is_file() {
-        let image = ImageReader::open(destination)
-            .map_err(|error| format!("Could not open cached thumbnail: {error}"))?
-            .with_guessed_format()
-            .map_err(|error| format!("Could not identify cached thumbnail: {error}"))?
-            .decode()
-            .map_err(|error| format!("Could not decode cached thumbnail: {error}"))?;
-        let (output_width, output_height) = image.dimensions();
         return Ok(GeneratedThumbnail {
-            output_width,
-            output_height,
             output_bytes: fs::metadata(destination)
                 .map(|metadata| metadata.len())
                 .unwrap_or(0),
@@ -483,8 +468,7 @@ fn generate_thumbnail(source: &Path, destination: &Path) -> Result<GeneratedThum
     };
     let initial_resize_ms = duration_ms(resize_started);
     let encode_started = Instant::now();
-    let (encoded, output_width, output_height, adaptive_resize_ms) =
-        encode_bounded_jpeg(thumbnail)?;
+    let (encoded, _, _, adaptive_resize_ms) = encode_bounded_jpeg(thumbnail)?;
     let encode_ms = (duration_ms(encode_started) - adaptive_resize_ms).max(0.0);
     let resize_ms = initial_resize_ms + adaptive_resize_ms;
     let temporary = destination.with_extension(format!(
@@ -497,8 +481,6 @@ fn generate_thumbnail(source: &Path, destination: &Path) -> Result<GeneratedThum
     if destination.is_file() {
         let _ = fs::remove_file(&temporary);
         return Ok(GeneratedThumbnail {
-            output_width,
-            output_height,
             output_bytes: fs::metadata(destination)
                 .map(|metadata| metadata.len())
                 .unwrap_or(0),
@@ -510,8 +492,6 @@ fn generate_thumbnail(source: &Path, destination: &Path) -> Result<GeneratedThum
     fs::rename(&temporary, destination)
         .map_err(|error| format!("Could not commit thumbnail atomically: {error}"))?;
     Ok(GeneratedThumbnail {
-        output_width,
-        output_height,
         output_bytes: fs::metadata(destination)
             .map(|metadata| metadata.len())
             .unwrap_or(0),
@@ -582,13 +562,6 @@ fn is_large(asset: &DraftImageAsset) -> bool {
         || asset.source_bytes >= LARGE_SOURCE_BYTES
 }
 
-fn thumbnail_dimensions(width: u32, height: u32) -> (u32, u32) {
-    if width <= THUMBNAIL_LONGEST_EDGE && height <= THUMBNAIL_LONGEST_EDGE {
-        return (width, height);
-    }
-    scaled_dimensions(width, height, THUMBNAIL_LONGEST_EDGE)
-}
-
 fn scaled_dimensions(width: u32, height: u32, longest_edge: u32) -> (u32, u32) {
     let scale = longest_edge as f64 / f64::from(width.max(height));
     (
@@ -643,8 +616,8 @@ fn duration_ms(started: Instant) -> f64 {
     started.elapsed().as_secs_f64() * 1000.0
 }
 
-fn emit_thumbnail_metric(app: &AppHandle, metric: DraftThumbnailMetric) {
-    let _ = app.emit("draft-thumbnail-metric", metric);
+fn emit_thumbnail_queue_metric(app: &AppHandle, metric: DraftThumbnailQueueMetric) {
+    let _ = app.emit("draft-thumbnail-queue-metric", metric);
 }
 
 fn thumbnail_cache_key(path: &Path, metadata: &fs::Metadata) -> Result<String, String> {

@@ -114,6 +114,34 @@ describe("Draft Preview", () => {
     expect(plan).toContain("one immutable queue");
   });
 
+  test("logs one aggregate thumbnail benchmark instead of per-image metrics", async () => {
+    const native = await Bun.file(
+      new URL("../src-tauri/src/render_prepare/draft_thumbnail.rs", import.meta.url)
+    ).text();
+
+    expect(native).toContain('"draft-thumbnail-queue-metric"');
+    expect(native).not.toContain('"draft-thumbnail-metric"');
+    expect(controller).toContain(
+      'listen<DraftThumbnailQueueMetric>("draft-thumbnail-queue-metric"'
+    );
+    expect(controller).toContain("Draft thumbnail cache ${metric.status}");
+    expect(controller).not.toContain(
+      'listen<DraftThumbnailMetric>("draft-thumbnail-metric"'
+    );
+  });
+
+  test("reports persisted Draft preparation reuse separately from same-generation overlays", () => {
+    expect(controller).toContain("projectManifestCacheHits");
+    expect(controller).toContain("overlayManifestCacheHits");
+    expect(controller).toContain("overlayPreparations");
+    expect(controller).toContain("result.draftCacheHits");
+    expect(controller).toContain("generated.draftCacheHit");
+    expect(controller).toContain("backendTypMs");
+    expect(controller).toContain("backendAssetMs");
+    expect(controller).toContain("projectPreparationMs");
+    expect(controller).toContain("overlayPreparationMs");
+  });
+
   test("keeps cached hover previews compact in storage and on screen", () => {
     expect(plan).toContain("capped below 100 KiB per thumbnail");
     expect(plan).toContain("capped at 340 by 300 CSS pixels");

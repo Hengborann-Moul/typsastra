@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::{Instant, UNIX_EPOCH};
 
 use super::draft::{
     prepare_draft_images, DraftImageAsset, DraftImageDiagnostic, DraftPreparation,
@@ -13,12 +15,34 @@ use super::sourcemap::{MappingKind, SourceMap, SOURCE_MAP_VERSION};
 const RENDER_CACHE_LAYOUT_VERSION: &str = "3-flat-preview-output";
 const RENDER_CACHE_OWNER_SCHEMA_VERSION: u32 = 1;
 const RENDER_CACHE_OWNER_FILE: &str = "workspace-owner.json";
+const DRAFT_PREPARATION_CACHE_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 struct RenderCacheOwner {
     schema_version: u32,
     workspace_root: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct DraftDependencyStamp {
+    path: PathBuf,
+    length: u64,
+    modified_secs: u64,
+    modified_nanos: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DraftPreparationCache {
+    version: u32,
+    source_digest: String,
+    dependencies: Vec<DraftDependencyStamp>,
+    prepared_text: String,
+    source_map: SourceMap,
+    assets: Vec<DraftImageAsset>,
+    diagnostics: Vec<DraftImageDiagnostic>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -48,6 +72,22 @@ pub struct RenderPrepareResult {
     pub warnings: Vec<RenderPrepareWarning>,
     pub draft_assets: Vec<DraftImageAsset>,
     pub draft_diagnostics: Vec<DraftImageDiagnostic>,
+    pub draft_cache_hits: usize,
+    pub timings: RenderPrepareTimings,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct RenderPrepareTimings {
+    pub total_ms: f64,
+    pub setup_ms: f64,
+    pub cleanup_ms: f64,
+    pub discovery_ms: f64,
+    pub typ_processing_ms: f64,
+    pub asset_sync_ms: f64,
+    pub discovered_files: usize,
+    pub typ_files: usize,
+    pub asset_files: usize,
 }
 
 pub fn mirror_project_cancellable(
@@ -55,9 +95,11 @@ pub fn mirror_project_cancellable(
     segmenter: Option<&KhmerTextSegmenter>,
     is_cancelled: impl Fn() -> bool,
 ) -> Result<RenderPrepareResult, String> {
+    let total_started_at = Instant::now();
     let project_root = &options.project_root;
     let cache_root = &options.cache_root;
 
+    let setup_started_at = Instant::now();
     ensure_render_cache_owner(project_root, cache_root).map_err(|error| error.to_string())?;
     let render_dir = cache_root.join("render");
     let maps_dir = cache_root.join("maps");
@@ -69,14 +111,23 @@ pub fn mirror_project_cancellable(
     if options.generate_source_map {
         fs::create_dir_all(&maps_dir).map_err(|e| e.to_string())?;
     }
+    let setup_ms = setup_started_at.elapsed().as_secs_f64() * 1_000.0;
 
+    let cleanup_started_at = Instant::now();
     let _ = clean_stale_cache_files(&render_dir, &maps_dir, project_root);
+    let cleanup_ms = cleanup_started_at.elapsed().as_secs_f64() * 1_000.0;
 
     let mut changed_files = Vec::new();
     let mut warnings = Vec::new();
     let mut draft_assets = Vec::new();
     let mut draft_diagnostics = Vec::new();
+    let mut draft_cache_hits = 0usize;
+    let mut typ_processing_ms = 0.0;
+    let mut asset_sync_ms = 0.0;
+    let mut typ_files = 0usize;
+    let mut asset_files = 0usize;
 
+    let discovery_started_at = Instant::now();
     let mut files_to_process = Vec::new();
     walk_project_dir(
         project_root,
@@ -94,6 +145,8 @@ pub fn mirror_project_cancellable(
             }
         }
     }
+    let discovery_ms = discovery_started_at.elapsed().as_secs_f64() * 1_000.0;
+    let discovered_files = files_to_process.len();
 
     for (rel_path, is_dir) in files_to_process {
         if is_cancelled() {
@@ -110,13 +163,19 @@ pub fn mirror_project_cancellable(
             }
 
             if rel_path.extension().and_then(|s| s.to_str()) == Some("typ") {
+                typ_files += 1;
+                let typ_started_at = Instant::now();
                 let result = process_typ_file(
                     &src_path, &dest_path, &rel_path, &maps_dir, options, segmenter,
                 );
+                typ_processing_ms += typ_started_at.elapsed().as_secs_f64() * 1_000.0;
                 match result {
                     Ok(processed) => {
                         if processed.changed {
                             changed_files.push(dest_path.clone());
+                        }
+                        if processed.draft_cache_hit {
+                            draft_cache_hits += 1;
                         }
                         merge_draft_assets(&mut draft_assets, processed.draft.assets);
                         draft_diagnostics.extend(processed.draft.diagnostics);
@@ -135,6 +194,8 @@ pub fn mirror_project_cancellable(
                     }
                 }
             } else {
+                asset_files += 1;
+                let asset_started_at = Instant::now();
                 match copy_asset_to_cache(&src_path, &dest_path) {
                     Ok(copied) => {
                         if copied {
@@ -148,6 +209,7 @@ pub fn mirror_project_cancellable(
                         });
                     }
                 }
+                asset_sync_ms += asset_started_at.elapsed().as_secs_f64() * 1_000.0;
             }
         }
     }
@@ -165,6 +227,18 @@ pub fn mirror_project_cancellable(
         warnings,
         draft_assets,
         draft_diagnostics,
+        draft_cache_hits,
+        timings: RenderPrepareTimings {
+            total_ms: total_started_at.elapsed().as_secs_f64() * 1_000.0,
+            setup_ms,
+            cleanup_ms,
+            discovery_ms,
+            typ_processing_ms,
+            asset_sync_ms,
+            discovered_files,
+            typ_files,
+            asset_files,
+        },
     })
 }
 
@@ -281,15 +355,13 @@ fn clean_stale_cache_files(
         } else {
             let _ = fs::remove_file(&path);
             let rel = path.strip_prefix(render_dir).unwrap_or(&path);
-            let mut map_rel = rel.to_path_buf();
-            let ext = map_rel
-                .extension()
-                .and_then(|s| s.to_str())
-                .unwrap_or("typ");
-            map_rel.set_extension(format!("{}.map.json", ext));
-            let map_path = maps_dir.join(map_rel);
-            if map_path.exists() {
-                let _ = fs::remove_file(map_path);
+            for metadata_path in [
+                derived_metadata_path(maps_dir, rel, "map"),
+                draft_cache_path(maps_dir, rel),
+            ] {
+                if metadata_path.exists() {
+                    let _ = fs::remove_file(metadata_path);
+                }
             }
         }
     }
@@ -337,6 +409,29 @@ pub fn prepare_single_in_memory_file(
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
 
+    if options.preview_content_mode == PreviewContentMode::Draft {
+        if let Some(cached) =
+            read_current_draft_cache(&draft_cache_path(&maps_dir, rel_path), source_code)
+        {
+            restore_cached_draft_artifact(
+                &dest_path,
+                &derived_metadata_path(&maps_dir, rel_path, "map"),
+                &cached,
+                options.generate_source_map,
+            )?;
+            return Ok(PreparedInMemoryFile {
+                path: dest_path,
+                prepared_text: cached.prepared_text,
+                draft: DraftPreparation {
+                    replacements: Vec::new(),
+                    assets: cached.assets,
+                    diagnostics: cached.diagnostics,
+                },
+                draft_cache_hit: true,
+            });
+        }
+    }
+
     let mut sourcemap = SourceMap::new(
         file_path.to_string_lossy().to_string(),
         dest_path.to_string_lossy().to_string(),
@@ -349,24 +444,28 @@ pub fn prepare_single_in_memory_file(
     fs::write(&dest_path, &generated_content).map_err(|e| e.to_string())?;
 
     if options.generate_source_map {
-        let mut map_rel = rel_path.to_path_buf();
-        let ext = map_rel
-            .extension()
-            .and_then(|s| s.to_str())
-            .unwrap_or("typ");
-        map_rel.set_extension(format!("{}.map.json", ext));
-        let map_path = maps_dir.join(map_rel);
+        let map_path = derived_metadata_path(&maps_dir, rel_path, "map");
         if let Some(parent) = map_path.parent() {
             fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
         let map_json = serde_json::to_string_pretty(&sourcemap).map_err(|e| e.to_string())?;
         fs::write(map_path, map_json).map_err(|e| e.to_string())?;
     }
+    if options.preview_content_mode == PreviewContentMode::Draft {
+        write_draft_cache(
+            &draft_cache_path(&maps_dir, rel_path),
+            source_code,
+            &generated_content,
+            &sourcemap,
+            &draft,
+        )?;
+    }
 
     Ok(PreparedInMemoryFile {
         path: dest_path,
         prepared_text: generated_content,
         draft,
+        draft_cache_hit: false,
     })
 }
 
@@ -375,6 +474,7 @@ pub struct PreparedInMemoryFile {
     pub path: PathBuf,
     pub prepared_text: String,
     pub draft: DraftPreparation,
+    pub draft_cache_hit: bool,
 }
 
 fn walk_project_dir(
@@ -452,6 +552,136 @@ fn copy_asset_to_cache(src: &Path, dest: &Path) -> Result<bool, std::io::Error> 
 struct ProcessedTypFile {
     changed: bool,
     draft: DraftPreparation,
+    draft_cache_hit: bool,
+}
+
+fn derived_metadata_path(maps_dir: &Path, rel_path: &Path, suffix: &str) -> PathBuf {
+    let mut derived = rel_path.to_path_buf();
+    let ext = derived
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("typ");
+    derived.set_extension(format!("{ext}.{suffix}.json"));
+    maps_dir.join(derived)
+}
+
+fn draft_cache_path(maps_dir: &Path, rel_path: &Path) -> PathBuf {
+    derived_metadata_path(maps_dir, rel_path, "draft")
+}
+
+fn source_digest(source: &str) -> String {
+    let mut digest = Sha256::new();
+    digest.update(source.as_bytes());
+    format!("{:x}", digest.finalize())
+}
+
+fn dependency_stamp(path: &Path) -> Option<DraftDependencyStamp> {
+    let metadata = fs::metadata(path).ok()?;
+    let modified = metadata.modified().ok()?.duration_since(UNIX_EPOCH).ok()?;
+    Some(DraftDependencyStamp {
+        path: path.to_path_buf(),
+        length: metadata.len(),
+        modified_secs: modified.as_secs(),
+        modified_nanos: modified.subsec_nanos(),
+    })
+}
+
+fn draft_cache_from_preparation(
+    source: &str,
+    prepared_text: &str,
+    source_map: &SourceMap,
+    draft: &DraftPreparation,
+) -> Option<DraftPreparationCache> {
+    // Unresolved calls are deliberately rechecked. A missing image may appear
+    // without the Typst source changing, so caching that diagnostic could hide
+    // a newly valid Draft replacement.
+    if !draft.diagnostics.is_empty() {
+        return None;
+    }
+    let mut dependencies = draft
+        .assets
+        .iter()
+        .filter_map(|asset| dependency_stamp(&asset.path))
+        .collect::<Vec<_>>();
+    if dependencies.len() != draft.assets.len() {
+        return None;
+    }
+    dependencies.sort_by(|left, right| left.path.cmp(&right.path));
+    dependencies.dedup_by(|left, right| left.path == right.path);
+    Some(DraftPreparationCache {
+        version: DRAFT_PREPARATION_CACHE_VERSION,
+        source_digest: source_digest(source),
+        dependencies,
+        prepared_text: prepared_text.to_string(),
+        source_map: source_map.clone(),
+        assets: draft.assets.clone(),
+        diagnostics: draft.diagnostics.clone(),
+    })
+}
+
+fn read_current_draft_cache(path: &Path, source: &str) -> Option<DraftPreparationCache> {
+    let bytes = fs::read(path).ok()?;
+    let cached = serde_json::from_slice::<DraftPreparationCache>(&bytes).ok()?;
+    if cached.version != DRAFT_PREPARATION_CACHE_VERSION
+        || cached.source_digest != source_digest(source)
+        || !cached.diagnostics.is_empty()
+        || cached
+            .dependencies
+            .iter()
+            .any(|expected| dependency_stamp(&expected.path).as_ref() != Some(expected))
+    {
+        return None;
+    }
+    Some(cached)
+}
+
+fn write_draft_cache(
+    path: &Path,
+    source: &str,
+    prepared_text: &str,
+    source_map: &SourceMap,
+    draft: &DraftPreparation,
+) -> Result<(), String> {
+    let Some(cache) = draft_cache_from_preparation(source, prepared_text, source_map, draft) else {
+        let _ = fs::remove_file(path);
+        return Ok(());
+    };
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    let bytes = serde_json::to_vec(&cache).map_err(|error| error.to_string())?;
+    fs::write(path, bytes).map_err(|error| error.to_string())
+}
+
+fn restore_cached_draft_artifact(
+    dest: &Path,
+    map_path: &Path,
+    cached: &DraftPreparationCache,
+    generate_source_map: bool,
+) -> Result<bool, String> {
+    let prepared_changed = fs::read_to_string(dest)
+        .map(|current| current != cached.prepared_text)
+        .unwrap_or(true);
+    if prepared_changed {
+        if let Some(parent) = dest.parent() {
+            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        fs::write(dest, &cached.prepared_text).map_err(|error| error.to_string())?;
+    }
+    if generate_source_map {
+        let map_json =
+            serde_json::to_string_pretty(&cached.source_map).map_err(|error| error.to_string())?;
+        let map_changed = fs::read_to_string(map_path)
+            .map(|current| current != map_json)
+            .unwrap_or(true);
+        if map_changed {
+            if let Some(parent) = map_path.parent() {
+                fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+            }
+            fs::write(map_path, map_json).map_err(|error| error.to_string())?;
+        }
+    }
+    Ok(prepared_changed)
 }
 
 fn process_typ_file(
@@ -462,35 +692,48 @@ fn process_typ_file(
     options: &RenderPrepareOptions,
     segmenter: Option<&KhmerTextSegmenter>,
 ) -> Result<ProcessedTypFile, String> {
-    // Draft preparation also produces a generation-scoped asset manifest for
-    // hover previews. Re-analyze unchanged Typst files in Draft mode rather
-    // than returning a prepared file without its manifest.
-    if options.preview_content_mode == PreviewContentMode::Normal && dest.exists() {
-        if let (Ok(src_meta), Ok(dest_meta)) = (fs::metadata(src), fs::metadata(dest)) {
-            if let (Ok(src_mod), Ok(dest_mod)) = (src_meta.modified(), dest_meta.modified()) {
-                if src_mod <= dest_mod {
-                    let map_is_current = if options.generate_source_map {
-                        let mut map_rel = rel_path.to_path_buf();
-                        let ext = map_rel
-                            .extension()
-                            .and_then(|s| s.to_str())
-                            .unwrap_or("typ");
-                        map_rel.set_extension(format!("{}.map.json", ext));
-                        fs::read_to_string(maps_dir.join(map_rel))
-                            .ok()
-                            .and_then(|content| serde_json::from_str::<SourceMap>(&content).ok())
-                            .is_some_and(|map| {
-                                map.version == SOURCE_MAP_VERSION
-                                    && map.preview_content_mode
-                                        == content_mode_key(options.preview_content_mode)
-                            })
-                    } else {
-                        true
-                    };
-                    if map_is_current {
+    if options.preview_content_mode == PreviewContentMode::Draft {
+        let source_content = fs::read_to_string(src).map_err(|e| e.to_string())?;
+        if let Some(cached) =
+            read_current_draft_cache(&draft_cache_path(maps_dir, rel_path), &source_content)
+        {
+            let changed = restore_cached_draft_artifact(
+                dest,
+                &derived_metadata_path(maps_dir, rel_path, "map"),
+                &cached,
+                options.generate_source_map,
+            )?;
+            return Ok(ProcessedTypFile {
+                changed,
+                draft: DraftPreparation {
+                    replacements: Vec::new(),
+                    assets: cached.assets,
+                    diagnostics: cached.diagnostics,
+                },
+                draft_cache_hit: true,
+            });
+        }
+    }
+    if dest.exists() {
+        let map_is_current = if options.generate_source_map {
+            fs::read_to_string(derived_metadata_path(maps_dir, rel_path, "map"))
+                .ok()
+                .and_then(|content| serde_json::from_str::<SourceMap>(&content).ok())
+                .is_some_and(|map| {
+                    map.version == SOURCE_MAP_VERSION
+                        && map.preview_content_mode == content_mode_key(options.preview_content_mode)
+                })
+        } else {
+            true
+        };
+        if map_is_current && options.preview_content_mode == PreviewContentMode::Normal {
+            if let (Ok(src_meta), Ok(dest_meta)) = (fs::metadata(src), fs::metadata(dest)) {
+                if let (Ok(src_mod), Ok(dest_mod)) = (src_meta.modified(), dest_meta.modified()) {
+                    if src_mod <= dest_mod {
                         return Ok(ProcessedTypFile {
                             changed: false,
                             draft: DraftPreparation::default(),
+                            draft_cache_hit: false,
                         });
                     }
                 }
@@ -513,23 +756,27 @@ fn process_typ_file(
     fs::write(dest, &generated_content).map_err(|e| e.to_string())?;
 
     if options.generate_source_map {
-        let mut map_rel = rel_path.to_path_buf();
-        let ext = map_rel
-            .extension()
-            .and_then(|s| s.to_str())
-            .unwrap_or("typ");
-        map_rel.set_extension(format!("{}.map.json", ext));
-        let map_path = maps_dir.join(map_rel);
+        let map_path = derived_metadata_path(maps_dir, rel_path, "map");
         if let Some(parent) = map_path.parent() {
             fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
         let map_json = serde_json::to_string_pretty(&sourcemap).map_err(|e| e.to_string())?;
         fs::write(map_path, map_json).map_err(|e| e.to_string())?;
     }
+    if options.preview_content_mode == PreviewContentMode::Draft {
+        write_draft_cache(
+            &draft_cache_path(maps_dir, rel_path),
+            &source_content,
+            &generated_content,
+            &sourcemap,
+            &draft,
+        )?;
+    }
 
     Ok(ProcessedTypFile {
         changed: true,
         draft,
+        draft_cache_hit: false,
     })
 }
 
@@ -893,11 +1140,67 @@ mod tests {
             .contains("draft-preview.typsastra.invalid"));
 
         options.preview_content_mode = PreviewContentMode::Draft;
-        mirror_project_cancellable(&options, None, || false).unwrap();
+        let restored_draft = mirror_project_cancellable(&options, None, || false).unwrap();
+        assert_eq!(restored_draft.draft_cache_hits, 1);
+        assert_eq!(restored_draft.changed_files.len(), 1);
         let draft_source = fs::read_to_string(cache_root.join("render/main.typ")).unwrap();
         assert!(draft_source.contains("draft-preview.typsastra.invalid"));
         assert!(draft_source.contains("font: \"New Computer Modern\", \"photo.png\""));
         assert!(!draft_source.contains("#raw("));
+    }
+
+    #[test]
+    fn reuses_unchanged_draft_manifest_and_invalidates_changed_images() {
+        let workspace = tempfile::tempdir().unwrap();
+        let main = workspace.path().join("main.typ");
+        let image = workspace.path().join("photo.png");
+        let cache_root = workspace.path().join(".typsastra/cache");
+        let mut png = vec![0u8; 24];
+        png[..8].copy_from_slice(b"\x89PNG\r\n\x1a\n");
+        png[16..20].copy_from_slice(&800u32.to_be_bytes());
+        png[20..24].copy_from_slice(&600u32.to_be_bytes());
+        fs::write(&image, &png).unwrap();
+        fs::write(&main, "#image(\"photo.png\", width: 100%)").unwrap();
+        let options = RenderPrepareOptions {
+            enable_khmer_zws: false,
+            project_root: workspace.path().to_path_buf(),
+            entry_file: main.clone(),
+            cache_root: cache_root.clone(),
+            generate_source_map: true,
+            preview_content_mode: PreviewContentMode::Draft,
+        };
+
+        let first = mirror_project_cancellable(&options, None, || false).unwrap();
+        assert_eq!(first.draft_assets.len(), 1);
+        assert_eq!(first.draft_cache_hits, 0);
+        assert!(cache_root.join("maps/main.typ.draft.json").is_file());
+
+        // Cloud sync and file restoration can update a source timestamp
+        // without changing its contents. The source digest remains the
+        // authority for Draft manifest reuse.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        fs::write(&main, "#image(\"photo.png\", width: 100%)").unwrap();
+        let second = mirror_project_cancellable(&options, None, || false).unwrap();
+        assert_eq!(second.draft_assets, first.draft_assets);
+        assert_eq!(second.draft_cache_hits, 1);
+        assert!(
+            second.changed_files.is_empty(),
+            "an unchanged Draft manifest should reuse the prepared source"
+        );
+
+        png[16..20].copy_from_slice(&1024u32.to_be_bytes());
+        png.push(0);
+        fs::write(&image, png).unwrap();
+        let changed = mirror_project_cancellable(&options, None, || false).unwrap();
+        assert_eq!(changed.draft_assets[0].width, 1024);
+        assert_eq!(changed.draft_cache_hits, 0);
+        assert!(
+            changed
+                .changed_files
+                .iter()
+                .any(|path| path.ends_with("main.typ")),
+            "changed image metadata must invalidate the Draft source"
+        );
     }
 
     #[test]

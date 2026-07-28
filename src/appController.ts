@@ -299,22 +299,19 @@ type DraftThumbnailQueueSummary = {
   queued: number;
 };
 
-type DraftThumbnailMetric = {
+type DraftThumbnailQueueMetric = {
   generation: number;
-  id: string;
-  cacheHit: boolean;
-  queueClass: string;
-  sourceWidth: number;
-  sourceHeight: number;
-  outputWidth: number;
-  outputHeight: number;
-  sourceBytes: number;
+  status: "completed" | "cancelled" | "superseded";
+  totalImages: number;
+  cacheHits: number;
+  generated: number;
+  failed: number;
+  skipped: number;
   outputBytes: number;
   decodeMs: number;
   resizeMs: number;
   encodeMs: number;
   totalMs: number;
-  failed: boolean;
 };
 
 type RenderPreparationResult = {
@@ -323,6 +320,20 @@ type RenderPreparationResult = {
   warnings: Array<{ filePath: string; message: string }>;
   draftAssets: DraftImageAsset[];
   draftDiagnostics: DraftImageDiagnostic[];
+  draftCacheHits: number;
+  timings: RenderPreparationTimings;
+};
+
+type RenderPreparationTimings = {
+  totalMs: number;
+  setupMs: number;
+  cleanupMs: number;
+  discoveryMs: number;
+  typProcessingMs: number;
+  assetSyncMs: number;
+  discoveredFiles: number;
+  typFiles: number;
+  assetFiles: number;
 };
 
 type RenderPreparationFileResult = {
@@ -330,6 +341,7 @@ type RenderPreparationFileResult = {
   preparedText: string;
   draftAssets: DraftImageAsset[];
   draftDiagnostics: DraftImageDiagnostic[];
+  draftCacheHit: boolean;
 };
 
 type PreparedPdfPreview = {
@@ -337,6 +349,12 @@ type PreparedPdfPreview = {
   changedPaths: string[];
   draftAssets: Map<string, DraftImageAsset>;
   draftDiagnostics: DraftImageDiagnostic[];
+  draftProjectCacheHits: number;
+  draftOverlayCacheHits: number;
+  draftOverlayPreparations: number;
+  projectPreparationMs: number;
+  overlayPreparationMs: number;
+  backendTimings: RenderPreparationTimings;
 };
 
 type ActivateEditorTabOptions = {
@@ -1362,13 +1380,17 @@ export class TypsastraWorkspaceController {
       }),
       parent: this.codeRenderPane
     });
-    listen<DraftThumbnailMetric>("draft-thumbnail-metric", event => {
+    listen<DraftThumbnailQueueMetric>("draft-thumbnail-queue-metric", event => {
       const metric = event.payload;
-      if (metric.generation !== this.draftThumbnailGeneration) return;
-      this.performanceDiagnostics.record({
-        name: "preview.draft-thumbnail",
-        milliseconds: metric.totalMs,
-        detail: metric
+      if (!this.isDeveloperLogEnabled("performance")) return;
+      if (
+        metric.status === "completed"
+        && metric.generation !== this.draftThumbnailGeneration
+      ) return;
+      this.appendDeveloperLog({
+        kind: metric.failed > 0 ? "warning" : "info",
+        source: "performance",
+        message: `Draft thumbnail cache ${metric.status} (generation ${metric.generation}): ${metric.totalImages} image(s); ${metric.cacheHits} cache hit(s); ${metric.generated} generated; ${metric.failed} failed; ${metric.skipped} skipped; total=${metric.totalMs.toFixed(1)} ms; decode=${metric.decodeMs.toFixed(1)} ms; resize=${metric.resizeMs.toFixed(1)} ms; encode=${metric.encodeMs.toFixed(1)} ms; output=${(metric.outputBytes / 1024 / 1024).toFixed(2)} MiB.`
       });
     });
     // The editor remains mouse- and command-focusable, but ordinary Tab
@@ -3996,7 +4018,20 @@ export class TypsastraWorkspaceController {
         detail: {
           contentMode: generationContentMode,
           replacedAssets: preparedPreview.draftAssets.size,
-          unresolvedCalls: preparedPreview.draftDiagnostics.length
+          unresolvedCalls: preparedPreview.draftDiagnostics.length,
+          projectManifestCacheHits: preparedPreview.draftProjectCacheHits,
+          overlayManifestCacheHits: preparedPreview.draftOverlayCacheHits,
+          overlayPreparations: preparedPreview.draftOverlayPreparations,
+          projectMs: Math.round(preparedPreview.projectPreparationMs * 10) / 10,
+          overlayMs: Math.round(preparedPreview.overlayPreparationMs * 10) / 10,
+          backendSetupMs: Math.round(preparedPreview.backendTimings.setupMs * 10) / 10,
+          backendCleanupMs: Math.round(preparedPreview.backendTimings.cleanupMs * 10) / 10,
+          backendDiscoveryMs: Math.round(preparedPreview.backendTimings.discoveryMs * 10) / 10,
+          backendTypMs: Math.round(preparedPreview.backendTimings.typProcessingMs * 10) / 10,
+          backendAssetMs: Math.round(preparedPreview.backendTimings.assetSyncMs * 10) / 10,
+          discoveredFiles: preparedPreview.backendTimings.discoveredFiles,
+          typFiles: preparedPreview.backendTimings.typFiles,
+          assetFiles: preparedPreview.backendTimings.assetFiles
         }
       });
       this.ensurePreviewPreparationCurrent(preparationRevision);
@@ -4295,10 +4330,15 @@ export class TypsastraWorkspaceController {
       generateSourceMap: true,
       previewContentMode: contentMode
     };
+    const projectPreparationStartedAt = performance.now();
     const result = await invoke<RenderPreparationResult>("prepare_render_project", { options });
+    const projectPreparationMs = performance.now() - projectPreparationStartedAt;
     this.ensurePreviewPreparationCurrent(preparationRevision);
     const draftAssets = new Map(result.draftAssets.map(asset => [asset.id, asset]));
     const draftDiagnostics = [...result.draftDiagnostics];
+    let draftOverlayCacheHits = 0;
+    let draftOverlayPreparations = 0;
+    let overlayPreparationMs = 0;
     const tabsToOverlay = useEditorOverlays
       ? this.openTabs
         .filter(tab => tab.contentLoaded)
@@ -4312,24 +4352,32 @@ export class TypsastraWorkspaceController {
       const sourceCode = filePathKey(originalTabPath) === filePathKey(originalActivePath)
         ? contents
         : tab.content;
+      const overlayStartedAt = performance.now();
       const generated = await invoke<RenderPreparationFileResult>("prepare_render_file", {
         options,
         filePath: originalTabPath,
         sourceCode
       });
+      overlayPreparationMs += performance.now() - overlayStartedAt;
       this.ensurePreviewPreparationCurrent(preparationRevision);
       this.pdfPreviewGeneratedFiles.set(filePathKey(originalTabPath), generated);
+      draftOverlayPreparations += 1;
+      if (generated.draftCacheHit) draftOverlayCacheHits += 1;
       for (const asset of generated.draftAssets) draftAssets.set(asset.id, asset);
       draftDiagnostics.push(...generated.draftDiagnostics);
     }
     if (useEditorOverlays && !overlaid.has(filePathKey(originalActivePath))) {
+      const overlayStartedAt = performance.now();
       const activeGenerated = await invoke<RenderPreparationFileResult>("prepare_render_file", {
         options,
         filePath: originalActivePath,
         sourceCode: contents
       });
+      overlayPreparationMs += performance.now() - overlayStartedAt;
       this.ensurePreviewPreparationCurrent(preparationRevision);
       this.pdfPreviewGeneratedFiles.set(filePathKey(originalActivePath), activeGenerated);
+      draftOverlayPreparations += 1;
+      if (activeGenerated.draftCacheHit) draftOverlayCacheHits += 1;
       for (const asset of activeGenerated.draftAssets) draftAssets.set(asset.id, asset);
       draftDiagnostics.push(...activeGenerated.draftDiagnostics);
     }
@@ -4344,7 +4392,13 @@ export class TypsastraWorkspaceController {
       path: result.generatedEntryFile,
       changedPaths: result.changedFiles,
       draftAssets: contentMode === "draft" ? draftAssets : new Map(),
-      draftDiagnostics: contentMode === "draft" ? draftDiagnostics : []
+      draftDiagnostics: contentMode === "draft" ? draftDiagnostics : [],
+      draftProjectCacheHits: contentMode === "draft" ? result.draftCacheHits : 0,
+      draftOverlayCacheHits: contentMode === "draft" ? draftOverlayCacheHits : 0,
+      draftOverlayPreparations: contentMode === "draft" ? draftOverlayPreparations : 0,
+      projectPreparationMs,
+      overlayPreparationMs,
+      backendTimings: result.timings
     };
   }
 
@@ -4442,7 +4496,6 @@ export class TypsastraWorkspaceController {
       generation !== this.pdfPreviewGeneration
       || this.presentedPreviewContentMode !== "draft"
     ) return;
-    const startedAt = performance.now();
     const summary = await invoke<DraftThumbnailQueueSummary>("start_draft_thumbnail_generation", {
       request: {
         generation,
@@ -4459,17 +4512,6 @@ export class TypsastraWorkspaceController {
       return null;
     });
     if (!summary || generation !== this.pdfPreviewGeneration) return;
-    this.performanceDiagnostics.record({
-      name: "preview.draft-thumbnail",
-      milliseconds: performance.now() - startedAt,
-      detail: {
-        generation,
-        cacheHits: summary.cacheHits,
-        queued: summary.queued,
-        displayedPage,
-        displayedPageAssets: displayedPageAssetIds.length
-      }
-    });
     this.appendDeveloperLog({
       kind: "info",
       source: "draft thumbnails",
