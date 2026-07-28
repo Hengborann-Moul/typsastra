@@ -79,7 +79,7 @@ describe("Draft Preview", () => {
 
   test("loads hovered images from the backend-validated generation manifest", () => {
     const loaderStart = controller.indexOf("private async loadDraftPreviewImage");
-    const loaderEnd = controller.indexOf("private async syncPreparedPreviewDocuments", loaderStart);
+    const loaderEnd = controller.indexOf("private async closePreparedPreviewDocuments", loaderStart);
     const loader = controller.slice(loaderStart, loaderEnd);
     expect(loader).toContain("this.draftImageAssets.get(id)");
     expect(loader).toContain('invoke<ArrayBuffer | Uint8Array | number[]>("read_binary_file"');

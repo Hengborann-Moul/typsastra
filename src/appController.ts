@@ -275,6 +275,7 @@ type RenderPreparationFileResult = {
 
 type PreparedPdfPreview = {
   path: string;
+  changedPaths: string[];
   draftAssets: Map<string, DraftImageAsset>;
   draftDiagnostics: DraftImageDiagnostic[];
 };
@@ -401,7 +402,6 @@ export class TypsastraWorkspaceController {
   private documentOutlineUpdateTimer: number | null = null;
   private documentOutlineUpdateGeneration = 0;
   private readonly openedDocumentUris = new Set<string>();
-  private readonly preparedPreviewDocumentVersions = new Map<string, number>();
   private lastKhmerRenderPrepState: boolean | undefined = undefined;
   private lastPreviewRenderMode: PreviewRefreshStyle | undefined = undefined;
   private readonly pendingWorkspaceChanges = new Map<string, WorkspaceChange>();
@@ -2642,9 +2642,9 @@ export class TypsastraWorkspaceController {
         await this.openDocumentIfNeeded(lspUri, lspContent, this.currentVersion);
       }
       if (!previewGuarded) {
-        const lspMainPath = this.cachedPreviewCompilerPath(previewTarget
+        const lspMainPath = previewTarget
           ? previewLspMainPath(previewTarget)
-          : (this.previewStandalone ? this.previewRootPath : (this.previewMainPath ?? this.previewRootPath)));
+          : (this.previewStandalone ? this.previewRootPath : (this.previewMainPath ?? this.previewRootPath));
         const pinChanged = await this.updatePinnedMain(lspMainPath);
         if (pinChanged) {
           await this.recheckActiveDocumentAfterPin(tab.content);
@@ -3158,7 +3158,6 @@ export class TypsastraWorkspaceController {
       if (
         savedChangedRevision
         && participatesInPreviewCompilation(this.activeFilePath, this.pinnedMainFilePath, this.previewImported)
-        && this.effectivePreviewRenderMode === "on-save"
         && !this.previewDisabled
       ) {
         void this.renderPdfPreview(content);
@@ -3602,9 +3601,9 @@ export class TypsastraWorkspaceController {
   private async reloadWorkspaceFonts(): Promise<void> {
     if (!this.lspClient || !this.workspaceRootPath) return;
     await this.restartTinymistSession("Reloading project fonts...");
-    const lspMainPath = this.cachedPreviewCompilerPath(this.previewStandalone
+    const lspMainPath = this.previewStandalone
       ? this.previewRootPath
-      : (this.previewMainPath ?? this.previewRootPath));
+      : (this.previewMainPath ?? this.previewRootPath);
     await this.updatePinnedMain(lspMainPath, true);
     if (this.activeFilePath) {
       await this.recheckActiveDocumentAfterPin(this.editorInstance.state.doc.toString());
@@ -3675,16 +3674,6 @@ export class TypsastraWorkspaceController {
       previewStandalone: target.standalone,
       previewDisabled: target.disabled
     };
-  }
-
-  private cachedPreviewCompilerPath(path: string | null): string | null {
-    if (!path || !this.workspaceRootPath) return path;
-    if (this.isRenderCachePath(path)) return path;
-    const originalPath = this.mapToOriginalPath(path);
-    const relativePath = relativeFilePath(this.workspaceRootPath, originalPath);
-    const cacheRoot = this.getCacheRootPath();
-    if (relativePath === null || !cacheRoot) return path;
-    return `${cacheRoot}/render/${relativePath.replace(/\\/g, "/")}`;
   }
 
   private applyPreviewSessionToTab(tab: EditorTab, session: PreviewSessionState): void {
@@ -3896,14 +3885,14 @@ export class TypsastraWorkspaceController {
       this.previewFrame.setLoading("Compiling PDF preview...");
     }
     try {
-      await this.flushPendingLspSync();
       this.ensurePreviewPreparationCurrent(preparationRevision);
-      this.appendDeveloperLog({ kind: "info", source: "preview scheduler", message: `Render generation ${generation}: LSP flush complete.` });
       const draftPreparationStartedAt = performance.now();
+      const useEditorOverlays = this.effectivePreviewRenderMode === "on-type" || force;
       const preparedPreview = await this.preparePdfPreviewExportPath(
         contents,
         preparationRevision,
-        generationContentMode
+        generationContentMode,
+        useEditorOverlays
       );
       if (!preparedPreview) throw new Error("No PDF preview root is available.");
       const previewPath = preparedPreview.path;
@@ -3920,19 +3909,20 @@ export class TypsastraWorkspaceController {
       this.appendDeveloperLog({ kind: "info", source: "preview scheduler", message: `Render generation ${generation}: preview root prepared at ${previewPath}.` });
       const preparedPaths = [...new Set([
         previewPath,
+        ...preparedPreview.changedPaths,
         ...[...this.pdfPreviewGeneratedFiles.values()].map(file => file.generatedPath)
       ].map(nativeFilePath))];
       if (preparedPaths.length > 0) {
+        const closedPreparedDocuments = await this.closePreparedPreviewDocuments();
+        this.ensurePreviewPreparationCurrent(preparationRevision);
         await this.lspClient.notifyWorkspaceFilesChanged(
           preparedPaths.map(path => ({ uri: filePathToUri(path), type: 2 as const }))
         );
         this.ensurePreviewPreparationCurrent(preparationRevision);
-        const syncedPreparedDocuments = await this.syncPreparedPreviewDocuments(previewPath);
-        this.ensurePreviewPreparationCurrent(preparationRevision);
         this.appendDeveloperLog({
           kind: "info",
           source: "preview scheduler",
-          message: `Render generation ${generation}: invalidated ${preparedPaths.length} prepared file(s) and synchronized ${syncedPreparedDocuments} in-memory document(s) in Tinymist for ${this.effectivePreviewRenderMode}.`
+          message: `Render generation ${generation}: invalidated ${preparedPaths.length} disk-backed mirror file(s) and closed ${closedPreparedDocuments} legacy mirror document(s) before export.`
         });
       }
       // Register the configured private output before awaiting the RPC because
@@ -4135,7 +4125,8 @@ export class TypsastraWorkspaceController {
   private async preparePdfPreviewExportPath(
     contents: string,
     preparationRevision = this.pdfPreparationRevision,
-    contentMode = this.previewContentMode
+    contentMode = this.previewContentMode,
+    useEditorOverlays = this.effectivePreviewRenderMode === "on-type"
   ): Promise<PreparedPdfPreview | null> {
     if (!this.activeFilePath) return null;
     const rootPath = this.previewStandalone ? (this.previewRootPath ?? this.activeFilePath) : (this.previewMainPath ?? this.previewRootPath ?? this.activeFilePath);
@@ -4164,10 +4155,12 @@ export class TypsastraWorkspaceController {
     this.ensurePreviewPreparationCurrent(preparationRevision);
     const draftAssets = new Map(result.draftAssets.map(asset => [asset.id, asset]));
     const draftDiagnostics = [...result.draftDiagnostics];
-    const tabsToOverlay = this.openTabs
-      .filter(tab => tab.contentLoaded)
-      .filter(tab => tab.path.toLowerCase().endsWith(".typ"))
-      .filter(tab => this.workspaceRootPath && relativeFilePath(this.workspaceRootPath, this.mapToOriginalPath(tab.path)) !== null);
+    const tabsToOverlay = useEditorOverlays
+      ? this.openTabs
+        .filter(tab => tab.contentLoaded)
+        .filter(tab => tab.path.toLowerCase().endsWith(".typ"))
+        .filter(tab => this.workspaceRootPath && relativeFilePath(this.workspaceRootPath, this.mapToOriginalPath(tab.path)) !== null)
+      : [];
     const overlaid = new Set<string>();
     for (const tab of tabsToOverlay) {
       const originalTabPath = this.mapToOriginalPath(tab.path);
@@ -4185,7 +4178,7 @@ export class TypsastraWorkspaceController {
       for (const asset of generated.draftAssets) draftAssets.set(asset.id, asset);
       draftDiagnostics.push(...generated.draftDiagnostics);
     }
-    if (!overlaid.has(filePathKey(originalActivePath))) {
+    if (useEditorOverlays && !overlaid.has(filePathKey(originalActivePath))) {
       const activeGenerated = await invoke<RenderPreparationFileResult>("prepare_render_file", {
         options,
         filePath: originalActivePath,
@@ -4205,6 +4198,7 @@ export class TypsastraWorkspaceController {
     });
     return {
       path: result.generatedEntryFile,
+      changedPaths: result.changedFiles,
       draftAssets: contentMode === "draft" ? draftAssets : new Map(),
       draftDiagnostics: contentMode === "draft" ? draftDiagnostics : []
     };
@@ -4268,33 +4262,16 @@ export class TypsastraWorkspaceController {
     };
   }
 
-  private async syncPreparedPreviewDocuments(previewPath: string): Promise<number> {
+  private async closePreparedPreviewDocuments(): Promise<number> {
     if (!this.lspClient) return 0;
-    const documents = new Map<string, { path: string; text: string }>();
-    for (const file of this.pdfPreviewGeneratedFiles.values()) {
-      documents.set(filePathKey(file.generatedPath), {
-        path: file.generatedPath,
-        text: file.preparedText
-      });
+    const mirrorUris = [...this.openedDocumentUris].filter(uri =>
+      this.isRenderCachePath(filePathFromUri(uri))
+    );
+    for (const uri of mirrorUris) {
+      await this.lspClient.closeTextDocument(uri);
+      this.openedDocumentUris.delete(uri);
     }
-    const previewKey = filePathKey(previewPath);
-    if (!documents.has(previewKey)) {
-      const text = await invoke<string>("read_workspace_file", { path: previewPath });
-      documents.set(previewKey, { path: previewPath, text: normalizeEditorText(text) });
-    }
-
-    for (const document of documents.values()) {
-      const uri = filePathToUri(nativeFilePath(document.path));
-      const version = (this.preparedPreviewDocumentVersions.get(uri) ?? 0) + 1;
-      this.preparedPreviewDocumentVersions.set(uri, version);
-      if (this.openedDocumentUris.has(uri)) {
-        await this.lspClient.notifyTextChange(uri, document.text, version);
-      } else {
-        await this.lspClient.openTextDocument(uri, document.text, version);
-        this.openedDocumentUris.add(uri);
-      }
-    }
-    return documents.size;
+    return mirrorUris.length;
   }
 
   private schedulePdfPreview(contents: string, delayMs = this.settingsController.value.preview.syncDebounceMs) {
@@ -5789,7 +5766,16 @@ export class TypsastraWorkspaceController {
   }
 
   private async handleLspDiagnostics(uri: string, diagnostics: LspDiagnostic[], version?: number) {
-    const originalPath = this.mapToOriginalPath(filePathFromUri(uri));
+    const rawPath = filePathFromUri(uri);
+    if (this.isRenderCachePath(rawPath)) {
+      this.appendDeveloperLog({
+        kind: "info",
+        source: "preview diagnostics",
+        message: `Ignored ${diagnostics.length} diagnostic(s) from private render mirror: ${rawPath}.`
+      });
+      return;
+    }
+    const originalPath = this.mapToOriginalPath(rawPath);
     if (!isTypstDocumentPath(originalPath)) return;
     const isActive = this.activeFilePath && filePathKey(originalPath) === filePathKey(this.activeFilePath);
     if (isActive && this.diagnosticWaitStartedAt !== null) {
@@ -7274,7 +7260,7 @@ export class TypsastraWorkspaceController {
       }
       return;
     }
-    await this.updatePinnedMain(this.cachedPreviewCompilerPath(previewLspMainPath(target)));
+    await this.updatePinnedMain(previewLspMainPath(target));
     const docIdentity = target.rootPath
       ? researchDocumentIdentity(
           this.workspaceRootPath ?? target.rootPath,
@@ -7995,7 +7981,6 @@ export class TypsastraWorkspaceController {
     this.updatePreviewActionsToolbar(null);
 
     this.openedDocumentUris.clear();
-    this.preparedPreviewDocumentVersions.clear();
     this.externalConflictPaths.clear();
     this.clearPendingLspSync();
     this.previewSyncController.clearForward();

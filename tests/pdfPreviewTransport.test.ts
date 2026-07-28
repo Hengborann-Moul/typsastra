@@ -34,20 +34,45 @@ describe("compiled PDF transport", () => {
     expect(source).not.toContain("if (!shouldMirror || !this.workspaceRootPath)");
   });
 
-  test("synchronizes prepared dependencies before exporting in every render mode", async () => {
+  test("keeps prepared dependencies disk-backed before exporting in every render mode", async () => {
     const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
     const renderStart = source.indexOf("private async renderPdfPreview");
     const preparedPaths = source.indexOf("const preparedPaths = [...new Set([", renderStart);
+    const legacyClose = source.indexOf("await this.closePreparedPreviewDocuments()", preparedPaths);
     const invalidation = source.indexOf("await this.lspClient.notifyWorkspaceFilesChanged(", preparedPaths);
-    const synchronization = source.indexOf("await this.syncPreparedPreviewDocuments(previewPath)", invalidation);
-    const exportRequest = source.indexOf("await this.lspClient.exportPdfToFile(previewPath)", synchronization);
+    const exportRequest = source.indexOf("await this.lspClient.exportPdfToFile(previewPath)", invalidation);
     const invalidationPrefix = source.slice(preparedPaths, invalidation);
 
     expect(preparedPaths).toBeGreaterThan(renderStart);
-    expect(invalidation).toBeGreaterThan(preparedPaths);
-    expect(synchronization).toBeGreaterThan(invalidation);
-    expect(exportRequest).toBeGreaterThan(synchronization);
+    expect(legacyClose).toBeGreaterThan(preparedPaths);
+    expect(invalidation).toBeGreaterThan(legacyClose);
+    expect(exportRequest).toBeGreaterThan(invalidation);
     expect(invalidationPrefix).not.toContain('renderMode === "on-type"');
+    expect(source).toContain("...preparedPreview.changedPaths");
+    expect(source).toContain("changedPaths: result.changedFiles");
+    expect(source).not.toContain("syncPreparedPreviewDocuments");
+    expect(source).toContain("if (this.isRenderCachePath(rawPath))");
+  });
+
+  test("uses memory overlays on type and disk snapshots on save", async () => {
+    const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
+    expect(source).toContain(
+      'const useEditorOverlays = this.effectivePreviewRenderMode === "on-type" || force;'
+    );
+    expect(source).toContain("const tabsToOverlay = useEditorOverlays");
+    expect(source).toContain("if (useEditorOverlays && !overlaid.has(");
+  });
+
+  test("keeps editor diagnostics on original sources and recompiles explicit saves in either mode", async () => {
+    const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
+    const saveStart = source.indexOf("private async performSaveActiveFile");
+    const saveEnd = source.indexOf("\n  private ", saveStart + 10);
+    const saveMethod = source.slice(saveStart, saveEnd);
+    expect(source).toContain("await this.updatePinnedMain(previewLspMainPath(target))");
+    expect(source).not.toContain("cachedPreviewCompilerPath");
+    expect(source).toContain("if (this.isRenderCachePath(rawPath))");
+    expect(saveMethod).toContain("void this.renderPdfPreview(content)");
+    expect(saveMethod).not.toContain('effectivePreviewRenderMode === "on-save"');
   });
 
   test("validates copied workspace caches before starting Tinymist", async () => {
@@ -56,7 +81,7 @@ describe("compiled PDF transport", () => {
       'await invoke("cleanup_workspace_preview_files", { workspaceRootPath: selected })'
     );
     const startup = source.indexOf(
-      'await this.restartTinymistSession("Connecting to new workspace root...")'
+      'await this.restartTinymistSession("Connecting to new project...")'
     );
     expect(validation).toBeGreaterThan(-1);
     expect(startup).toBeGreaterThan(validation);

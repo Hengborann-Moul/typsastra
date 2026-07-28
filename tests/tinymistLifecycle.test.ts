@@ -74,7 +74,8 @@ describe("Tinymist workspace lifecycle", () => {
     expect(method).toContain("this.pinnedMainFilePath");
     expect(method).toContain("entryFile = this.mapToOriginalPath(this.pinnedMainFilePath)");
     expect(method).not.toContain('renderMode !== "on-type"');
-    expect(source).toContain("cachedPreviewCompilerPath(previewLspMainPath(target))");
+    expect(source).toContain("await this.updatePinnedMain(previewLspMainPath(target))");
+    expect(source).not.toContain("cachedPreviewCompilerPath");
     expect(source).toContain("await this.prepareRenderProjectIfNeeded();\n        await this.restartTinymistSession");
   });
 

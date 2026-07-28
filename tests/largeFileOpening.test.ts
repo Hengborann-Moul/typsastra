@@ -84,7 +84,7 @@ describe("large file opening notice", () => {
     expect(confirmationSource).toContain("this.blockedLargePdfPaths.delete(filePathKey(path))");
 
     const loadStart = controller.indexOf("private async loadPdfPath");
-    const loadEnd = controller.indexOf("private async syncPreparedPreviewDocuments", loadStart);
+    const loadEnd = controller.indexOf("private async closePreparedPreviewDocuments", loadStart);
     const loadSource = controller.slice(loadStart, loadEnd);
     expect(loadSource).toContain("if (this.blockedLargePdfPaths.has(pathKey)) return 0");
     expect(loadSource).toContain("const requestGeneration = ++this.pdfLoadRequestGeneration");
