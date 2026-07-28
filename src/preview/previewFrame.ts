@@ -136,6 +136,8 @@ export class PreviewFrame {
   private draftPopover: HTMLElement | null = null;
   private draftObjectUrl: string | null = null;
   private draftHoverGeneration = 0;
+  private draftHoverLink: HTMLElement | null = null;
+  private draftPointerPosition: { x: number; y: number } | null = null;
 
   constructor(
     private readonly pane: HTMLElement,
@@ -723,6 +725,7 @@ export class PreviewFrame {
         ?.dataset.renderKey === this.currentPageRenderKey(this.pdfGeneration);
       this.finalDecisionAt = destinationAlreadyFinal ? null : settledAt;
       this.queueViewportFinalRenders("first-stable");
+      this.retargetDraftHoverAtPointer();
     }
     if (snapshot.becameIdle) {
       this.queueViewportFinalRenders("idle-confirmation");
@@ -856,6 +859,9 @@ export class PreviewFrame {
 
       this.commitFinalCanvas(slot, canvas, annotationLinks);
       slot.dataset.renderKey = renderKey;
+      if (this.motion.current().state !== "moving") {
+        this.retargetDraftHoverAtPointer();
+      }
       this.trimResidentPages(pageNo);
       if (pageNo === this.motionDestinationPage && this.finalDecisionAt !== null) {
         this.recordMetric("preview.destination-final-commit", performance.now() - this.finalDecisionAt, { pageNo });
@@ -1178,7 +1184,8 @@ export class PreviewFrame {
     this.motion.reset(this.iframe?.contentWindow?.scrollY ?? 0, performance.now());
     this.debugInverse(`Interaction listener installed: readyState=${doc.readyState}, url=${doc.URL || "(empty)"}.`);
     doc.addEventListener("contextmenu", event => event.preventDefault());
-    doc.addEventListener("pointerdown", () => {
+    doc.addEventListener("pointerdown", event => {
+      this.rememberDraftPointer(event);
       window.postMessage({ type: "HIDE_CONTEXT_MENU" }, "*");
       this.motion.setPointerDown(true);
     }, true);
@@ -1189,9 +1196,11 @@ export class PreviewFrame {
       this.setPreviewLinkModifier(doc, false);
     });
     doc.addEventListener("pointermove", event => {
+      this.rememberDraftPointer(event);
       this.setPreviewLinkModifier(doc, previewLinkModifierPressed(event));
     }, { passive: true });
     doc.addEventListener("pointerover", event => {
+      this.rememberDraftPointer(event);
       const link = (event.target as Element | null)?.closest<HTMLElement>(".draft-image-link");
       if (link) void this.showDraftImagePopover(link);
     });
@@ -1206,6 +1215,10 @@ export class PreviewFrame {
     });
     doc.addEventListener("focusout", event => {
       if ((event.target as Element | null)?.closest(".draft-image-link")) this.hideDraftImagePopover();
+    });
+    doc.documentElement.addEventListener("pointerleave", () => {
+      this.draftPointerPosition = null;
+      this.hideDraftImagePopover();
     });
     doc.addEventListener("keydown", event => {
       this.setPreviewLinkModifier(doc, previewLinkModifierPressed(event) || event.key === "Control" || event.key === "Meta");
@@ -1380,12 +1393,14 @@ export class PreviewFrame {
   }
 
   private async showDraftImagePopover(link: HTMLElement): Promise<void> {
+    if (this.draftHoverLink === link) return;
     const startedAt = performance.now();
     const target = this.annotationTargets.get(link);
     if (target?.kind !== "draft-image" || !this.onDraftImageRequest) return;
+    this.draftHoverLink = link;
     const generation = ++this.draftHoverGeneration;
     await new Promise(resolve => window.setTimeout(resolve, 120));
-    if (generation !== this.draftHoverGeneration || !link.matches(":hover, :focus")) return;
+    if (generation !== this.draftHoverGeneration || !this.isDraftLinkActive(link)) return;
     let image = await this.onDraftImageRequest(target.id).catch(() => null);
     if (generation !== this.draftHoverGeneration || !image) return;
     if (image.status !== "ready") {
@@ -1398,7 +1413,7 @@ export class PreviewFrame {
       while (
         image.status !== "failed"
         && generation === this.draftHoverGeneration
-        && link.matches(":hover, :focus")
+        && this.isDraftLinkActive(link)
       ) {
         await new Promise(resolve => window.setTimeout(resolve, 250));
         image = await this.onDraftImageRequest(target.id).catch(() => null);
@@ -1412,7 +1427,7 @@ export class PreviewFrame {
     }
     if (
       generation !== this.draftHoverGeneration
-      || !link.matches(":hover, :focus")
+      || !this.isDraftLinkActive(link)
       || image.status !== "ready"
     ) return;
     this.hideDraftImagePopover(false);
@@ -1429,7 +1444,7 @@ export class PreviewFrame {
     preview.src = objectUrl;
     preview.alt = image.filename;
     await preview.decode().catch(() => {});
-    if (generation !== this.draftHoverGeneration || !link.matches(":hover, :focus")) {
+    if (generation !== this.draftHoverGeneration || !this.isDraftLinkActive(link)) {
       this.hideDraftImagePopover();
       return;
     }
@@ -1496,11 +1511,40 @@ export class PreviewFrame {
   }
 
   private hideDraftImagePopover(invalidate = true): void {
-    if (invalidate) this.draftHoverGeneration += 1;
+    if (invalidate) {
+      this.draftHoverGeneration += 1;
+      this.draftHoverLink = null;
+    }
     this.draftPopover?.remove();
     this.draftPopover = null;
     if (this.draftObjectUrl) URL.revokeObjectURL(this.draftObjectUrl);
     this.draftObjectUrl = null;
+  }
+
+  private rememberDraftPointer(event: PointerEvent): void {
+    this.draftPointerPosition = { x: event.clientX, y: event.clientY };
+  }
+
+  private draftLinkAtPointer(): HTMLElement | null {
+    const doc = this.iframe?.contentDocument;
+    const point = this.draftPointerPosition;
+    if (!doc || !point) return null;
+    return doc
+      .elementFromPoint(point.x, point.y)
+      ?.closest<HTMLElement>(".draft-image-link") ?? null;
+  }
+
+  private isDraftLinkActive(link: HTMLElement): boolean {
+    return link.matches(":focus") || this.draftLinkAtPointer() === link;
+  }
+
+  private retargetDraftHoverAtPointer(): void {
+    const link = this.draftLinkAtPointer();
+    if (link) {
+      void this.showDraftImagePopover(link);
+    } else {
+      this.hideDraftImagePopover();
+    }
   }
 
   public setMessage(html: string): void {

@@ -78,6 +78,15 @@ describe("Draft Preview", () => {
     expect(plan).toContain("including its fixed-size path label");
   });
 
+  test("retargets a stationary Draft hover after gesture and middle-button scrolling", () => {
+    expect(previewFrame).toContain("this.rememberDraftPointer(event)");
+    expect(previewFrame).toContain("elementFromPoint(point.x, point.y)");
+    expect(previewFrame).toContain("this.retargetDraftHoverAtPointer()");
+    expect(previewFrame).toContain('this.motion.current().state !== "moving"');
+    expect(previewFrame).toContain("this.isDraftLinkActive(link)");
+    expect(previewFrame).not.toContain('link.matches(":hover, :focus")');
+  });
+
   test("loads cached thumbnails from the backend-validated generation manifest", () => {
     const loaderStart = controller.indexOf("private async loadDraftPreviewImage");
     const loaderEnd = controller.indexOf("private async startDraftThumbnailQueue", loaderStart);
