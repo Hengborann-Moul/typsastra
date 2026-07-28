@@ -14,6 +14,23 @@ preview pane. The preview check measures the configured root together with its
 reachable local includes, templates, and libraries. It therefore applies
 whether the editor currently shows the main file or one of its dependencies.
 
+### Known editor limitation for very large source files
+
+A single source file around 20,000 lines can scroll unevenly on some systems.
+When a distant virtualized region first becomes visible, it may briefly appear
+as plain text before CodeMirror's streaming syntax parser applies highlighting.
+Trying to force that parsing into every scroll frame makes scrolling slower, so
+Typsastra currently preserves interaction responsiveness and lets highlighting
+finish asynchronously.
+
+This limitation concerns one unusually large active source file, not the total
+length of a multi-file document or its PDF preview. Splitting long documents
+into included chapters keeps each editor buffer smaller while retaining the
+configured main document for compilation and synchronization. Preview-on-save
+can reduce compilation work while editing, but it does not change editor syntax
+parsing. Further optimization will be investigated if this becomes a recurring
+authoring issue outside stress tests.
+
 ## Navigate the preview directly
 
 Enter a page number in the preview toolbar instead of animating through hundreds
