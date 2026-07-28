@@ -34,24 +34,29 @@ describe("compiled PDF transport", () => {
     expect(source).not.toContain("if (!shouldMirror || !this.workspaceRootPath)");
   });
 
-  test("keeps prepared dependencies disk-backed before exporting in every render mode", async () => {
+  test("pins the exact prepared revision transiently while exporting in every render mode", async () => {
     const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
     const renderStart = source.indexOf("private async renderPdfPreview");
     const preparedPaths = source.indexOf("const preparedPaths = [...new Set([", renderStart);
     const legacyClose = source.indexOf("await this.closePreparedPreviewDocuments()", preparedPaths);
     const invalidation = source.indexOf("await this.lspClient.notifyWorkspaceFilesChanged(", preparedPaths);
-    const exportRequest = source.indexOf("await this.lspClient.exportPdfToFile(previewPath)", invalidation);
+    const transientOpen = source.indexOf("await this.openPreparedPreviewDocumentsForExport(preparedPaths)", invalidation);
+    const exportRequest = source.indexOf("await this.lspClient.exportPdfToFile(previewPath)", transientOpen);
+    const transientClose = source.indexOf("await this.closePreparedPreviewDocuments()", exportRequest);
     const invalidationPrefix = source.slice(preparedPaths, invalidation);
 
     expect(preparedPaths).toBeGreaterThan(renderStart);
     expect(legacyClose).toBeGreaterThan(preparedPaths);
     expect(invalidation).toBeGreaterThan(legacyClose);
-    expect(exportRequest).toBeGreaterThan(invalidation);
+    expect(transientOpen).toBeGreaterThan(invalidation);
+    expect(exportRequest).toBeGreaterThan(transientOpen);
+    expect(transientClose).toBeGreaterThan(exportRequest);
     expect(invalidationPrefix).not.toContain('renderMode === "on-type"');
     expect(source).toContain("...preparedPreview.changedPaths");
     expect(source).toContain("changedPaths: result.changedFiles");
     expect(source).not.toContain("syncPreparedPreviewDocuments");
     expect(source).toContain("if (this.isRenderCachePath(rawPath))");
+    expect(source).toContain("Tinymist's watched-file invalidation can complete");
   });
 
   test("uses memory overlays on type and disk snapshots on save", async () => {
@@ -73,6 +78,29 @@ describe("compiled PDF transport", () => {
     expect(source).toContain("if (this.isRenderCachePath(rawPath))");
     expect(saveMethod).toContain("void this.renderPdfPreview(content)");
     expect(saveMethod).not.toContain('effectivePreviewRenderMode === "on-save"');
+  });
+
+  test("recovers the latest editor snapshot after a failed on-type render", async () => {
+    const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
+    const renderStart = source.indexOf("private async renderPdfPreview");
+    const renderEnd = source.indexOf("\n  private ", renderStart + 10);
+    const renderMethod = source.slice(renderStart, renderEnd);
+    const diagnosticsStart = source.indexOf("private async handleLspDiagnostics");
+    const diagnosticsEnd = source.indexOf("\n  private ", diagnosticsStart + 10);
+    const diagnosticsMethod = source.slice(diagnosticsStart, diagnosticsEnd);
+
+    expect(renderMethod).toContain("const latestContents = this.editorInstance.state.doc.toString()");
+    expect(renderMethod).toContain("if (latestContents !== contents)");
+    expect(renderMethod).toContain("queued !== contents || !renderSucceeded");
+    expect(renderMethod).toContain('this.previewFrame.setError("Preview Render Failed", failureMessage)');
+    expect(renderMethod).not.toContain("if (!this.previewFrame.currentUrl)");
+    expect(renderMethod).not.toContain('if (reportRenderStatus) {\n        this.setLspStatus({ kind: "preview-ready", message: "Preview ready" });');
+    expect(renderMethod).toContain('this.setLspStatus({ kind: "preview-ready", message: "Preview ready" });');
+    expect(diagnosticsMethod).not.toContain('this.previewFrame.setError("Preview Render Failed"');
+    expect(diagnosticsMethod).not.toContain("this.previewFrame.clearErrorOverlay()");
+    expect(diagnosticsMethod).toContain("this.lastFailedPreviewContents !== null");
+    expect(diagnosticsMethod).toContain("LSP accepted a corrected revision after preview failure");
+    expect(source).toContain("function previewRenderErrorMessage(error: unknown)");
   });
 
   test("validates copied workspace caches before starting Tinymist", async () => {

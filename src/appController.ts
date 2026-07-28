@@ -21,6 +21,7 @@ import type { EditorDiagnostic, EditorDiagnosticSeverity } from "./editor/diagno
 import { WorkspaceExplorer } from "./components/explorer";
 import { TinymistLspClient } from "./compiler/lsp";
 import { isTinymistStoppedRequestError, type EditorTextEdit, type LspDiagnostic, type LspInverseSyncResult, type LspLogEntry, type LspSourcePosition, type LspStatus, type PreviewDocumentPosition } from "./compiler/lsp";
+import { asRecord } from "./compiler/jsonRpc";
 import type { AppSettings, DeveloperLogCategory, PreviewRenderMode } from "./settings";
 import { SettingsController } from "./settingsController";
 import { fileNameFromPath, filePathFromUri, filePathKey, filePathToUri, nativeFilePath, relativeFilePath, remapFilePath } from "./platform/paths";
@@ -109,6 +110,26 @@ import {
 } from "./editor/templateTypography";
 
 type EditorMode = "CODE" | "WYSIWYM";
+
+function previewRenderErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  const record = asRecord(error);
+  const message = typeof record?.message === "string" ? record.message : "";
+  const data = record?.data;
+  const detail = typeof data === "string"
+    ? data
+    : data === undefined
+      ? ""
+      : JSON.stringify(data, null, 2);
+  if (message && detail && detail !== message) return `${message}\n\n${detail}`;
+  if (message || detail) return message || detail;
+  try {
+    return JSON.stringify(error, null, 2);
+  } catch {
+    return String(error);
+  }
+}
 
 
 type StartupTimingEntry = {
@@ -465,6 +486,8 @@ export class TypsastraWorkspaceController {
   private lastPdfSessionKey = "";
   private lastPdfSurface: PreviewSurface = "live";
   private pdfPreviewFailureAt: number | null = null;
+  private lastFailedPreviewContents: string | null = null;
+  private lastPreviewRecoveryRequestedContents: string | null = null;
   private tinymistPreviewRecoveryAttempts = 0;
   private tinymistPreviewRecovery: Promise<boolean> | null = null;
   private memoryDiagnosticSequence = 0;
@@ -3870,8 +3893,10 @@ export class TypsastraWorkspaceController {
     this.pdfPreviewRunning = true;
     const compileStartedAt = performance.now();
     const generation = ++this.pdfPreviewGeneration;
+    const generationActivePath = this.activeFilePath;
     const generationContentMode = this.previewContentMode;
     const preparationRevision = this.pdfPreparationRevision;
+    let renderSucceeded = false;
     await this.logMemoryDiagnostics(`render ${generation}: before preparation`);
     this.appendDeveloperLog({
       kind: "info",
@@ -3925,6 +3950,7 @@ export class TypsastraWorkspaceController {
           message: `Render generation ${generation}: invalidated ${preparedPaths.length} disk-backed mirror file(s) and closed ${closedPreparedDocuments} legacy mirror document(s) before export.`
         });
       }
+      const synchronizedPreparedDocuments = await this.openPreparedPreviewDocumentsForExport(preparedPaths);
       // Register the configured private output before awaiting the RPC because
       // Tinymist can create it before the workspace watcher receives the
       // command result. Do not reproduce the render mirror's relative path
@@ -3935,7 +3961,21 @@ export class TypsastraWorkspaceController {
       const anticipatedPdfPath = `${cacheRoot}/preview/${previewPdfName}`;
       const anticipatedPdfPathKey = filePathKey(anticipatedPdfPath);
       this.managedPreviewPdfPathKeys.add(anticipatedPdfPathKey);
-      const pdfPath = await this.lspClient.exportPdfToFile(previewPath);
+      let pdfPath: string;
+      try {
+        this.ensurePreviewPreparationCurrent(preparationRevision);
+        // Tinymist's watched-file invalidation can complete after its
+        // notification handler returns. Keep the exact prepared revision open
+        // only for this RPC so export cannot observe the previous disk cache.
+        pdfPath = await this.lspClient.exportPdfToFile(previewPath);
+      } finally {
+        const closedPreparedDocuments = await this.closePreparedPreviewDocuments();
+        this.appendDeveloperLog({
+          kind: "info",
+          source: "preview scheduler",
+          message: `Render generation ${generation}: released ${closedPreparedDocuments}/${synchronizedPreparedDocuments} transient mirror document(s) after export.`
+        });
+      }
       const actualPdfPathKey = filePathKey(pdfPath);
       this.managedPreviewPdfPathKeys.add(actualPdfPathKey);
       if (actualPdfPathKey !== anticipatedPdfPathKey) {
@@ -4004,10 +4044,14 @@ export class TypsastraWorkspaceController {
         ? this.workspaceRootPath
         : null;
       this.updatePreviewContentModeControl(false);
-      if (reportRenderStatus) {
-        this.setLspStatus({ kind: "preview-ready", message: "Preview ready" });
-      }
+      // Presentation is authoritative even when the previous PDF stayed
+      // visible during compilation. In particular, clear a stale compile
+      // failure status after a recovered generation succeeds.
+      this.setLspStatus({ kind: "preview-ready", message: "Preview ready" });
       this.appendDeveloperLog({ kind: "info", source: "preview scheduler", message: `Render generation ${generation}: PDF presentation complete.` });
+      renderSucceeded = true;
+      this.lastFailedPreviewContents = null;
+      this.lastPreviewRecoveryRequestedContents = null;
       this.tinymistPreviewRecoveryAttempts = 0;
       this.schedulePdfSourceMapWarmup(generation);
       await this.logMemoryDiagnostics(`render ${generation}: after PDF presentation`);
@@ -4074,24 +4118,47 @@ export class TypsastraWorkspaceController {
         return;
       }
       console.error("PDF Preview compilation failed:", JSON.stringify(error, null, 2));
-      if (!this.previewFrame.currentUrl) {
-        this.previewFrame.setError("Preview Render Failed", String(error));
-      }
+      const failureMessage = previewRenderErrorMessage(error);
+      this.lastFailedPreviewContents = contents;
+      this.lastPreviewRecoveryRequestedContents = null;
+      // Keep the last successful PDF mounted, but make an actual compiler
+      // failure visible until a later generation presents successfully.
+      this.previewFrame.setError("Preview Render Failed", failureMessage);
       this.updatePreviewContentModeControl(false);
       this.setLspStatus({ kind: "preview-ready", message: "PDF compile failed" });
       this.pdfPreviewFailureAt ??= performance.now();
     } finally {
       this.pdfPreviewRunning = false;
-      const queued = this.queuedPdfPreviewContents;
+      let queued = this.queuedPdfPreviewContents;
       const queuedForced = this.queuedPdfPreviewForced;
       this.queuedPdfPreviewContents = null;
       this.queuedPdfPreviewForced = false;
+      if (
+        this.effectivePreviewRenderMode === "on-type"
+        && generationActivePath
+        && filePathKey(this.activeFilePath ?? "") === filePathKey(generationActivePath)
+        && activeFileCanRenderPreview(
+          this.activeFilePath,
+          this.pinnedMainFilePath,
+          this.previewImported,
+          this.previewDisabled
+        )
+      ) {
+        const latestContents = this.editorInstance.state.doc.toString();
+        if (latestContents !== contents) {
+          // Editor input can invalidate an export before its debounced render
+          // request reaches the serialized queue. Recover the latest settled
+          // snapshot here so correcting a failed compile always gets another
+          // compilation opportunity.
+          queued = latestContents;
+        }
+      }
       this.appendDeveloperLog({
         kind: "info",
         source: "preview scheduler",
-        message: `Render generation ${generation} released: queued=${queued !== null}; queuedChanged=${queued !== null && queued !== contents}; queuedForced=${queuedForced}.`
+        message: `Render generation ${generation} released: succeeded=${renderSucceeded}; queued=${queued !== null}; queuedChanged=${queued !== null && queued !== contents}; queuedForced=${queuedForced}.`
       });
-      if (queued !== null && (queuedForced || queued !== contents)) {
+      if (queued !== null && (queuedForced || queued !== contents || !renderSucceeded)) {
         void this.renderPdfPreview(queued, queuedForced);
       }
       this.updateManualForwardSyncAction();
@@ -4272,6 +4339,36 @@ export class TypsastraWorkspaceController {
       this.openedDocumentUris.delete(uri);
     }
     return mirrorUris.length;
+  }
+
+  private async openPreparedPreviewDocumentsForExport(paths: string[]): Promise<number> {
+    if (!this.lspClient) return 0;
+    const preparedTextByPath = new Map(
+      [...this.pdfPreviewGeneratedFiles.values()].map(file => [
+        filePathKey(file.generatedPath),
+        file.preparedText
+      ])
+    );
+    const typPaths = [...new Map(
+      paths
+        .filter(path => isTypstDocumentPath(path))
+        .map(path => [filePathKey(path), path])
+    ).values()];
+    let opened = 0;
+    try {
+      for (const path of typPaths) {
+        const text = preparedTextByPath.get(filePathKey(path))
+          ?? await invoke<string>("read_workspace_file", { path });
+        const uri = filePathToUri(path);
+        await this.lspClient.openTextDocument(uri, text, ++this.currentVersion);
+        this.openedDocumentUris.add(uri);
+        opened += 1;
+      }
+    } catch (error) {
+      await this.closePreparedPreviewDocuments();
+      throw error;
+    }
+    return opened;
   }
 
   private schedulePdfPreview(contents: string, delayMs = this.settingsController.value.preview.syncDebounceMs) {
@@ -5861,11 +5958,36 @@ export class TypsastraWorkspaceController {
       this.logConsoleController.setDiagnostics(originalPath, filteredDiagnostics.map((diagnostic) => this.logEntryFromDiagnostic(uri, diagnostic)));
     }
 
-    if (this.effectivePreviewRenderMode === "on-type") {
-      if (this.logConsoleController.getErrorCount() > 0) {
-        this.previewFrame.setError("Preview Render Failed", "The live preview cannot be updated because of compile errors.\nPlease check the Problems panel or Log Console for details.");
-      } else {
-        this.previewFrame.clearErrorOverlay();
+    // Diagnostics belong in the editor and Problems panel. A transient syntax
+    // error must not cover the last successfully compiled preview; the render
+    // pipeline owns the empty-preview error state and clears it after recovery.
+    if (
+      isActive
+      && this.effectivePreviewRenderMode === "on-type"
+      && this.lastFailedPreviewContents !== null
+      && !filteredDiagnostics.some(diagnostic => diagnostic.severity === 1)
+    ) {
+      const latestContents = this.editorInstance.state.doc.toString();
+      if (
+        latestContents !== this.lastFailedPreviewContents
+        && latestContents !== this.lastPreviewRecoveryRequestedContents
+        && activeFileCanRenderPreview(
+          this.activeFilePath,
+          this.pinnedMainFilePath,
+          this.previewImported,
+          this.previewDisabled
+        )
+      ) {
+        // A compiler failure can settle at the same time as the editor's valid
+        // revision. Treat the accepted diagnostic-clear event as a recovery
+        // boundary so that valid content cannot fall between those two queues.
+        this.lastPreviewRecoveryRequestedContents = latestContents;
+        this.appendDeveloperLog({
+          kind: "info",
+          source: "preview scheduler",
+          message: `LSP accepted a corrected revision after preview failure; requeueing ${latestContents.length} UTF-16 code unit(s).`
+        });
+        void this.renderPdfPreview(latestContents);
       }
     }
   }
