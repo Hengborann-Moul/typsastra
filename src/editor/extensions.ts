@@ -413,6 +413,30 @@ export function typstImportPathRange(state: EditorState, position: number): { fr
   return null;
 }
 
+export function typstCtrlClickTextRange(state: EditorState, position: number): { from: number; to: number } | null {
+  const importPath = typstImportPathRange(state, position);
+  if (importPath) return importPath;
+
+  const line = state.doc.lineAt(position);
+  const patterns = [
+    /(?:@|<)([\p{L}\p{N}_:-]+)>?/gu,
+    /([\p{L}\p{N}_][\p{L}\p{N}_-]*)/gu
+  ];
+
+  for (const pattern of patterns) {
+    for (const match of line.text.matchAll(pattern)) {
+      if (match.index === undefined) continue;
+      const text = match[1];
+      const textOffset = match[0].indexOf(text);
+      const from = line.from + match.index + textOffset;
+      const to = from + text.length;
+      if (position >= from && position < to) return { from, to };
+    }
+  }
+
+  return state.wordAt(position);
+}
+
 export const ctrlClickLinkPlugin = ViewPlugin.fromClass(class {
   decorations: DecorationSet;
   hoveredPos: number | null = null;
@@ -432,13 +456,9 @@ export const ctrlClickLinkPlugin = ViewPlugin.fromClass(class {
 
   computeDecorations(): DecorationSet {
     if (!this.isCtrlDown || this.hoveredPos === null) return Decoration.none;
-    const importPath = typstImportPathRange(this.view.state, this.hoveredPos);
-    if (importPath) {
-      return Decoration.set([linkDecoration.range(importPath.from, importPath.to)]);
-    }
-    const word = this.view.state.wordAt(this.hoveredPos);
-    if (word) {
-      return Decoration.set([linkDecoration.range(word.from, word.to)]);
+    const textRange = typstCtrlClickTextRange(this.view.state, this.hoveredPos);
+    if (textRange) {
+      return Decoration.set([linkDecoration.range(textRange.from, textRange.to)]);
     }
     return Decoration.none;
   }
