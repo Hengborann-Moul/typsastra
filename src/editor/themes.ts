@@ -57,10 +57,14 @@ export const baseEditorLayoutTheme = EditorView.theme({
       paddingLeft: "calc(12px + var(--cm-wrapped-indent))",
       textIndent: "calc(0px - var(--cm-wrapped-indent))"
   },
+  ".cm-indent-markers::before": {
+      left: "calc(13px - 0.7ch) !important",
+      zIndex: "0 !important"
+  },
   ".cm-gutters": { borderRight: "1px solid var(--ui-border)" },
   ".cm-cursor, .cm-dropCursor": {
       borderLeftWidth: "0 !important",
-      zIndex: "6",
+      zIndex: "200 !important",
   },
   ".cm-cursor::before, .cm-dropCursor::before": {
       content: '""',
@@ -74,7 +78,7 @@ export const baseEditorLayoutTheme = EditorView.theme({
       pointerEvents: "none"
   },
   ".cm-cursorLayer": {
-      zIndex: "6"
+      zIndex: "200 !important"
   },
   ".cm-focused .cm-cursor": {
       animation: "typsastra-cursor-pulse 1.05s steps(1) infinite"

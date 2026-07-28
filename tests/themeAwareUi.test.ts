@@ -60,9 +60,13 @@ describe("theme-aware application accents", () => {
 
   test("keeps indentation guides visible across editor themes", () => {
     expect(editorExtensions).toContain('color-mix(in srgb, var(--ui-text) 38%, transparent)');
-    expect(editorExtensions).toContain('color-mix(in srgb, var(--ui-accent-color) 72%, var(--ui-text))');
-    expect(editorExtensions).toContain("activeThickness: 2");
+    expect(editorExtensions).toContain('color-mix(in srgb, var(--ui-accent-color) 58%, var(--ui-text))');
+    expect(editorExtensions).toContain("activeThickness: 1");
+    expect(editorExtensions).toContain("var(--ui-accent-color) 58%");
     expect(controller).toContain("visibleIndentationMarkers()");
+    expect(editorThemes).toContain('".cm-indent-markers::before"');
+    expect(editorThemes).toContain('left: "calc(13px - 0.7ch) !important"');
+    expect(editorThemes).toContain('zIndex: "0 !important"');
   });
 
   test("keeps the caret distinct from matching bracket highlights", () => {
@@ -76,7 +80,7 @@ describe("theme-aware application accents", () => {
     );
 
     expect(caret).toContain('borderLeftWidth: "0 !important"');
-    expect(caret).toContain('zIndex: "6"');
+    expect(caret).toContain('zIndex: "200 !important"');
     expect(caret).not.toContain("height:");
     expect(caret).not.toContain("transform:");
     expect(editorThemes).toContain('".cm-cursor::before, .cm-dropCursor::before"');
@@ -84,6 +88,9 @@ describe("theme-aware application accents", () => {
     expect(editorThemes).toContain('transform: "translateY(-50%)"');
     expect(editorThemes).toContain(
       '"&.cm-has-selection .cm-activeLine, &.cm-has-selection .cm-activeLineGutter"',
+    );
+    expect(editorThemes).not.toContain(
+      '".cm-activeLine.cm-indent-markers::before"',
     );
     expect(editorExtensions).toContain('EditorView.editorAttributes.compute(["selection"]');
     expect(editorExtensions).toContain('"cm-has-selection"');

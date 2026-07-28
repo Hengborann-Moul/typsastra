@@ -73,10 +73,10 @@ const fullHeightSelectionDecorations = EditorView.decorations.compute(
 
 export function visibleIndentationMarkers(): Extension {
   const inactive = "color-mix(in srgb, var(--ui-text) 38%, transparent)";
-  const active = "color-mix(in srgb, var(--ui-accent-color) 72%, var(--ui-text))";
+  const active = "color-mix(in srgb, var(--ui-accent-color) 58%, var(--ui-text))";
   return indentationMarkers({
     thickness: 1,
-    activeThickness: 2,
+    activeThickness: 1,
     colors: {
       light: inactive,
       dark: inactive,
