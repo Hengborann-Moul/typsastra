@@ -176,7 +176,7 @@ export class WebviewStorageController {
     status.classList.remove("warning", "error");
     if (!report.supported) {
       status.textContent = `${report.runtime} storage monitoring is not yet qualified on ${report.platform}.`;
-      details.textContent = "Windows WebView2 is the first supported monitoring target.";
+      details.textContent = "Storage monitoring is available for Windows WebView2 and Linux WebKitGTK.";
       profile.textContent = "Profile path unavailable";
       profile.title = "";
       categories.replaceChildren();
@@ -198,7 +198,7 @@ export class WebviewStorageController {
     status.classList.toggle("warning", report.level !== "healthy");
     if (report.incomplete) status.classList.add("warning");
     const scanTime = new Date(report.scannedAtMs).toLocaleString();
-    const estimate = report.estimated ? "estimated from the last full scan" : "complete profile scan";
+    const estimate = report.estimated ? "estimated from the last full scan" : "complete storage scan";
     const growth = report.growth24hBytes === null
       ? "24-hour growth needs more history"
       : `${formatSignedBytes(report.growth24hBytes)} in 24 hours`;

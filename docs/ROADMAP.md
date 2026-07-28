@@ -68,8 +68,8 @@ Released July 23, 2026.
 - Improved language-provider discovery with installed-first ordering and search.
 - Changed application updates to stage until an explicit restart or normal
   shutdown instead of installing immediately after download.
-- Added read-only Windows WebView2 profile monitoring with classified usage,
-  bounded history, and non-disruptive growth warnings.
+- Added read-only Windows WebView2 and Linux WebKitGTK storage monitoring with
+  classified usage, bounded history, and non-disruptive growth warnings.
 - Documented and tested unsigned macOS distribution without weakening
   Gatekeeper globally.
 

@@ -164,11 +164,17 @@ placing directory traversal on the UI thread. Settings reports total size,
 disposable cache, recent growth, and the resolved platform-specific location.
 Routine measurements will not interrupt editing.
 
-Windows WebView2 is the first qualified target. Typsastra performs the first
-full scan after the workspace UI is ready, refreshes disposable-cache
-measurements after idle periods, and retains at most 32 aggregate local samples.
-Use **Settings → Storage → Scan now** for an immediate full scan or **Reveal
-folder** to inspect the resolved profile location.
+Windows WebView2 and Linux WebKitGTK are qualified read-only monitoring targets.
+Typsastra performs the first full scan after the workspace UI is ready, refreshes
+disposable-cache measurements after idle periods, and retains at most 32
+aggregate local samples. Use **Settings → Storage → Scan now** for an immediate
+full scan or **Reveal folder** to inspect the resolved storage location.
+
+On Linux, WebKitGTK shares Typsastra's application-local data root. Monitoring
+therefore counts only allowlisted WebKit-owned categories. Managed Typst and
+Tinymist toolchains, dictionaries, generated fonts, and update data are excluded.
+WebKit's HTTP cache is classified as disposable; CacheStorage, Local Storage,
+and other website data remain persistent.
 
 Monitoring does not authorize deleting the complete WebView profile. Normal
 maintenance will preserve persistent application state and offer cleanup only

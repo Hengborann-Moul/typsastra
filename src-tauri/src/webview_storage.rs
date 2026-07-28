@@ -133,7 +133,14 @@ pub fn profile_path(app_local_data_dir: &Path) -> Option<PathBuf> {
     {
         Some(app_local_data_dir.join("EBWebView"))
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    {
+        // Tauri 2 passes app_local_data_dir to Wry as the WebContext data
+        // directory. Wry uses it as both WebKitGTK's base data and base cache
+        // directory, so WebKit-owned paths are direct children of this root.
+        Some(app_local_data_dir.to_path_buf())
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
     {
         let _ = app_local_data_dir;
         None
@@ -147,8 +154,17 @@ pub fn load_status(
 ) -> Result<WebviewStorageReport, String> {
     let history = load_history(history_file)?;
     if let Some(mut report) = history.latest_report {
-        report.sample_count = history.samples.len();
-        return Ok(report);
+        let expected_path = profile
+            .map(|path| path.to_string_lossy().to_string())
+            .unwrap_or_default();
+        if report.supported == profile.is_some()
+            && report.platform == platform_name()
+            && report.runtime == runtime_name()
+            && report.profile_path == expected_path
+        {
+            report.sample_count = history.samples.len();
+            return Ok(report);
+        }
     }
     Ok(empty_report(profile, app_version))
 }
@@ -341,13 +357,35 @@ fn empty_report(profile: Option<&Path>, app_version: &str) -> WebviewStorageRepo
 }
 
 fn discover_categories(profile: &Path) -> Result<Vec<(String, PathBuf, StorageClass)>, String> {
+    validate_profile_root(profile)?;
+    #[cfg(target_os = "linux")]
+    {
+        return discover_webkitgtk_categories(profile);
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        discover_webview2_categories(profile)
+    }
+}
+
+fn validate_profile_root(profile: &Path) -> Result<(), String> {
     if !profile.exists() {
-        return Ok(Vec::new());
+        return Ok(());
     }
     let root_metadata = fs::symlink_metadata(profile)
         .map_err(|error| format!("Failed to inspect WebView profile: {error}"))?;
     if root_metadata.file_type().is_symlink() || !root_metadata.is_dir() {
         return Err("The WebView profile path is not a safe directory.".to_string());
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn discover_webview2_categories(
+    profile: &Path,
+) -> Result<Vec<(String, PathBuf, StorageClass)>, String> {
+    if !profile.exists() {
+        return Ok(Vec::new());
     }
     let mut categories = Vec::new();
     let root_entries = fs::read_dir(profile)
@@ -385,6 +423,65 @@ fn discover_categories(profile: &Path) -> Result<Vec<(String, PathBuf, StorageCl
     Ok(categories)
 }
 
+#[cfg(target_os = "linux")]
+fn discover_webkitgtk_categories(
+    profile: &Path,
+) -> Result<Vec<(String, PathBuf, StorageClass)>, String> {
+    if !profile.exists() {
+        return Ok(Vec::new());
+    }
+    let mut categories = Vec::new();
+    let root_entries = fs::read_dir(profile)
+        .map_err(|error| format!("Failed to read WebKitGTK data root: {error}"))?;
+    for entry in root_entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        let Some(class) = classify_webkitgtk_category(&name) else {
+            // app_local_data_dir also contains Typsastra's toolchain,
+            // dictionaries, generated fonts, and update data. Unknown
+            // top-level paths are excluded instead of being attributed to
+            // WebKitGTK.
+            continue;
+        };
+        if entry
+            .file_type()
+            .map(|kind| kind.is_symlink())
+            .unwrap_or(true)
+        {
+            continue;
+        }
+        categories.push((name, entry.path(), class));
+    }
+    Ok(categories)
+}
+
+#[cfg(target_os = "linux")]
+fn classify_webkitgtk_category(name: &str) -> Option<StorageClass> {
+    let normalized = name.to_ascii_lowercase().replace(['_', '-', ' ', '.'], "");
+    match normalized.as_str() {
+        // WebKitGTK's HTTP/network cache is recreatable. CacheStorage is the
+        // web Cache API and remains persistent application state.
+        "webkitcache" | "networkcache" | "diskcache" => Some(StorageClass::Disposable),
+        "cachestorage"
+        | "localstorage"
+        | "sessionstorage"
+        | "indexeddb"
+        | "databases"
+        | "websql"
+        | "storage"
+        | "cookies"
+        | "mediakeys"
+        | "serviceworkers"
+        | "serviceworkerregistrations" => Some(StorageClass::Persistent),
+        "hstsstorage" | "itp" | "networkstorage" | "deviceidhashsalts" | "favicons" | "favicon" => {
+            Some(StorageClass::Runtime)
+        }
+        "crashpad" | "crashreports" | "crashreport" => Some(StorageClass::Diagnostics),
+        _ if normalized.starts_with("webkit") => Some(StorageClass::Unknown),
+        _ => None,
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
 fn classify_category(name: &str) -> StorageClass {
     let normalized = name.to_ascii_lowercase().replace(['_', '-'], " ");
     if [
@@ -559,7 +656,22 @@ fn available_disk_space(path: &Path) -> Option<u64> {
     (success != 0).then_some(available)
 }
 
-#[cfg(not(windows))]
+#[cfg(unix)]
+fn available_disk_space(path: &Path) -> Option<u64> {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+
+    let path = CString::new(path.as_os_str().as_bytes()).ok()?;
+    let mut stats = std::mem::MaybeUninit::<libc::statvfs>::uninit();
+    let success = unsafe { libc::statvfs(path.as_ptr(), stats.as_mut_ptr()) };
+    if success != 0 {
+        return None;
+    }
+    let stats = unsafe { stats.assume_init() };
+    Some((stats.f_bavail as u64).saturating_mul(stats.f_frsize as u64))
+}
+
+#[cfg(not(any(windows, unix)))]
 fn available_disk_space(_path: &Path) -> Option<u64> {
     None
 }
@@ -580,7 +692,7 @@ fn runtime_name() -> &'static str {
     } else if cfg!(target_os = "macos") {
         "WKWebView (not yet qualified)"
     } else {
-        "WebKitGTK (not yet qualified)"
+        "WebKitGTK"
     }
 }
 
@@ -595,14 +707,27 @@ mod tests {
         fs::write(path, vec![0_u8; bytes]).unwrap();
     }
 
+    fn populate_full_profile(profile: &Path) {
+        #[cfg(target_os = "linux")]
+        {
+            write_sized(&profile.join("WebKitCache/data"), 300);
+            write_sized(&profile.join("localstorage/state"), 50);
+            write_sized(&profile.join("hsts-storage/runtime"), 25);
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            write_sized(&profile.join("Default/Cache/data"), 200);
+            write_sized(&profile.join("Default/Code Cache/code"), 100);
+            write_sized(&profile.join("Default/Local Storage/state"), 50);
+            write_sized(&profile.join("WidevineCdm/runtime"), 25);
+        }
+    }
+
     #[test]
     fn classifies_and_persists_a_profile_scan() {
         let temp = tempfile::tempdir().unwrap();
         let profile = temp.path().join("EBWebView");
-        write_sized(&profile.join("Default/Cache/data"), 200);
-        write_sized(&profile.join("Default/Code Cache/code"), 100);
-        write_sized(&profile.join("Default/Local Storage/state"), 50);
-        write_sized(&profile.join("WidevineCdm/runtime"), 25);
+        populate_full_profile(&profile);
         let history = temp.path().join("history.json");
 
         let report = scan(Some(&profile), &history, "0.5.2", true).unwrap();
@@ -622,11 +747,22 @@ mod tests {
     fn quick_scan_refreshes_disposable_data_without_losing_full_categories() {
         let temp = tempfile::tempdir().unwrap();
         let profile = temp.path().join("EBWebView");
-        write_sized(&profile.join("Default/Cache/data"), 200);
-        write_sized(&profile.join("Default/Local Storage/state"), 50);
+        #[cfg(target_os = "linux")]
+        {
+            write_sized(&profile.join("WebKitCache/data"), 200);
+            write_sized(&profile.join("localstorage/state"), 50);
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            write_sized(&profile.join("Default/Cache/data"), 200);
+            write_sized(&profile.join("Default/Local Storage/state"), 50);
+        }
         let history = temp.path().join("history.json");
         scan(Some(&profile), &history, "0.5.2", true).unwrap();
 
+        #[cfg(target_os = "linux")]
+        write_sized(&profile.join("WebKitCache/more"), 125);
+        #[cfg(not(target_os = "linux"))]
         write_sized(&profile.join("Default/Cache/more"), 125);
         let report = scan(Some(&profile), &history, "0.5.2", false).unwrap();
         assert!(!report.full_scan);
@@ -634,6 +770,45 @@ mod tests {
         assert_eq!(report.disposable_bytes, 325);
         assert_eq!(report.persistent_bytes, 50);
         assert_eq!(report.total_bytes, 375);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_scan_excludes_typsastra_owned_data() {
+        let temp = tempfile::tempdir().unwrap();
+        let profile = temp.path().join("com.typsastra.editor");
+        write_sized(&profile.join("WebKitCache/data"), 100);
+        write_sized(&profile.join("CacheStorage/cache"), 40);
+        write_sized(&profile.join("localstorage/state"), 20);
+        write_sized(&profile.join("toolchain/typst"), 1_000);
+        write_sized(&profile.join("dictionaries/en.aff"), 1_000);
+        write_sized(&profile.join("font-cache/font.ttf"), 1_000);
+
+        let report = scan(
+            Some(&profile),
+            &temp.path().join("history.json"),
+            "0.5.2",
+            true,
+        )
+        .unwrap();
+
+        assert_eq!(report.total_bytes, 160);
+        assert_eq!(report.disposable_bytes, 100);
+        assert_eq!(report.persistent_bytes, 60);
+        assert!(report.categories.iter().all(|category| ![
+            "toolchain",
+            "dictionaries",
+            "font-cache"
+        ]
+        .contains(&category.name.as_str())));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_profile_uses_app_local_data_root() {
+        let temp = tempfile::tempdir().unwrap();
+        assert_eq!(profile_path(temp.path()), Some(temp.path().to_path_buf()));
+        assert!(available_disk_space(temp.path()).is_some());
     }
 
     #[test]

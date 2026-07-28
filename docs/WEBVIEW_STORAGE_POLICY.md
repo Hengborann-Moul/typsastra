@@ -11,11 +11,19 @@ under a path such as:
 %LOCALAPPDATA%\com.typsastra.editor\EBWebView
 ```
 
-That example is not an API contract. The application must resolve the active
+On Linux, Tauri/Wry configures WebKitGTK's data and cache base directory as the
+application-local data root, normally:
+
+```text
+${XDG_DATA_HOME:-~/.local/share}/com.typsastra.editor
+```
+
+These examples are not API contracts. The application must resolve the active
 WebView data directory from its platform configuration and must never hardcode
-a user name or Windows path. Linux and macOS use different webview engines and
-storage layouts; the same policy applies when their paths and safe cleanup APIs
-are qualified.
+a user name or platform path. Because Linux shares this root with Typsastra's
+managed toolchains, dictionaries, generated fonts, and update data, the monitor
+must include only allowlisted WebKitGTK-owned top-level paths. macOS uses a
+different webview engine and remains unqualified.
 
 This policy covers persistent disk use. WebView process RAM, JavaScript heap,
 PDF canvas residency, and Tinymist memory remain separate diagnostics.
@@ -32,10 +40,11 @@ Typsastra must classify storage before reporting or removing anything:
 | Diagnostics | Crash reports and logs | Report separately and apply an age-based retention policy after platform validation. |
 | Unknown | New directories introduced by a runtime update | Measure only. Never delete automatically. |
 
-Typsastra must never recursively delete the complete `EBWebView` profile as
-routine maintenance. A full profile reset is a separate recovery action that
-requires explicit confirmation and clearly states which application state will
-be lost.
+Typsastra must never recursively delete the complete WebView data root as
+routine maintenance. This is especially important on Linux, where that root
+also holds non-WebKit application data. A full profile reset is a separate
+recovery action that requires explicit confirmation and clearly states which
+application state will be lost.
 
 ## Monitoring cadence
 
@@ -86,6 +95,11 @@ The initial Windows baseline measured on July 22, 2026 was approximately
 less than 4 MiB of GPU-related caches. Thresholds therefore leave room for an
 ordinary WebView2 installation rather than treating normal runtime data as a
 leak.
+
+The initial Linux inspection on July 28, 2026 found approximately 33 MiB of
+WebKitCache and less than 1 MiB of persistent WebKitGTK data. The same
+conservative thresholds are retained until representative Linux installations
+provide a broader baseline.
 
 | State | Trigger | User experience |
 | --- | --- | --- |
@@ -157,13 +171,15 @@ Before cleanup ships on a platform, verify:
 - cleanup interruption, locked files, disk-full state, and application crash;
 - canonical-path and link traversal protection;
 - before/after sizes agree within a documented tolerance;
-- Windows WebView2 first, followed by separately qualified WebKitGTK and
-  WKWebView behavior rather than assuming their directory layouts match.
+- Windows WebView2 and Linux WebKitGTK independently, followed by WKWebView;
+  never assume their directory layouts match.
 
 ## Delivery sequence
 
-1. **Read-only monitoring (implemented for Windows WebView2):** runtime path resolution, classified background
-   scanning, rolling local samples, Settings display, and warning hysteresis.
+1. **Read-only monitoring (implemented for Windows WebView2 and Linux
+   WebKitGTK):** runtime path resolution, classified background scanning,
+   rolling local samples, Settings display, and warning hysteresis. Linux uses
+   an allowlist because its WebKit data root is shared with application data.
 2. **Manual cache maintenance:** qualified runtime API, confirmation, restart
    coordination where required, and before/after reporting.
 3. **Retention refinement:** age-based diagnostic cleanup and evidence-based
