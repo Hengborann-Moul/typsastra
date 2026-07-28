@@ -139,6 +139,7 @@ export class PreviewFrame {
   private draftHoverLink: HTMLElement | null = null;
   private draftPointerPosition: { x: number; y: number } | null = null;
   private pendingRestoredScrollTop: number | null = null;
+  private previewPointerInside = false;
 
   constructor(
     private readonly pane: HTMLElement,
@@ -162,11 +163,14 @@ export class PreviewFrame {
     }, { passive: false });
     window.addEventListener("keydown", event => {
       const doc = this.iframe?.contentDocument;
-      if (doc) this.setPreviewLinkModifier(doc, previewLinkModifierPressed(event) || event.key === "Control" || event.key === "Meta");
+      if (doc) {
+        const modifierPressed = previewLinkModifierPressed(event) || event.key === "Control" || event.key === "Meta";
+        this.setPreviewLinkModifier(doc, this.previewPointerInside && modifierPressed);
+      }
     });
     window.addEventListener("keyup", event => {
       const doc = this.iframe?.contentDocument;
-      if (doc) this.setPreviewLinkModifier(doc, previewLinkModifierPressed(event));
+      if (doc) this.setPreviewLinkModifier(doc, this.previewPointerInside && previewLinkModifierPressed(event));
     });
 
     this.resizeObserver = new ResizeObserver(() => {
@@ -457,6 +461,7 @@ export class PreviewFrame {
 
   private async ensureIframe(): Promise<HTMLIFrameElement> {
     if (this.iframe?.contentDocument?.getElementById("viewer-container")) return this.iframe;
+    this.previewPointerInside = false;
     if (this.iframe) {
       releaseCanvasResources(this.iframe.contentDocument?.documentElement ?? null);
       this.iframe.remove();
@@ -482,7 +487,10 @@ export class PreviewFrame {
       .forward-sync-ripple{position:fixed;z-index:2147483647;box-sizing:border-box;width:18px;height:18px;margin:-9px 0 0 -9px;border:2px solid ${TYPSASTRA_GREEN};border-radius:999px;background:${TYPSASTRA_GREEN_RIPPLE_FILL};box-shadow:0 0 0 0 ${TYPSASTRA_GREEN_RIPPLE_SHADOW};pointer-events:none;animation:typsastra-forward-ripple 900ms ease-out forwards}
       @keyframes typsastra-forward-ripple{0%{opacity:0;transform:scale(.55);box-shadow:0 0 0 0 rgba(61,180,137,.38)}12%{opacity:1}100%{opacity:0;transform:scale(3.1);box-shadow:0 0 0 14px rgba(61,180,137,0)}}
       .annotation-link{position:absolute;display:block;box-sizing:border-box;cursor:default;text-decoration:none}
-      .preview-link-modifier .annotation-link:hover{cursor:pointer;background:color-mix(in srgb,var(--preview-ui-accent) 14%,transparent)}
+      .preview-link-modifier .annotation-link.internal-reference{cursor:pointer;background:color-mix(in srgb,var(--preview-ui-accent) 15%,transparent);box-shadow:inset 3px 0 color-mix(in srgb,var(--preview-ui-accent) 88%,var(--preview-ui-header))}
+      .preview-link-modifier .annotation-link.external-link{cursor:pointer;outline:2px dashed color-mix(in srgb,var(--preview-ui-accent) 78%,var(--preview-ui-header));outline-offset:-2px;background:color-mix(in srgb,var(--preview-ui-accent) 34%,transparent)}
+      .preview-link-modifier .annotation-link.internal-reference:hover{outline:2px solid color-mix(in srgb,var(--preview-ui-accent) 88%,var(--preview-ui-header));outline-offset:-2px;background:color-mix(in srgb,var(--preview-ui-accent) 34%,transparent)}
+      .preview-link-modifier .annotation-link.external-link:hover{background:color-mix(in srgb,var(--preview-ui-accent) 42%,transparent)}
       .annotation-link.draft-image-link{cursor:zoom-in;background:transparent}
       .annotation-link.draft-image-link:hover,.annotation-link.draft-image-link:focus-visible{outline:2px solid color-mix(in srgb,var(--preview-ui-accent) 72%,transparent);outline-offset:-2px;background:color-mix(in srgb,var(--preview-ui-accent) 7%,transparent)}
       .draft-image-popover{position:fixed;z-index:2147483646;box-sizing:border-box;max-width:min(340px,calc(100vw - 16px));max-height:min(300px,calc(100vh - 16px));padding:8px;border:1px solid var(--preview-ui-header);background:var(--preview-ui-bg);color:var(--preview-ui-header);box-shadow:0 8px 28px rgba(0,0,0,.35);pointer-events:none}
@@ -919,12 +927,18 @@ export class PreviewFrame {
         if (!target) continue;
         const rect = viewportRectangle(viewport, annotation.rect);
         if (!rect) continue;
-        const left = Math.min(rect[0], rect[2]);
+        const left = Math.max(0, Math.min(rect[0], rect[2]) - 3);
         const top = Math.max(0, Math.min(rect[1], rect[3]) - 2);
-        const right = Math.max(rect[0], rect[2]);
+        const right = Math.min(Number(viewport.width), Math.max(rect[0], rect[2]) + 3);
         const bottom = Math.min(Number(viewport.height), Math.max(rect[1], rect[3]) + 2);
         const link = doc.createElement("a");
-        link.className = `annotation-link${target.kind === "draft-image" ? " draft-image-link" : ""}`;
+        link.className = `annotation-link ${
+          target.kind === "draft-image"
+            ? "draft-image-link"
+            : target.kind === "external"
+              ? "external-link"
+              : "internal-reference"
+        }`;
         link.setAttribute("role", "link");
         link.setAttribute(
           "aria-label",
@@ -1249,11 +1263,14 @@ export class PreviewFrame {
       this.setPreviewLinkModifier(doc, false);
     });
     doc.addEventListener("pointermove", event => {
+      this.previewPointerInside = true;
       this.rememberDraftPointer(event);
       this.setPreviewLinkModifier(doc, previewLinkModifierPressed(event));
     }, { passive: true });
     doc.addEventListener("pointerover", event => {
+      this.previewPointerInside = true;
       this.rememberDraftPointer(event);
+      this.setPreviewLinkModifier(doc, previewLinkModifierPressed(event));
       const link = (event.target as Element | null)?.closest<HTMLElement>(".draft-image-link");
       if (link) void this.showDraftImagePopover(link);
     });
@@ -1270,14 +1287,17 @@ export class PreviewFrame {
       if ((event.target as Element | null)?.closest(".draft-image-link")) this.hideDraftImagePopover();
     });
     doc.documentElement.addEventListener("pointerleave", () => {
+      this.previewPointerInside = false;
+      this.setPreviewLinkModifier(doc, false);
       this.draftPointerPosition = null;
       this.hideDraftImagePopover();
     });
     doc.addEventListener("keydown", event => {
-      this.setPreviewLinkModifier(doc, previewLinkModifierPressed(event) || event.key === "Control" || event.key === "Meta");
+      const modifierPressed = previewLinkModifierPressed(event) || event.key === "Control" || event.key === "Meta";
+      this.setPreviewLinkModifier(doc, this.previewPointerInside && modifierPressed);
     });
     doc.addEventListener("keyup", event => {
-      this.setPreviewLinkModifier(doc, previewLinkModifierPressed(event));
+      this.setPreviewLinkModifier(doc, this.previewPointerInside && previewLinkModifierPressed(event));
     });
     doc.addEventListener("click", event => {
       const target = event.target as Element | null;

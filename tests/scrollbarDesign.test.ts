@@ -79,6 +79,21 @@ describe("cross-platform scrollbar design", () => {
     expect(source).toContain('target?.closest("#preview-go-first")');
   });
 
+  test("reveals and distinguishes actionable preview links while Ctrl is held inside the preview", async () => {
+    const source = await Bun.file(new URL("../src/preview/previewFrame.ts", import.meta.url)).text();
+    expect(source).toContain('target.kind === "external"');
+    expect(source).toContain('"external-link"');
+    expect(source).toContain('"internal-reference"');
+    expect(source).toContain(".preview-link-modifier .annotation-link.internal-reference");
+    expect(source).toContain(".preview-link-modifier .annotation-link.external-link");
+    expect(source).toContain("box-shadow:inset 3px 0");
+    expect(source).toContain("outline:2px dashed");
+    expect(source).toContain("this.previewPointerInside && modifierPressed");
+    expect(source).toContain("this.previewPointerInside = false");
+    expect(source).toContain("Math.min(rect[0], rect[2]) - 3");
+    expect(source).toContain("Math.max(rect[0], rect[2]) + 3");
+  });
+
   test("provides editable page navigation in the shared preview toolbar", async () => {
     const html = await Bun.file(new URL("../index.html", import.meta.url)).text();
     expect(html).toContain('id="preview-page-input"');
