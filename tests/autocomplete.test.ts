@@ -9,6 +9,7 @@ import {
   languageCompletionRange,
   languageCompletionValidFor,
   lspCompletionEditOffsets,
+  preferContextualArgumentCompletions,
   quotedCompletionEditOffsets
 } from "../src/editor/autocomplete";
 
@@ -36,6 +37,51 @@ describe("language word completion context", () => {
 });
 
 describe("LSP autocomplete edits", () => {
+  test("keeps only Tinymist's contextual function arguments after a global fallback", () => {
+    const items = [
+      { label: "align", kind: 3, sortText: "008", insertText: "align" },
+      { label: "array", kind: 9, sortText: "013", insertText: "array" },
+      {
+        label: "alt",
+        kind: 5,
+        sortText: "000",
+        insertTextFormat: 2,
+        textEdit: { newText: "alt: ${1:}", range: undefined }
+      },
+      {
+        label: "fit",
+        kind: 5,
+        sortText: "001",
+        insertTextFormat: 2,
+        textEdit: { newText: "fit: ${1:}", range: undefined }
+      },
+      {
+        label: "width",
+        kind: 5,
+        sortText: "007",
+        insertTextFormat: 2,
+        textEdit: { newText: "width: ${1:}", range: undefined }
+      }
+    ];
+
+    expect(preferContextualArgumentCompletions(items).map(item => item.label))
+      .toEqual(["alt", "fit", "width"]);
+  });
+
+  test("does not suppress a normal completion list on an unrelated sort restart", () => {
+    const items = [
+      { label: "alpha", kind: 3, sortText: "100" },
+      { label: "beta", kind: 3, sortText: "000" }
+    ];
+
+    expect(preferContextualArgumentCompletions(items)).toEqual(items);
+  });
+
+  test("preserves Tinymist ranking metadata on snippet completions", async () => {
+    const source = await Bun.file(new URL("../src/editor/autocomplete.ts", import.meta.url)).text();
+    expect(source).toMatch(/snippetCompletion\(apply,\s*\{[\s\S]*?sortText:\s*item\.sortText[\s\S]*?\}\)/);
+  });
+
   test("keeps a font completion range active across spaces", () => {
     const doc = Text.of(['#set text(font: "Khmer OS")']);
     expect(fontCompletionValueStart(doc, 22)).toBe(17);

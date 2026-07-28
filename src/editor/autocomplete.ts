@@ -54,6 +54,39 @@ export function languageCompletionRange(
 
 export const languageCompletionValidFor = () => false;
 
+function completionInsertion(item: LspCompletionItem): string {
+  return item.textEdit?.newText ?? item.insertText ?? item.label;
+}
+
+function isNamedArgumentCompletion(item: LspCompletionItem): boolean {
+  return item.kind === 5
+    && /^\s*[\p{L}_][\p{L}\p{N}_-]*\s*:/u.test(completionInsertion(item));
+}
+
+/**
+ * Tinymist may return global symbols first and append the relevant named
+ * arguments after them when explicit completion follows argument whitespace.
+ * The appended argument segment restarts sortText at the highest priority.
+ * Keep only that segment so globals cannot become the active suggestions.
+ */
+export function preferContextualArgumentCompletions(
+  items: LspCompletionItem[]
+): LspCompletionItem[] {
+  let contextualStart = -1;
+  for (let index = 1; index < items.length; index++) {
+    const previous = items[index - 1].sortText;
+    const current = items[index].sortText;
+    if (previous !== undefined && current !== undefined && current.localeCompare(previous) < 0) {
+      contextualStart = index;
+    }
+  }
+  if (contextualStart <= 0) return items;
+  const contextual = items.slice(contextualStart);
+  return contextual.length > 0 && contextual.every(isNamedArgumentCompletion)
+    ? contextual
+    : items;
+}
+
 function textEditFromDefault(range: LspEditRange | undefined, newText: string): LspTextEdit | undefined {
   if (!range) return undefined;
   if ("start" in range) return { newText, range };
@@ -397,9 +430,10 @@ export function createTypstAutocomplete(
           
           if (!response) return typstCompletions(context);
           
-          const items = Array.isArray(response) ? response : response.items;
+          const responseItems = Array.isArray(response) ? response : response.items;
           const itemDefaults = Array.isArray(response) ? undefined : response.itemDefaults;
-          if (!items || items.length === 0) return typstCompletions(context);
+          if (!responseItems || responseItems.length === 0) return typstCompletions(context);
+          const items = preferContextualArgumentCompletions(responseItems);
           
           const word = context.matchBefore(/#?[\w-]*/);
           const isHashPrefix = word?.text.startsWith('#');
@@ -425,7 +459,13 @@ export function createTypstAutocomplete(
             apply = applyTextForHashPrefix(apply, type, isHashPrefix, Boolean(textEdit));
             
             if (insertTextFormat === 2) {
-              const completion = snippetCompletion(apply, { label, detail, info, type });
+              const completion = snippetCompletion(apply, {
+                label,
+                detail,
+                info,
+                type,
+                sortText: item.sortText
+              });
               const snippetApply = completion.apply;
               if (typeof snippetApply !== "function") return completion;
               return {
