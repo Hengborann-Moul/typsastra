@@ -59,37 +59,86 @@ export const baseEditorLayoutTheme = EditorView.theme({
   },
   ".cm-gutters": { borderRight: "1px solid var(--ui-border)" },
   ".cm-cursor, .cm-dropCursor": {
-      borderLeftColor: "var(--editor-cursor-color, #3db489) !important",
-      borderLeftWidth: "2px !important",
-      filter: "drop-shadow(0 0 2px var(--editor-cursor-shadow, rgba(255, 255, 255, 0.95))) drop-shadow(0 0 5px var(--editor-cursor-glow, rgba(61, 180, 137, 0.45)))"
+      borderLeftWidth: "0 !important",
+      zIndex: "6",
+  },
+  ".cm-cursor::before, .cm-dropCursor::before": {
+      content: '""',
+      position: "absolute",
+      left: "0",
+      top: "50%",
+      height: "var(--editor-line-height-px, 23.8px)",
+      transform: "translateY(-50%)",
+      borderLeft: "2px solid var(--editor-cursor-color, #3db489)",
+      filter: "drop-shadow(0 0 2px var(--editor-cursor-shadow, rgba(255, 255, 255, 0.95))) drop-shadow(0 0 5px var(--editor-cursor-glow, rgba(61, 180, 137, 0.45)))",
+      pointerEvents: "none"
+  },
+  ".cm-cursorLayer": {
+      zIndex: "6"
   },
   ".cm-focused .cm-cursor": {
       animation: "typsastra-cursor-pulse 1.05s steps(1) infinite"
   },
   "@keyframes typsastra-cursor-pulse": {
       "0%, 45%": {
-          borderLeftColor: "var(--editor-cursor-color, #3db489)",
           filter: "drop-shadow(0 0 2px var(--editor-cursor-shadow, rgba(255, 255, 255, 0.95))) drop-shadow(0 0 5px var(--editor-cursor-glow, rgba(61, 180, 137, 0.45)))"
       },
       "46%, 100%": {
-          borderLeftColor: "var(--editor-cursor-color, #3db489)",
           filter: "drop-shadow(0 0 2px var(--editor-cursor-shadow, rgba(255, 255, 255, 0.95))) drop-shadow(0 0 5px var(--editor-cursor-glow, rgba(61, 180, 137, 0.45)))"
       }
   },
-  ".cm-selectionBackground, .cm-content ::selection": {
-      backgroundColor: "var(--ui-word-selection-background, rgba(3, 102, 214, 0.4)) !important"
+  "& .cm-selectionLayer .cm-selectionBackground": {
+      backgroundColor: "transparent !important",
+      outline: "none !important"
   },
-  ".cm-focused .cm-selectionBackground": {
-      backgroundColor: "var(--ui-word-selection-focus-background, rgba(3, 102, 214, 0.52)) !important",
-      outline: "1px solid var(--ui-word-selection-outline, rgba(3, 102, 214, 0.72))"
+  "& .cm-content .cm-line::selection, & .cm-content .cm-line *::selection": {
+      backgroundColor: "transparent !important"
+  },
+  ".typsastra-text-selection": {
+      position: "relative",
+      zIndex: "0"
+  },
+  ".typsastra-text-selection::before": {
+      content: '""',
+      position: "absolute",
+      left: "0",
+      right: "0",
+      top: "50%",
+      height: "var(--editor-line-height-px, 23.8px)",
+      transform: "translateY(-50%)",
+      backgroundColor: "var(--ui-word-selection-background, rgba(3, 102, 214, 0.4))",
+      zIndex: "-1",
+      pointerEvents: "none"
+  },
+  "&.cm-focused .typsastra-text-selection::before": {
+      backgroundColor: "var(--ui-word-selection-focus-background, rgba(3, 102, 214, 0.52))"
   },
   ".cm-activeLine, .cm-activeLineGutter": {
       backgroundColor: "var(--ui-active-line-background) !important"
   },
+  "&.cm-has-selection .cm-activeLine, &.cm-has-selection .cm-activeLineGutter": {
+      backgroundColor: "transparent !important"
+  },
   ".cm-matchingBracket": {
-      backgroundColor: "var(--ui-select, rgba(255, 255, 255, 0.2)) !important",
-      outline: "1px solid var(--editor-bracket-match-outline, #005cc5) !important",
-      borderRadius: "2px"
+      position: "relative",
+      zIndex: "0",
+      backgroundColor: "transparent !important",
+      outline: "none !important",
+      boxShadow: "none !important",
+      borderRadius: "1px"
+  },
+  ".cm-matchingBracket::before": {
+      content: '""',
+      position: "absolute",
+      left: "0",
+      right: "0",
+      top: "50%",
+      height: "var(--editor-line-height-px, 23.8px)",
+      transform: "translateY(-50%)",
+      zIndex: "-1",
+      backgroundColor: "color-mix(in srgb, var(--editor-bracket-match-outline, #005cc5) 16%, transparent)",
+      borderRadius: "1px",
+      pointerEvents: "none"
   },
   ".cm-nonmatchingBracket": {
       backgroundColor: "var(--editor-bracket-mismatch-bg, rgba(215, 58, 73, 0.16)) !important",

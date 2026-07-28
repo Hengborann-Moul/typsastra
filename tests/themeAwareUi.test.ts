@@ -6,6 +6,7 @@ const controller = readFileSync(new URL("../src/appController.ts", import.meta.u
 const explorer = readFileSync(new URL("../src/components/explorer.ts", import.meta.url), "utf8");
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const editorExtensions = readFileSync(new URL("../src/editor/extensions.ts", import.meta.url), "utf8");
+const editorThemes = readFileSync(new URL("../src/editor/themes.ts", import.meta.url), "utf8");
 const icons = readFileSync(new URL("../src/ui/icons.ts", import.meta.url), "utf8");
 
 describe("theme-aware application accents", () => {
@@ -62,5 +63,43 @@ describe("theme-aware application accents", () => {
     expect(editorExtensions).toContain('color-mix(in srgb, var(--ui-accent-color) 72%, var(--ui-text))');
     expect(editorExtensions).toContain("activeThickness: 2");
     expect(controller).toContain("visibleIndentationMarkers()");
+  });
+
+  test("keeps the caret distinct from matching bracket highlights", () => {
+    const caret = editorThemes.slice(
+      editorThemes.indexOf('".cm-cursor, .cm-dropCursor"'),
+      editorThemes.indexOf('".cm-cursor::before, .cm-dropCursor::before"')
+    );
+    const brackets = editorThemes.slice(
+      editorThemes.indexOf('".cm-matchingBracket"'),
+      editorThemes.indexOf('".cm-nonmatchingBracket"')
+    );
+
+    expect(caret).toContain('borderLeftWidth: "0 !important"');
+    expect(caret).toContain('zIndex: "6"');
+    expect(caret).not.toContain("height:");
+    expect(caret).not.toContain("transform:");
+    expect(editorThemes).toContain('".cm-cursor::before, .cm-dropCursor::before"');
+    expect(editorThemes).toContain('height: "var(--editor-line-height-px, 23.8px)"');
+    expect(editorThemes).toContain('transform: "translateY(-50%)"');
+    expect(editorThemes).toContain(
+      '"&.cm-has-selection .cm-activeLine, &.cm-has-selection .cm-activeLineGutter"',
+    );
+    expect(editorExtensions).toContain('EditorView.editorAttributes.compute(["selection"]');
+    expect(editorExtensions).toContain('"cm-has-selection"');
+    expect(editorExtensions).toContain('"typsastra-text-selection"');
+    expect(editorExtensions).toContain('EditorView.decorations.compute(');
+    expect(editorThemes).not.toContain(".cm-content ::selection");
+    expect(editorThemes).not.toContain("ui-word-selection-outline");
+    expect(editorThemes).toContain('".typsastra-text-selection::before"');
+    expect(brackets).toContain('backgroundColor: "transparent !important"');
+    expect(brackets).toContain('boxShadow: "none !important"');
+    expect(brackets).toContain('outline: "none !important"');
+    expect(editorThemes).toContain('".cm-matchingBracket::before"');
+    expect(editorThemes).toContain(
+      'backgroundColor: "color-mix(in srgb, var(--editor-bracket-match-outline, #005cc5) 16%, transparent)"',
+    );
+    expect(brackets).not.toContain("inset 0 -2px");
+    expect(brackets).not.toContain("1px solid");
   });
 });
