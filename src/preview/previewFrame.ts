@@ -18,11 +18,17 @@ export type PreviewPageStatus = {
 export type PreviewSurface = "live" | "pdf";
 
 export type DraftPreviewImage = {
+  status: "ready";
   bytes: Uint8Array;
   mimeType: string;
   filename: string;
   width: number;
   height: number;
+};
+
+export type DraftPreviewImageResult = DraftPreviewImage | {
+  status: "pending" | "generating" | "failed";
+  message?: string;
 };
 
 export type PreviewMemorySnapshot = {
@@ -136,7 +142,7 @@ export class PreviewFrame {
     private readonly onZoomChanged?: (zoomPercent: number) => void,
     private readonly onPerformance?: (metric: Omit<PerformanceMetric, "recordedAt">) => void,
     private readonly onPageChanged?: (status: PreviewPageStatus) => void,
-    private readonly onDraftImageRequest?: (id: string) => Promise<DraftPreviewImage | null>
+    private readonly onDraftImageRequest?: (id: string) => Promise<DraftPreviewImageResult | null>
   ) {
     this.pane.addEventListener("wheel", event => {
       if (event.ctrlKey) {
@@ -463,9 +469,9 @@ export class PreviewFrame {
       .preview-link-modifier .annotation-link:hover{cursor:pointer;background:color-mix(in srgb,var(--preview-ui-accent) 14%,transparent)}
       .annotation-link.draft-image-link{cursor:zoom-in;background:transparent}
       .annotation-link.draft-image-link:hover,.annotation-link.draft-image-link:focus-visible{outline:2px solid color-mix(in srgb,var(--preview-ui-accent) 72%,transparent);outline-offset:-2px;background:color-mix(in srgb,var(--preview-ui-accent) 7%,transparent)}
-      .draft-image-popover{position:fixed;z-index:2147483646;box-sizing:border-box;max-width:60vw;max-height:60vh;padding:8px;border:1px solid var(--preview-ui-header);background:var(--preview-ui-bg);color:var(--preview-ui-header);box-shadow:0 8px 28px rgba(0,0,0,.35);pointer-events:none}
-      .draft-image-popover img{display:block;max-width:calc(60vw - 16px);max-height:calc(60vh - 42px);object-fit:contain}
-      .draft-image-popover-label{padding-top:6px;max-width:calc(60vw - 16px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}
+      .draft-image-popover{position:fixed;z-index:2147483646;box-sizing:border-box;max-width:min(340px,calc(100vw - 16px));max-height:min(300px,calc(100vh - 16px));padding:8px;border:1px solid var(--preview-ui-header);background:var(--preview-ui-bg);color:var(--preview-ui-header);box-shadow:0 8px 28px rgba(0,0,0,.35);pointer-events:none}
+      .draft-image-popover img{display:block;max-width:min(320px,calc(100vw - 32px));max-height:min(240px,calc(100vh - 58px));object-fit:contain}
+      .draft-image-popover-label{padding-top:6px;max-width:min(320px,calc(100vw - 32px));overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}
       ::selection{background:rgba(0,120,215,.35)}
     </style></head><body><div id="viewer-container"></div></body></html>`;
     iframe.addEventListener("load", () => this.setupIframeInteractions());
@@ -1352,6 +1358,25 @@ export class PreviewFrame {
     this.reportPageStatus(0);
   }
 
+  public async draftImageIdsForPage(pageNo: number): Promise<string[]> {
+    if (!this.pdfDoc || pageNo < 1 || pageNo > this.pdfDoc.numPages) return [];
+    try {
+      const page = await this.pdfDoc.getPage(pageNo);
+      const ids: string[] = [];
+      const seen = new Set<string>();
+      for (const annotation of await page.getAnnotations()) {
+        const target = previewLinkTarget(annotation);
+        if (target?.kind !== "draft-image" || seen.has(target.id)) continue;
+        seen.add(target.id);
+        ids.push(target.id);
+      }
+      if (!this.activeRenders.has(pageNo)) page.cleanup();
+      return ids;
+    } catch {
+      return [];
+    }
+  }
+
   private async showDraftImagePopover(link: HTMLElement): Promise<void> {
     const startedAt = performance.now();
     const target = this.annotationTargets.get(link);
@@ -1359,8 +1384,35 @@ export class PreviewFrame {
     const generation = ++this.draftHoverGeneration;
     await new Promise(resolve => window.setTimeout(resolve, 120));
     if (generation !== this.draftHoverGeneration || !link.matches(":hover, :focus")) return;
-    const image = await this.onDraftImageRequest(target.id).catch(() => null);
+    let image = await this.onDraftImageRequest(target.id).catch(() => null);
     if (generation !== this.draftHoverGeneration || !image) return;
+    if (image.status !== "ready") {
+      this.showDraftImageStatusPopover(
+        link,
+        image.status === "failed"
+          ? image.message ?? "Image preview unavailable."
+          : "Preparing image preview…"
+      );
+      while (
+        image.status !== "failed"
+        && generation === this.draftHoverGeneration
+        && link.matches(":hover, :focus")
+      ) {
+        await new Promise(resolve => window.setTimeout(resolve, 250));
+        image = await this.onDraftImageRequest(target.id).catch(() => null);
+        if (!image) return;
+        if (image.status === "ready") break;
+      }
+    }
+    if (image.status === "failed") {
+      this.showDraftImageStatusPopover(link, image.message ?? "Image preview unavailable.");
+      return;
+    }
+    if (
+      generation !== this.draftHoverGeneration
+      || !link.matches(":hover, :focus")
+      || image.status !== "ready"
+    ) return;
     this.hideDraftImagePopover(false);
     const doc = this.iframe?.contentDocument;
     if (!doc) return;
@@ -1385,8 +1437,8 @@ export class PreviewFrame {
     popover.append(preview, label);
     doc.body.append(popover);
     const anchor = link.getBoundingClientRect();
-    const width = Math.min(popover.offsetWidth, (this.iframe?.contentWindow?.innerWidth ?? 800) * 0.6);
-    const height = Math.min(popover.offsetHeight, (this.iframe?.contentWindow?.innerHeight ?? 600) * 0.6);
+    const width = popover.offsetWidth;
+    const height = popover.offsetHeight;
     const viewportWidth = this.iframe?.contentWindow?.innerWidth ?? 800;
     const viewportHeight = this.iframe?.contentWindow?.innerHeight ?? 600;
     const left = Math.max(8, Math.min(anchor.left, viewportWidth - width - 8));
@@ -1406,6 +1458,24 @@ export class PreviewFrame {
         height: image.height
       }
     });
+  }
+
+  private showDraftImageStatusPopover(link: HTMLElement, message: string): void {
+    this.hideDraftImagePopover(false);
+    const doc = this.iframe?.contentDocument;
+    if (!doc) return;
+    const popover = doc.createElement("div");
+    popover.className = "draft-image-popover";
+    popover.setAttribute("role", "status");
+    const label = doc.createElement("div");
+    label.className = "draft-image-popover-label";
+    label.textContent = message;
+    popover.append(label);
+    doc.body.append(popover);
+    const anchor = link.getBoundingClientRect();
+    popover.style.left = `${Math.max(8, Math.min(anchor.left, (this.iframe?.clientWidth ?? 800) - popover.offsetWidth - 8))}px`;
+    popover.style.top = `${Math.max(8, Math.min(anchor.bottom + 8, (this.iframe?.clientHeight ?? 600) - popover.offsetHeight - 8))}px`;
+    this.draftPopover = popover;
   }
 
   private hideDraftImagePopover(invalidate = true): void {

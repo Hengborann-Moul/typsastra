@@ -84,15 +84,21 @@ source share one thumbnail.
 
 Generated thumbnails:
 
-- preserve the source aspect ratio and transparency where supported;
-- fit within a 768-pixel longest-edge budget without enlarging smaller source
-  dimensions;
-- use a bounded preview-oriented encoding rather than copying the original;
+- preserve the source aspect ratio and composite transparency onto white for
+  the disposable hover preview;
+- start within a 640-pixel longest-edge budget without enlarging smaller source
+  dimensions, then reduce further only when required by the byte budget;
+- use adaptive JPEG encoding capped below 100 KiB per thumbnail rather than
+  copying the original;
 - are written atomically under
   `.typsastra/cache/draft-thumbnails/`;
 - are excluded from Typsastra project archives, source ZIP exports, and PDF
   exports;
 - may be discarded at any time and regenerated from the source.
+
+The hover inspection card is capped at 340 by 300 CSS pixels, with the image
+itself capped at 320 by 240 CSS pixels. It therefore remains a contextual
+preview instead of filling the Draft pane.
 
 The cache key includes:
 
@@ -212,19 +218,19 @@ on-save updates across:
 - [x] A render generation installs its mode and manifest atomically.
 - [x] Final PDF export explicitly uses Normal Preview.
 - [x] Rust and TypeScript tests cover parsing, ratios, routing, and migration.
-- [ ] All statically resolved included images receive disposable cached
+- [x] All statically resolved included images receive disposable cached
   thumbnails.
-- [ ] Thumbnail generation starts only after Draft PDF presentation.
-- [ ] The fixed queue prioritizes large displayed-page images, remaining
+- [x] Thumbnail generation starts only after Draft PDF presentation.
+- [x] The fixed queue prioritizes large displayed-page images, remaining
   displayed-page images, then all other images from largest to smallest.
-- [ ] Scroll, page, and hover activity never rebuild or reprioritize an active
+- [x] Scroll, page, and hover activity never rebuild or reprioritize an active
   generation queue.
-- [ ] Recompile retires pending old-generation work without creating competing
+- [x] Recompile retires pending old-generation work without creating competing
   workers.
-- [ ] Source changes invalidate cached thumbnails through source metadata and
+- [x] Source changes invalidate cached thumbnails through source metadata and
   transform-version identity.
-- [ ] Hover transfers and decodes the cached thumbnail rather than the original
+- [x] Hover transfers and decodes the cached thumbnail rather than the original
   full-resolution source.
-- [ ] Thumbnail artifacts never enter project, source ZIP, or PDF exports.
+- [x] Thumbnail artifacts never enter project, source ZIP, or PDF exports.
 - [ ] Runtime qualification is complete on Windows, Linux, and macOS.
 - [ ] Image-heavy benchmark results are published.

@@ -1,12 +1,16 @@
 #![allow(unused_imports)]
 
 pub mod draft;
+pub mod draft_thumbnail;
 pub mod mirror;
 pub mod scanner;
 pub mod segment;
 pub mod sourcemap;
 
 pub use draft::{DraftImageAsset, DraftImageDiagnostic, PreviewContentMode};
+pub use draft_thumbnail::{
+    cancel_draft_thumbnail_generation, get_draft_thumbnail_status, start_draft_thumbnail_generation,
+};
 pub use mirror::{
     mirror_project_cancellable, prepare_single_in_memory_file,
     validate_existing_render_cache_owner, RenderPrepareOptions, RenderPrepareResult,

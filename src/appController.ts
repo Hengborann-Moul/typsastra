@@ -256,6 +256,7 @@ type PdfUpdatePayload = {
   contentMode?: PreviewContentMode;
   draftAssets?: DraftImageAsset[];
   draftAssetRootPath?: string;
+  draftThumbnailGeneration?: number;
 };
 
 type PreviewContentMode = "normal" | "draft";
@@ -278,6 +279,41 @@ type DraftImageAsset = {
 };
 
 type DraftImageDiagnostic = DraftImageReference & { reason: string };
+
+type DraftThumbnailStatus = {
+  status: "pending" | "generating" | "ready" | "failed";
+  path?: string;
+  mimeType?: string;
+  width: number;
+  height: number;
+  sourceBytes: number;
+  outputBytes?: number;
+  queueClass: string;
+};
+
+type DraftThumbnailQueueSummary = {
+  generation: number;
+  cacheHits: number;
+  queued: number;
+};
+
+type DraftThumbnailMetric = {
+  generation: number;
+  id: string;
+  cacheHit: boolean;
+  queueClass: string;
+  sourceWidth: number;
+  sourceHeight: number;
+  outputWidth: number;
+  outputHeight: number;
+  sourceBytes: number;
+  outputBytes: number;
+  decodeMs: number;
+  resizeMs: number;
+  encodeMs: number;
+  totalMs: number;
+  failed: boolean;
+};
 
 type RenderPreparationResult = {
   generatedEntryFile: string;
@@ -400,6 +436,7 @@ export class TypsastraWorkspaceController {
   private draftImageAssets = new Map<string, DraftImageAsset>();
   private draftImageDiagnostics: DraftImageDiagnostic[] = [];
   private draftAssetRootPath: string | null = null;
+  private draftThumbnailGeneration = 0;
   private wordWrapDeferredForResize = false;
   private recommendedWorkspaceToolchain: { tinymistVersion: string; typstVersion: string } | null = null;
   private selectedWorkspaceToolchain: { tinymistVersion: string; typstVersion: string } | null = null;
@@ -878,6 +915,7 @@ export class TypsastraWorkspaceController {
       this.presentedPreviewContentMode = update.contentMode ?? "normal";
       this.draftImageAssets = new Map((update.draftAssets ?? []).map(asset => [asset.id, asset]));
       this.draftAssetRootPath = update.draftAssetRootPath ?? null;
+      this.draftThumbnailGeneration = update.draftThumbnailGeneration ?? 0;
       this.updatePreviewContentModeControl();
       const contentModeToggle = document.getElementById("preview-content-mode-toggle") as HTMLButtonElement | null;
       contentModeToggle?.classList.remove("hidden");
@@ -1310,6 +1348,15 @@ export class TypsastraWorkspaceController {
         extensions: this.editorExtensions
       }),
       parent: this.codeRenderPane
+    });
+    listen<DraftThumbnailMetric>("draft-thumbnail-metric", event => {
+      const metric = event.payload;
+      if (metric.generation !== this.draftThumbnailGeneration) return;
+      this.performanceDiagnostics.record({
+        name: "preview.draft-thumbnail",
+        milliseconds: metric.totalMs,
+        detail: metric
+      });
     });
     // The editor remains mouse- and command-focusable, but ordinary Tab
     // navigation between application controls must never land in source text.
@@ -4043,6 +4090,13 @@ export class TypsastraWorkspaceController {
       this.draftAssetRootPath = generationContentMode === "draft"
         ? this.workspaceRootPath
         : null;
+      if (generationContentMode === "draft") {
+        this.draftThumbnailGeneration = generation;
+        await this.startDraftThumbnailQueue(generation);
+      } else {
+        this.draftThumbnailGeneration = 0;
+        void invoke("cancel_draft_thumbnail_generation").catch(() => {});
+      }
       this.updatePreviewContentModeControl(false);
       // Presentation is authoritative even when the previous PDF stayed
       // visible during compilation. In particular, clear a stale compile
@@ -4077,7 +4131,8 @@ export class TypsastraWorkspaceController {
           surface: "live",
           contentMode: generationContentMode,
           draftAssets: generationContentMode === "draft" ? [...this.draftImageAssets.values()] : [],
-          draftAssetRootPath: generationContentMode === "draft" ? this.draftAssetRootPath ?? undefined : undefined
+          draftAssetRootPath: generationContentMode === "draft" ? this.draftAssetRootPath ?? undefined : undefined,
+          draftThumbnailGeneration: generationContentMode === "draft" ? this.draftThumbnailGeneration : undefined
         } satisfies PdfUpdatePayload);
       }).catch(err => console.error("Error emitting pdf-update", err));
     } catch (error) {
@@ -4311,9 +4366,30 @@ export class TypsastraWorkspaceController {
     // the backend before they enter this generation-scoped manifest. Repeating
     // that check with frontend path strings rejects equivalent Windows paths
     // when one side uses an extended-length or 8.3 representation.
-    if (!asset) return null;
+    if (!asset || !this.workspaceRootPath || this.draftThumbnailGeneration < 1) return null;
+    const status = await invoke<DraftThumbnailStatus>("get_draft_thumbnail_status", {
+      generation: this.draftThumbnailGeneration,
+      workspaceRoot: this.workspaceRootPath,
+      id
+    }).catch(() => null);
+    if (!status) return null;
+    if (status.status === "failed") {
+      return {
+        status: "failed" as const,
+        message: "Image preview could not be prepared."
+      } as const;
+    }
+    if (status.status === "pending" || status.status === "generating") {
+      return { status: status.status } as const;
+    }
+    if (!status.path || !status.mimeType) {
+      return {
+        status: "failed" as const,
+        message: "The prepared image preview is unavailable."
+      } as const;
+    }
     const response = await invoke<ArrayBuffer | Uint8Array | number[]>("read_binary_file", {
-      path: asset.path
+      path: status.path
     });
     const bytes = response instanceof Uint8Array
       ? response
@@ -4321,12 +4397,61 @@ export class TypsastraWorkspaceController {
         ? new Uint8Array(response)
         : new Uint8Array(response);
     return {
+      status: "ready" as const,
       bytes,
-      mimeType: asset.mimeType,
+      mimeType: status.mimeType,
       filename: fileNameFromPath(asset.path),
       width: asset.width,
       height: asset.height
     };
+  }
+
+  private async startDraftThumbnailQueue(generation: number): Promise<void> {
+    if (
+      generation !== this.pdfPreviewGeneration
+      || this.presentedPreviewContentMode !== "draft"
+      || !this.workspaceRootPath
+      || this.draftImageAssets.size === 0
+    ) return;
+    const displayedPage = Math.max(1, this.previewPageStatus.currentPage || 1);
+    const displayedPageAssetIds = await this.previewFrame.draftImageIdsForPage(displayedPage);
+    if (
+      generation !== this.pdfPreviewGeneration
+      || this.presentedPreviewContentMode !== "draft"
+    ) return;
+    const startedAt = performance.now();
+    const summary = await invoke<DraftThumbnailQueueSummary>("start_draft_thumbnail_generation", {
+      request: {
+        generation,
+        workspaceRoot: this.workspaceRootPath,
+        assets: [...this.draftImageAssets.values()],
+        displayedPageAssetIds
+      }
+    }).catch(error => {
+      this.appendDeveloperLog({
+        kind: "warning",
+        source: "draft thumbnails",
+        message: `Could not start Draft thumbnail generation: ${String(error)}`
+      });
+      return null;
+    });
+    if (!summary || generation !== this.pdfPreviewGeneration) return;
+    this.performanceDiagnostics.record({
+      name: "preview.draft-thumbnail",
+      milliseconds: performance.now() - startedAt,
+      detail: {
+        generation,
+        cacheHits: summary.cacheHits,
+        queued: summary.queued,
+        displayedPage,
+        displayedPageAssets: displayedPageAssetIds.length
+      }
+    });
+    this.appendDeveloperLog({
+      kind: "info",
+      source: "draft thumbnails",
+      message: `Draft thumbnail queue ${generation} started: ${summary.cacheHits} cache hit(s), ${summary.queued} queued, ${displayedPageAssetIds.length} image(s) on page ${displayedPage}.`
+    });
   }
 
   private async closePreparedPreviewDocuments(): Promise<number> {
@@ -8044,6 +8169,8 @@ export class TypsastraWorkspaceController {
     this.draftImageAssets.clear();
     this.draftImageDiagnostics = [];
     this.draftAssetRootPath = null;
+    this.draftThumbnailGeneration = 0;
+    void invoke("cancel_draft_thumbnail_generation").catch(() => {});
     this.updatePreviewContentModeControl();
     this.updateImageHeavyPreviewWarning(null);
     this.publishImageOptimizationWarnings(null);
@@ -8153,6 +8280,9 @@ export class TypsastraWorkspaceController {
               : [],
             draftAssetRootPath: this.presentedPreviewContentMode === "draft"
               ? this.draftAssetRootPath ?? undefined
+              : undefined,
+            draftThumbnailGeneration: this.presentedPreviewContentMode === "draft"
+              ? this.draftThumbnailGeneration
               : undefined
           } satisfies PdfUpdatePayload);
         }

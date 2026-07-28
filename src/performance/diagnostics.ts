@@ -9,6 +9,7 @@ export type PerformanceMetricName =
   | "preview.compile"
   | "preview.draft-prepare"
   | "preview.draft-hover"
+  | "preview.draft-thumbnail"
   | "preview.load"
   | "preview.geometry"
   | "preview.canvas-render"

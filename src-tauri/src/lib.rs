@@ -27,8 +27,9 @@ mod webview_storage;
 use compatibility::{get_linux_renderer_compatibility, prepare_linux_renderer_relaunch};
 use examples::prepare_examples_workspace;
 use render_prepare::{
-    cancel_render_preparation, map_generated_to_source, map_source_to_generated,
-    prepare_render_file, prepare_render_project, validate_existing_render_cache_owner,
+    cancel_draft_thumbnail_generation, cancel_render_preparation, get_draft_thumbnail_status,
+    map_generated_to_source, map_source_to_generated, prepare_render_file, prepare_render_project,
+    start_draft_thumbnail_generation, validate_existing_render_cache_owner,
 };
 use segmentation::{
     analyze_language_ranges, complete_language_word, get_provider_capabilities,
@@ -3527,6 +3528,9 @@ pub fn run() {
             prepare_render_project,
             prepare_render_file,
             cancel_render_preparation,
+            start_draft_thumbnail_generation,
+            get_draft_thumbnail_status,
+            cancel_draft_thumbnail_generation,
             map_generated_to_source,
             map_source_to_generated,
             fetch_loopback_resource,

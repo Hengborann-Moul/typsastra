@@ -37,6 +37,8 @@ open = "5.3"
 typsastra-font-scaler = { path = "../crates/font-scaler" }
 tauri-plugin-process = "2"
 typst-syntax = "=0.15.0"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "bmp", "webp"] }
+resvg = "0.47"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"
@@ -67,4 +69,24 @@ opt-level = "s" # Optimize for binary size
 strip = true # Automatically strip symbols from the binary
 
 [profile.dev.package.khmer_segmenter]
+opt-level = 3
+
+# Draft thumbnails run outside the WebView, but unoptimized raster decoding,
+# resizing, and JPEG encoding are still visibly slow under `tauri dev`.
+[profile.dev.package.image]
+opt-level = 3
+
+[profile.dev.package.png]
+opt-level = 3
+
+[profile.dev.package.zune-jpeg]
+opt-level = 3
+
+[profile.release.package.image]
+opt-level = 3
+
+[profile.release.package.png]
+opt-level = 3
+
+[profile.release.package.zune-jpeg]
 opt-level = 3

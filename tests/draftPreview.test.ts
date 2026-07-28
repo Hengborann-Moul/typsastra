@@ -78,13 +78,33 @@ describe("Draft Preview", () => {
     expect(plan).toContain("including its fixed-size path label");
   });
 
-  test("loads hovered images from the backend-validated generation manifest", () => {
+  test("loads cached thumbnails from the backend-validated generation manifest", () => {
     const loaderStart = controller.indexOf("private async loadDraftPreviewImage");
-    const loaderEnd = controller.indexOf("private async closePreparedPreviewDocuments", loaderStart);
+    const loaderEnd = controller.indexOf("private async startDraftThumbnailQueue", loaderStart);
     const loader = controller.slice(loaderStart, loaderEnd);
     expect(loader).toContain("this.draftImageAssets.get(id)");
+    expect(loader).toContain('invoke<DraftThumbnailStatus>("get_draft_thumbnail_status"');
     expect(loader).toContain('invoke<ArrayBuffer | Uint8Array | number[]>("read_binary_file"');
+    expect(loader).toContain("path: status.path");
+    expect(loader).not.toContain("path: asset.path");
     expect(loader).not.toContain("relativeFilePath(");
+    expect(previewFrame).toContain("Preparing image preview…");
+    expect(previewFrame).toContain("draftImageIdsForPage(pageNo: number)");
+  });
+
+  test("starts one fixed native thumbnail queue after Draft presentation", () => {
+    expect(controller).toContain('invoke<DraftThumbnailQueueSummary>("start_draft_thumbnail_generation"');
+    expect(controller).toContain("displayedPageAssetIds");
+    expect(controller).toContain('invoke("cancel_draft_thumbnail_generation")');
+    expect(controller).not.toContain("reprioritize_draft_thumbnail");
+    expect(plan).toContain("one immutable queue");
+  });
+
+  test("keeps cached hover previews compact in storage and on screen", () => {
+    expect(plan).toContain("capped below 100 KiB per thumbnail");
+    expect(plan).toContain("capped at 340 by 300 CSS pixels");
+    expect(previewFrame).toContain("max-width:min(340px,calc(100vw - 16px))");
+    expect(previewFrame).toContain("max-height:min(240px,calc(100vh - 58px))");
   });
 
   test("documents exact intrinsic ratio and original-image export guarantees", () => {
