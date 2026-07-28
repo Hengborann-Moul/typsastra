@@ -1,7 +1,10 @@
 use super::draft::DraftImageAsset;
 use image::codecs::jpeg::JpegEncoder;
 use image::imageops::FilterType;
-use image::{DynamicImage, ExtendedColorType, GenericImageView, ImageReader, Rgb, RgbImage};
+use image::metadata::Orientation;
+use image::{
+    DynamicImage, ExtendedColorType, GenericImageView, ImageDecoder, ImageReader, Rgb, RgbImage,
+};
 use resvg::{tiny_skia, usvg};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -15,7 +18,7 @@ use tauri::{AppHandle, Emitter};
 
 const THUMBNAIL_LONGEST_EDGE: u32 = 640;
 const THUMBNAIL_TARGET_BYTES: usize = 96 * 1024;
-const THUMBNAIL_TRANSFORM_VERSION: &str = "draft-thumbnail-v2-jpeg-640-96k";
+const THUMBNAIL_TRANSFORM_VERSION: &str = "draft-thumbnail-v3-jpeg-640-96k-exif";
 const LARGE_SOURCE_BYTES: u64 = 1024 * 1024;
 const LARGE_DIMENSION: u32 = 1000;
 
@@ -153,6 +156,8 @@ pub async fn start_draft_thumbnail_generation(
         }
         let metadata = fs::metadata(&source_path)
             .map_err(|error| format!("Could not inspect Draft image metadata: {error}"))?;
+        let (source_width, source_height) =
+            oriented_source_dimensions(&source_path).unwrap_or((asset.width, asset.height));
         let cache_key = thumbnail_cache_key(&source_path, &metadata)?;
         let cache_path = cache_root.join(format!("{cache_key}.jpg"));
         let ready = fs::metadata(&cache_path)
@@ -175,15 +180,15 @@ pub async fn start_draft_thumbnail_generation(
                 ThumbnailStatus::Pending
             },
             mime_type: "image/jpeg".into(),
-            width: asset.width,
-            height: asset.height,
+            width: source_width,
+            height: source_height,
             source_bytes: asset.source_bytes,
             queue_class,
         };
         if ready {
             cache_hits += 1;
             let (output_width, output_height) = image::image_dimensions(&entry.cache_path)
-                .unwrap_or_else(|_| thumbnail_dimensions(asset.width, asset.height));
+                .unwrap_or_else(|_| thumbnail_dimensions(entry.width, entry.height));
             let output_bytes = fs::metadata(&entry.cache_path)
                 .map(|metadata| metadata.len())
                 .unwrap_or(0);
@@ -194,8 +199,8 @@ pub async fn start_draft_thumbnail_generation(
                     id: asset.id.clone(),
                     cache_hit: true,
                     queue_class: entry.queue_class.clone(),
-                    source_width: asset.width,
-                    source_height: asset.height,
+                    source_width,
+                    source_height,
                     output_width,
                     output_height,
                     source_bytes: asset.source_bytes,
@@ -464,12 +469,7 @@ fn generate_thumbnail(source: &Path, destination: &Path) -> Result<GeneratedThum
     {
         render_svg(source)?
     } else {
-        ImageReader::open(source)
-            .map_err(|error| format!("Could not open image: {error}"))?
-            .with_guessed_format()
-            .map_err(|error| format!("Could not identify image format: {error}"))?
-            .decode()
-            .map_err(|error| format!("Could not decode image: {error}"))?
+        decode_oriented_image(source)?
     };
     let decode_ms = duration_ms(decode_started);
     let resize_started = Instant::now();
@@ -518,6 +518,38 @@ fn generate_thumbnail(source: &Path, destination: &Path) -> Result<GeneratedThum
         decode_ms,
         resize_ms,
         encode_ms,
+    })
+}
+
+fn decode_oriented_image(path: &Path) -> Result<DynamicImage, String> {
+    let reader = ImageReader::open(path)
+        .map_err(|error| format!("Could not open image: {error}"))?
+        .with_guessed_format()
+        .map_err(|error| format!("Could not identify image format: {error}"))?;
+    let mut decoder = reader
+        .into_decoder()
+        .map_err(|error| format!("Could not initialize image decoder: {error}"))?;
+    let orientation = decoder.orientation().unwrap_or(Orientation::NoTransforms);
+    let mut image = DynamicImage::from_decoder(decoder)
+        .map_err(|error| format!("Could not decode image: {error}"))?;
+    image.apply_orientation(orientation);
+    Ok(image)
+}
+
+fn oriented_source_dimensions(path: &Path) -> Option<(u32, u32)> {
+    let reader = ImageReader::open(path).ok()?.with_guessed_format().ok()?;
+    let mut decoder = reader.into_decoder().ok()?;
+    let (width, height) = decoder.dimensions();
+    let orientation = decoder.orientation().unwrap_or(Orientation::NoTransforms);
+    Some(match orientation {
+        Orientation::Rotate90
+        | Orientation::Rotate270
+        | Orientation::Rotate90FlipH
+        | Orientation::Rotate270FlipH => (height, width),
+        Orientation::NoTransforms
+        | Orientation::Rotate180
+        | Orientation::FlipHorizontal
+        | Orientation::FlipVertical => (width, height),
     })
 }
 
@@ -754,6 +786,40 @@ mod tests {
         assert!(retained.is_file());
         assert!(!old_png.exists());
         assert!(!stale_jpeg.exists());
+    }
+
+    #[test]
+    fn applies_exif_orientation_before_generating_the_thumbnail() {
+        let workspace = tempfile::tempdir().unwrap();
+        let source = workspace.path().join("rotated-camera.jpg");
+        let destination = workspace.path().join("rotated-camera-thumbnail.jpg");
+        let pixels = RgbImage::from_fn(40, 20, |x, y| Rgb([(x * 5) as u8, (y * 10) as u8, 120]));
+        let mut jpeg = Vec::new();
+        JpegEncoder::new_with_quality(&mut jpeg, 90)
+            .encode(&pixels, 40, 20, ExtendedColorType::Rgb8)
+            .unwrap();
+        let mut exif = Vec::new();
+        exif.extend_from_slice(b"Exif\0\0II");
+        exif.extend_from_slice(&42u16.to_le_bytes());
+        exif.extend_from_slice(&8u32.to_le_bytes());
+        exif.extend_from_slice(&1u16.to_le_bytes());
+        exif.extend_from_slice(&0x0112u16.to_le_bytes());
+        exif.extend_from_slice(&3u16.to_le_bytes());
+        exif.extend_from_slice(&1u32.to_le_bytes());
+        exif.extend_from_slice(&6u16.to_le_bytes());
+        exif.extend_from_slice(&0u16.to_le_bytes());
+        exif.extend_from_slice(&0u32.to_le_bytes());
+        let mut oriented_jpeg = Vec::new();
+        oriented_jpeg.extend_from_slice(&jpeg[..2]);
+        oriented_jpeg.extend_from_slice(&[0xff, 0xe1]);
+        oriented_jpeg.extend_from_slice(&((exif.len() + 2) as u16).to_be_bytes());
+        oriented_jpeg.extend_from_slice(&exif);
+        oriented_jpeg.extend_from_slice(&jpeg[2..]);
+        fs::write(&source, oriented_jpeg).unwrap();
+
+        assert_eq!(oriented_source_dimensions(&source), Some((20, 40)));
+        generate_thumbnail(&source, &destination).unwrap();
+        assert_eq!(image::image_dimensions(&destination).unwrap(), (20, 40));
     }
 
     #[test]

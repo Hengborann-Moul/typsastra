@@ -86,6 +86,7 @@ Generated thumbnails:
 
 - preserve the source aspect ratio and composite transparency onto white for
   the disposable hover preview;
+- apply EXIF camera orientation before resizing and encoding;
 - start within a 640-pixel longest-edge budget without enlarging smaller source
   dimensions, then reduce further only when required by the byte budget;
 - use adaptive JPEG encoding capped below 100 KiB per thumbnail rather than
