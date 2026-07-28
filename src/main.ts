@@ -2,6 +2,7 @@ import "./style.css";
 import { TypsastraWorkspaceController } from "./appController";
 import { applyRuntimeTitlebarClasses, resolveRuntimeTitlebar } from "./platform/runtimeTitlebar";
 import { initializeLucideIcons } from "./ui/icons";
+import { initializeDesktopInputPolicy } from "./ui/desktopInputPolicy";
 
 const viteEnvironment = (import.meta as ImportMeta & { env?: { DEV?: boolean } }).env;
 applyRuntimeTitlebarClasses(resolveRuntimeTitlebar({
@@ -12,6 +13,7 @@ applyRuntimeTitlebarClasses(resolveRuntimeTitlebar({
 }));
 
 document.addEventListener("DOMContentLoaded", () => {
+  initializeDesktopInputPolicy();
   initializeLucideIcons();
   void new TypsastraWorkspaceController().bootstrap();
 });
