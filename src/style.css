@@ -1875,10 +1875,12 @@ body.typsastra-resizing #input-container-wrapper::after {
 
 .preview-content-mode-toggle {
   position: relative;
-  min-width: 96px;
+  width: 108px;
+  min-width: 108px;
   height: 28px;
   padding: 0 9px;
   margin-right: auto;
+  box-sizing: border-box;
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -1912,7 +1914,10 @@ body.typsastra-resizing #input-container-wrapper::after {
 }
 
 .preview-content-mode-label {
-  min-width: 42px;
+  width: 48px;
+  min-width: 48px;
+  overflow: visible;
+  white-space: nowrap;
   text-align: left;
 }
 
@@ -1942,14 +1947,8 @@ body.typsastra-resizing #input-container-wrapper::after {
   transform: translateX(14px);
 }
 
-.preview-content-mode-toggle[data-compiling="true"]::after {
-  content: "…";
-  position: absolute;
-  top: 50%;
-  right: 3px;
-  line-height: 1;
-  transform: translateY(-56%);
-  pointer-events: none;
+.preview-content-mode-toggle[data-compiling="true"] .preview-content-mode-track {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ui-accent-color) 28%, transparent);
 }
 
 .preview-content-mode-toggle.hidden {

@@ -23,7 +23,7 @@ describe("Draft Preview", () => {
     expect(controller).toContain("previewContentMode: this.previewContentMode");
     expect(controller).toContain('previewContentMode: "normal"');
     expect(controller).toContain('this.previewContentMode === "draft" ? "normal" : "draft"');
-    expect(styles).toMatch(/\.preview-content-mode-toggle\s*\{[^}]*min-width:\s*96px;/s);
+    expect(styles).toMatch(/\.preview-content-mode-toggle\s*\{[^}]*width:\s*108px;[^}]*min-width:\s*108px;/s);
     expect(styles).toMatch(
       /\.preview-content-mode-thumb\s*\{[^}]*background:\s*var\(--ui-text\);/
     );
@@ -35,7 +35,8 @@ describe("Draft Preview", () => {
     expect(styles).not.toMatch(
       /\.preview-content-mode-toggle\.active\s*\{[^}]*border-color:\s*var\(--ui-accent-color\)/
     );
-    expect(styles).toMatch(/data-compiling="true"[^}]*::after\s*\{[^}]*position:\s*absolute;/s);
+    expect(styles).toMatch(/data-compiling="true"[^}]*\.preview-content-mode-track\s*\{[^}]*box-shadow:/s);
+    expect(styles).not.toMatch(/data-compiling="true"[^}]*::after/);
   });
 
   test("keeps essential preview controls visible and progressively moves actions into the menu", () => {
