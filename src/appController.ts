@@ -321,6 +321,7 @@ type RenderPreparationResult = {
   draftAssets: DraftImageAsset[];
   draftDiagnostics: DraftImageDiagnostic[];
   draftCacheHits: number;
+  draftReachableFiles: string[];
   timings: RenderPreparationTimings;
 };
 
@@ -346,6 +347,7 @@ type RenderPreparationFileResult = {
 
 type PreparedPdfPreview = {
   path: string;
+  documentRootPath: string;
   changedPaths: string[];
   draftAssets: Map<string, DraftImageAsset>;
   draftDiagnostics: DraftImageDiagnostic[];
@@ -458,6 +460,7 @@ export class TypsastraWorkspaceController {
   private draftImageAssets = new Map<string, DraftImageAsset>();
   private draftImageDiagnostics: DraftImageDiagnostic[] = [];
   private draftAssetRootPath: string | null = null;
+  private draftThumbnailDocumentRootPath: string | null = null;
   private draftThumbnailGeneration = 0;
   private wordWrapDeferredForResize = false;
   private recommendedWorkspaceToolchain: { tinymistVersion: string; typstVersion: string } | null = null;
@@ -4147,6 +4150,9 @@ export class TypsastraWorkspaceController {
       this.draftAssetRootPath = generationContentMode === "draft"
         ? this.workspaceRootPath
         : null;
+      this.draftThumbnailDocumentRootPath = generationContentMode === "draft"
+        ? preparedPreview.documentRootPath
+        : null;
       if (generationContentMode === "draft") {
         this.draftThumbnailGeneration = generation;
         await this.startDraftThumbnailQueue(generation);
@@ -4336,6 +4342,9 @@ export class TypsastraWorkspaceController {
     this.ensurePreviewPreparationCurrent(preparationRevision);
     const draftAssets = new Map(result.draftAssets.map(asset => [asset.id, asset]));
     const draftDiagnostics = [...result.draftDiagnostics];
+    const draftReachableFileKeys = new Set(
+      result.draftReachableFiles.map(path => filePathKey(this.mapToOriginalPath(path)))
+    );
     let draftOverlayCacheHits = 0;
     let draftOverlayPreparations = 0;
     let overlayPreparationMs = 0;
@@ -4344,6 +4353,7 @@ export class TypsastraWorkspaceController {
         .filter(tab => tab.contentLoaded)
         .filter(tab => tab.path.toLowerCase().endsWith(".typ"))
         .filter(tab => this.workspaceRootPath && relativeFilePath(this.workspaceRootPath, this.mapToOriginalPath(tab.path)) !== null)
+        .filter(tab => draftReachableFileKeys.has(filePathKey(this.mapToOriginalPath(tab.path))))
       : [];
     const overlaid = new Set<string>();
     for (const tab of tabsToOverlay) {
@@ -4366,7 +4376,11 @@ export class TypsastraWorkspaceController {
       for (const asset of generated.draftAssets) draftAssets.set(asset.id, asset);
       draftDiagnostics.push(...generated.draftDiagnostics);
     }
-    if (useEditorOverlays && !overlaid.has(filePathKey(originalActivePath))) {
+    if (
+      useEditorOverlays
+      && draftReachableFileKeys.has(filePathKey(originalActivePath))
+      && !overlaid.has(filePathKey(originalActivePath))
+    ) {
       const overlayStartedAt = performance.now();
       const activeGenerated = await invoke<RenderPreparationFileResult>("prepare_render_file", {
         options,
@@ -4390,6 +4404,7 @@ export class TypsastraWorkspaceController {
     });
     return {
       path: result.generatedEntryFile,
+      documentRootPath: originalRootPath,
       changedPaths: result.changedFiles,
       draftAssets: contentMode === "draft" ? draftAssets : new Map(),
       draftDiagnostics: contentMode === "draft" ? draftDiagnostics : [],
@@ -4488,6 +4503,7 @@ export class TypsastraWorkspaceController {
       generation !== this.pdfPreviewGeneration
       || this.presentedPreviewContentMode !== "draft"
       || !this.workspaceRootPath
+      || !this.draftThumbnailDocumentRootPath
       || this.draftImageAssets.size === 0
     ) return;
     const displayedPage = Math.max(1, this.previewPageStatus.currentPage || 1);
@@ -4500,6 +4516,7 @@ export class TypsastraWorkspaceController {
       request: {
         generation,
         workspaceRoot: this.workspaceRootPath,
+        documentRootPath: this.draftThumbnailDocumentRootPath,
         assets: [...this.draftImageAssets.values()],
         displayedPageAssetIds
       }
@@ -8240,6 +8257,7 @@ export class TypsastraWorkspaceController {
     this.draftImageAssets.clear();
     this.draftImageDiagnostics = [];
     this.draftAssetRootPath = null;
+    this.draftThumbnailDocumentRootPath = null;
     this.draftThumbnailGeneration = 0;
     void invoke("cancel_draft_thumbnail_generation").catch(() => {});
     this.updatePreviewContentModeControl();

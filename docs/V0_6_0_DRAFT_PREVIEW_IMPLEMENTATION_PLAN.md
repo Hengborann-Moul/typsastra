@@ -79,8 +79,10 @@ its composition, not for pixel-level inspection.
 ### Coverage and output
 
 The generation manifest contains each unique statically resolved local image
-referenced by the compiled project. Multiple references to the same canonical
-source share one thumbnail.
+referenced by the selected main document's reachable local `include` and
+`import` graph. Unrelated Typst documents in the same project do not contribute
+thumbnail jobs or editor overlays. Multiple references to the same canonical
+source within the active document graph share one thumbnail.
 
 Generated thumbnails:
 
@@ -91,8 +93,8 @@ Generated thumbnails:
   dimensions, then reduce further only when required by the byte budget;
 - use adaptive JPEG encoding capped below 100 KiB per thumbnail rather than
   copying the original;
-- are written atomically under
-  `.typsastra/cache/draft-thumbnails/`;
+- are written atomically under a separate namespace for each main document:
+  `.typsastra/cache/draft-thumbnails/<main-document-id>/`;
 - are excluded from Typsastra project archives, source ZIP exports, and PDF
   exports;
 - may be discarded at any time and regenerated from the source.
@@ -113,6 +115,11 @@ thumbnail transform/version identifier
 This invalidates stale thumbnails without hashing every image during ordinary
 Draft preparation. A future integrity-sensitive mode may add a content digest,
 but it is not required for the initial cache.
+
+The main-document namespace is derived from its normalized project-relative
+path. Switching between unrelated main files therefore cannot delete, replace,
+or reuse the other document's thumbnail set. Renaming a main file creates a new
+disposable namespace.
 
 ### Fixed per-generation queue
 

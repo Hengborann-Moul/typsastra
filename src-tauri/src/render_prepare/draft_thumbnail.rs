@@ -59,6 +59,7 @@ enum ThumbnailStatus {
 pub struct StartDraftThumbnailRequest {
     pub generation: u64,
     pub workspace_root: String,
+    pub document_root_path: String,
     pub assets: Vec<DraftImageAsset>,
     pub displayed_page_asset_ids: Vec<String>,
 }
@@ -124,10 +125,15 @@ pub async fn start_draft_thumbnail_generation(
     let queue_started = Instant::now();
     let workspace_root = canonical_path(Path::new(&request.workspace_root))
         .ok_or_else(|| "The thumbnail workspace root is unavailable.".to_string())?;
-    let cache_root = workspace_root
+    let document_root_path = canonical_path(Path::new(&request.document_root_path))
+        .ok_or_else(|| "The thumbnail document root is unavailable.".to_string())?;
+    let cache_namespace = thumbnail_document_namespace(&workspace_root, &document_root_path)?;
+    let thumbnail_root = workspace_root
         .join(".typsastra")
         .join("cache")
         .join("draft-thumbnails");
+    remove_legacy_flat_thumbnail_entries(&thumbnail_root);
+    let cache_root = thumbnail_root.join(cache_namespace);
     fs::create_dir_all(&cache_root)
         .map_err(|error| format!("Could not create the Draft thumbnail cache: {error}"))?;
     let epoch = THUMBNAIL_EPOCH.fetch_add(1, Ordering::AcqRel) + 1;
@@ -424,6 +430,18 @@ fn remove_stale_cache_entries(cache_root: &Path, retained_paths: &HashSet<PathBu
     }
 }
 
+fn remove_legacy_flat_thumbnail_entries(thumbnail_root: &Path) {
+    let Ok(entries) = fs::read_dir(thumbnail_root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_file() {
+            let _ = fs::remove_file(path);
+        }
+    }
+}
+
 fn update_status(generation: u64, id: &str, status: ThumbnailStatus) {
     let mut state = THUMBNAIL_STATE
         .lock()
@@ -635,6 +653,27 @@ fn thumbnail_cache_key(path: &Path, metadata: &fs::Metadata) -> Result<String, S
     Ok(format!("{:x}", digest.finalize()))
 }
 
+fn thumbnail_document_namespace(
+    workspace_root: &Path,
+    document_root_path: &Path,
+) -> Result<String, String> {
+    let workspace_root = canonical_path(workspace_root)
+        .ok_or_else(|| "The thumbnail workspace root is unavailable.".to_string())?;
+    let document_root_path = canonical_path(document_root_path)
+        .ok_or_else(|| "The thumbnail document root is unavailable.".to_string())?;
+    let relative = document_root_path
+        .strip_prefix(&workspace_root)
+        .map_err(|_| "The Draft thumbnail document root is outside the active workspace.")?;
+    let mut identity = relative.to_string_lossy().replace('\\', "/");
+    #[cfg(windows)]
+    {
+        identity = identity.to_lowercase();
+    }
+    let mut digest = Sha256::new();
+    digest.update(identity.as_bytes());
+    Ok(format!("{:x}", digest.finalize())[..24].to_string())
+}
+
 fn canonical_path(path: &Path) -> Option<PathBuf> {
     fs::canonicalize(path).ok()
 }
@@ -808,5 +847,38 @@ mod tests {
         let second = thumbnail_cache_key(&source, &second_metadata).unwrap();
 
         assert_ne!(first, second);
+    }
+
+    #[test]
+    fn isolates_thumbnail_namespaces_for_unrelated_main_files() {
+        let workspace = tempfile::tempdir().unwrap();
+        let first = workspace.path().join("first.typ");
+        let second = workspace.path().join("chapters/second.typ");
+        fs::create_dir_all(second.parent().unwrap()).unwrap();
+        fs::write(&first, "= First").unwrap();
+        fs::write(&second, "= Second").unwrap();
+
+        let first_namespace =
+            thumbnail_document_namespace(workspace.path(), &first).unwrap();
+        let second_namespace =
+            thumbnail_document_namespace(workspace.path(), &second).unwrap();
+
+        assert_ne!(first_namespace, second_namespace);
+        assert_eq!(
+            first_namespace,
+            thumbnail_document_namespace(workspace.path(), &first).unwrap()
+        );
+        assert_eq!(first_namespace.len(), 24);
+        assert_eq!(second_namespace.len(), 24);
+    }
+
+    #[test]
+    fn rejects_thumbnail_namespaces_outside_the_workspace() {
+        let workspace = tempfile::tempdir().unwrap();
+        let external = tempfile::tempdir().unwrap();
+        let main = external.path().join("main.typ");
+        fs::write(&main, "= External").unwrap();
+
+        assert!(thumbnail_document_namespace(workspace.path(), &main).is_err());
     }
 }

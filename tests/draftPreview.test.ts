@@ -114,6 +114,25 @@ describe("Draft Preview", () => {
     expect(plan).toContain("one immutable queue");
   });
 
+  test("scopes thumbnails and editor overlays to the selected main document", async () => {
+    const mirror = await Bun.file(
+      new URL("../src-tauri/src/render_prepare/mirror.rs", import.meta.url)
+    ).text();
+    const thumbnails = await Bun.file(
+      new URL("../src-tauri/src/render_prepare/draft_thumbnail.rs", import.meta.url)
+    ).text();
+
+    expect(mirror).toContain("collect_reachable_typst_files");
+    expect(mirror).toContain("draft_reachable_files");
+    expect(controller).toContain("result.draftReachableFiles");
+    expect(controller).toContain("draftReachableFileKeys.has");
+    expect(controller).toContain("documentRootPath: this.draftThumbnailDocumentRootPath");
+    expect(thumbnails).toContain("thumbnail_document_namespace");
+    expect(thumbnails).toContain("thumbnail_root.join(cache_namespace)");
+    expect(plan).toContain("main document's reachable local");
+    expect(plan).toContain("separate namespace for each main document");
+  });
+
   test("logs one aggregate thumbnail benchmark instead of per-image metrics", async () => {
     const native = await Bun.file(
       new URL("../src-tauri/src/render_prepare/draft_thumbnail.rs", import.meta.url)

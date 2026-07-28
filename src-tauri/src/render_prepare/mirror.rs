@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::{HashSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Instant, UNIX_EPOCH};
@@ -73,6 +74,7 @@ pub struct RenderPrepareResult {
     pub draft_assets: Vec<DraftImageAsset>,
     pub draft_diagnostics: Vec<DraftImageDiagnostic>,
     pub draft_cache_hits: usize,
+    pub draft_reachable_files: Vec<PathBuf>,
     pub timings: RenderPrepareTimings,
 }
 
@@ -147,6 +149,7 @@ pub fn mirror_project_cancellable(
     }
     let discovery_ms = discovery_started_at.elapsed().as_secs_f64() * 1_000.0;
     let discovered_files = files_to_process.len();
+    let draft_reachable_files = collect_reachable_typst_files(project_root, &options.entry_file);
 
     for (rel_path, is_dir) in files_to_process {
         if is_cancelled() {
@@ -177,8 +180,13 @@ pub fn mirror_project_cancellable(
                         if processed.draft_cache_hit {
                             draft_cache_hits += 1;
                         }
-                        merge_draft_assets(&mut draft_assets, processed.draft.assets);
-                        draft_diagnostics.extend(processed.draft.diagnostics);
+                        let contributes_to_draft = options.preview_content_mode
+                            != PreviewContentMode::Draft
+                            || draft_reachable_files.contains(&canonical_or_original(&src_path));
+                        if contributes_to_draft {
+                            merge_draft_assets(&mut draft_assets, processed.draft.assets);
+                            draft_diagnostics.extend(processed.draft.diagnostics);
+                        }
                     }
                     Err(e) => {
                         warnings.push(RenderPrepareWarning {
@@ -220,6 +228,8 @@ pub fn mirror_project_cancellable(
             .strip_prefix(project_root)
             .unwrap_or(&options.entry_file),
     );
+    let mut draft_reachable_files = draft_reachable_files.into_iter().collect::<Vec<_>>();
+    draft_reachable_files.sort();
 
     Ok(RenderPrepareResult {
         generated_entry_file,
@@ -228,6 +238,7 @@ pub fn mirror_project_cancellable(
         draft_assets,
         draft_diagnostics,
         draft_cache_hits,
+        draft_reachable_files,
         timings: RenderPrepareTimings {
             total_ms: total_started_at.elapsed().as_secs_f64() * 1_000.0,
             setup_ms,
@@ -240,6 +251,39 @@ pub fn mirror_project_cancellable(
             asset_files,
         },
     })
+}
+
+fn canonical_or_original(path: &Path) -> PathBuf {
+    dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn collect_reachable_typst_files(project_root: &Path, entry_file: &Path) -> HashSet<PathBuf> {
+    let project_root = canonical_or_original(project_root);
+    let entry_file = canonical_or_original(entry_file);
+    let mut reachable = HashSet::new();
+    let mut pending = VecDeque::from([entry_file]);
+    while let Some(source_path) = pending.pop_front() {
+        if source_path.extension().and_then(|extension| extension.to_str()) != Some("typ")
+            || !source_path.starts_with(&project_root)
+            || !reachable.insert(source_path.clone())
+        {
+            continue;
+        }
+        let Ok(source) = fs::read_to_string(&source_path) else {
+            continue;
+        };
+        let parent = source_path.parent().unwrap_or(&project_root);
+        for dependency in crate::local_typst_dependencies(&source, parent) {
+            let dependency = canonical_or_original(&dependency);
+            if dependency.starts_with(&project_root)
+                && dependency.extension().and_then(|extension| extension.to_str()) == Some("typ")
+                && !reachable.contains(&dependency)
+            {
+                pending.push_back(dependency);
+            }
+        }
+    }
+    reachable
 }
 
 fn normalized_workspace_identity(project_root: &Path) -> String {
@@ -1200,6 +1244,57 @@ mod tests {
                 .iter()
                 .any(|path| path.ends_with("main.typ")),
             "changed image metadata must invalidate the Draft source"
+        );
+    }
+
+    #[test]
+    fn draft_manifest_excludes_images_from_unrelated_typst_files() {
+        let workspace = tempfile::tempdir().unwrap();
+        let main = workspace.path().join("main.typ");
+        let chapter = workspace.path().join("chapter.typ");
+        let unrelated = workspace.path().join("unrelated.typ");
+        let included_image = workspace.path().join("included.png");
+        let unrelated_image = workspace.path().join("unrelated.png");
+        let cache_root = workspace.path().join(".typsastra/cache");
+        let png = |width: u32| {
+            let mut bytes = vec![0u8; 24];
+            bytes[..8].copy_from_slice(b"\x89PNG\r\n\x1a\n");
+            bytes[16..20].copy_from_slice(&width.to_be_bytes());
+            bytes[20..24].copy_from_slice(&600u32.to_be_bytes());
+            bytes
+        };
+        fs::write(&main, "#include \"chapter.typ\"").unwrap();
+        fs::write(&chapter, "#image(\"included.png\")").unwrap();
+        fs::write(&unrelated, "#image(\"unrelated.png\")").unwrap();
+        fs::write(&included_image, png(800)).unwrap();
+        fs::write(&unrelated_image, png(1200)).unwrap();
+        let options = RenderPrepareOptions {
+            enable_khmer_zws: false,
+            project_root: workspace.path().to_path_buf(),
+            entry_file: main.clone(),
+            cache_root,
+            generate_source_map: true,
+            preview_content_mode: PreviewContentMode::Draft,
+        };
+
+        let prepared = mirror_project_cancellable(&options, None, || false).unwrap();
+
+        assert_eq!(prepared.draft_assets.len(), 1);
+        assert_eq!(prepared.draft_assets[0].path, canonical_or_original(&included_image));
+        assert_eq!(
+            prepared.draft_reachable_files,
+            [canonical_or_original(&chapter), canonical_or_original(&main)]
+        );
+        assert!(
+            fs::read_to_string(
+                options
+                    .cache_root
+                    .join("render")
+                    .join("unrelated.typ")
+            )
+            .unwrap()
+            .contains("draft-preview.typsastra.invalid"),
+            "unrelated Typst files should remain prepared for mirror correctness"
         );
     }
 
