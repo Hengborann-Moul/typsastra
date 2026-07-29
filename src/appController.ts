@@ -22,7 +22,7 @@ import { WorkspaceExplorer } from "./components/explorer";
 import { TinymistLspClient } from "./compiler/lsp";
 import { isTinymistStoppedRequestError, type EditorTextEdit, type LspDiagnostic, type LspInverseSyncResult, type LspLogEntry, type LspSourcePosition, type LspStatus, type PreviewDocumentPosition } from "./compiler/lsp";
 import { asRecord } from "./compiler/jsonRpc";
-import type { AppSettings, DeveloperLogCategory, PreviewRenderMode } from "./settings";
+import type { AppSettings, DeveloperLogCategory, PreviewRenderMode, ThemeName } from "./settings";
 import { SettingsController } from "./settingsController";
 import { fileNameFromPath, filePathFromUri, filePathKey, filePathToUri, nativeFilePath, relativeFilePath, remapFilePath } from "./platform/paths";
 import { isBinaryImagePath, isSupportedInAppPath, isTypstDocumentPath, fileExtension } from "./platform/fileTypes";
@@ -905,6 +905,13 @@ export class TypsastraWorkspaceController {
   private async bootstrapPreviewWindow() {
     document.documentElement.classList.add("preview-only-mode");
     document.body.classList.add("preview-only-mode");
+
+    // The preview window intentionally skips the full workspace bootstrap, but
+    // its own toolbar and embedded viewer still need the persisted application
+    // theme before the window becomes visible.
+    await this.settingsController.load();
+    await applyUIThemeVariables(this.settingsController.value.appearance.theme);
+    this.previewFrame.syncTheme();
     
     document.getElementById("preview-zoom-in-btn")?.addEventListener("click", () => {
       this.zoomIn();
@@ -936,8 +943,19 @@ export class TypsastraWorkspaceController {
     await getCurrentWindow().show();
 
     const { listen, emit } = await import("@tauri-apps/api/event");
+
+    document.getElementById("preview-content-mode-toggle")?.addEventListener("click", () => {
+      const requestedMode = this.previewContentMode === "draft" ? "normal" : "draft";
+      this.previewContentMode = requestedMode;
+      this.updatePreviewContentModeControl(true);
+      void emit("preview-content-mode-request", requestedMode);
+    });
     
-    listen<string | PdfUpdatePayload>("pdf-update", (event) => {
+    await listen<ThemeName>("preview-theme-update", (event) => {
+      void applyUIThemeVariables(event.payload).then(() => this.previewFrame.syncTheme());
+    });
+
+    await listen<string | PdfUpdatePayload>("pdf-update", (event) => {
       const fallbackIdentity = this.pdfPreviewSourceMapRootPath ?? this.previewRootPath ?? "preview";
       const update = typeof event.payload === "string"
         ? {
@@ -951,15 +969,18 @@ export class TypsastraWorkspaceController {
       this.presentedPreviewContentMode = update.contentMode ?? "normal";
       this.draftImageAssets = new Map((update.draftAssets ?? []).map(asset => [asset.id, asset]));
       this.draftAssetRootPath = update.draftAssetRootPath ?? null;
+      // Thumbnail status requests are validated against the workspace root.
+      // The undocked window has no workspace bootstrap of its own, so inherit
+      // the already validated root carried with the Draft manifest.
+      this.workspaceRootPath = update.draftAssetRootPath ?? null;
       this.draftThumbnailGeneration = update.draftThumbnailGeneration ?? 0;
-      this.updatePreviewContentModeControl();
+      this.updatePreviewContentModeControl(false);
       const contentModeToggle = document.getElementById("preview-content-mode-toggle") as HTMLButtonElement | null;
       contentModeToggle?.classList.remove("hidden");
-      if (contentModeToggle) contentModeToggle.disabled = true;
       void this.loadPdfPath(update.path, update.identity, update.sessionKey, update.surface);
     });
 
-    listen<{ page_no: number; x: number; y: number }>("pdf-forward-sync", (event) => {
+    await listen<{ page_no: number; x: number; y: number }>("pdf-forward-sync", (event) => {
       const pos = event.payload;
       void this.previewFrame?.revealDocumentPosition(pos);
     });
@@ -1092,6 +1113,11 @@ export class TypsastraWorkspaceController {
       editor.scopedIgnoredWords,
     );
     void applyUIThemeVariables(appearance.theme).then(() => this.previewFrame.syncTheme());
+    if (!isPreviewOnlyWindow()) {
+      import("@tauri-apps/api/event").then(({ emit }) => {
+        void emit("preview-theme-update", appearance.theme);
+      }).catch(() => {});
+    }
 
     const khmerPrepChanged = this.lastKhmerRenderPrepState !== undefined && this.lastKhmerRenderPrepState !== preview.khmerRenderPreparation;
     this.lastKhmerRenderPrepState = preview.khmerRenderPreparation;
@@ -8522,6 +8548,9 @@ export class TypsastraWorkspaceController {
               : undefined
           } satisfies PdfUpdatePayload);
         }
+      });
+      listen<PreviewContentMode>("preview-content-mode-request", event => {
+        void this.setPreviewContentMode(event.payload);
       });
       listen<PreviewClickPoint>("pdf-click", (event) => {
         const point = event.payload;

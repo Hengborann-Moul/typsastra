@@ -33,6 +33,22 @@ describe("theme-aware application accents", () => {
     expect(explorer).toContain('input.style.border = "1px solid var(--ui-accent-color)"');
   });
 
+  test("applies and follows the active theme in the undocked preview", () => {
+    const previewBootstrapStart = controller.indexOf("private async bootstrapPreviewWindow");
+    const previewBootstrapEnd = controller.indexOf(
+      "private updateWorkspaceViewportVisibility",
+      previewBootstrapStart
+    );
+    const previewBootstrap = controller.slice(previewBootstrapStart, previewBootstrapEnd);
+
+    expect(previewBootstrap).toContain("await this.settingsController.load()");
+    expect(previewBootstrap).toContain(
+      "await applyUIThemeVariables(this.settingsController.value.appearance.theme)"
+    );
+    expect(previewBootstrap).toContain('await listen<ThemeName>("preview-theme-update"');
+    expect(controller).toContain('emit("preview-theme-update", appearance.theme)');
+  });
+
   test("keeps warning icons consistent across themes and surfaces", () => {
     expect(style).toContain("--ui-warning-icon-color: #cca700;");
     expect(style).toMatch(/\.preview-image-warning-button\s*\{[\s\S]*?color:\s*var\(--ui-warning-icon-color\)/);

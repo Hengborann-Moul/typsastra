@@ -109,6 +109,42 @@ describe("Draft Preview", () => {
     expect(previewFrame).toContain("draftImageIdsForPage(pageNo: number)");
   });
 
+  test("keeps Draft hover thumbnails available in the undocked preview", () => {
+    const previewBootstrapStart = controller.indexOf("private async bootstrapPreviewWindow");
+    const previewBootstrapEnd = controller.indexOf(
+      "private updateWorkspaceViewportVisibility",
+      previewBootstrapStart
+    );
+    const previewBootstrap = controller.slice(previewBootstrapStart, previewBootstrapEnd);
+
+    expect(previewBootstrap).toContain(
+      "this.workspaceRootPath = update.draftAssetRootPath ?? null"
+    );
+    expect(previewBootstrap).toContain(
+      "this.draftThumbnailGeneration = update.draftThumbnailGeneration ?? 0"
+    );
+    expect(previewBootstrap).toContain(
+      "this.draftImageAssets = new Map((update.draftAssets ?? [])"
+    );
+  });
+
+  test("keeps the undocked Normal/Draft control themed and interactive", () => {
+    const previewBootstrapStart = controller.indexOf("private async bootstrapPreviewWindow");
+    const previewBootstrapEnd = controller.indexOf(
+      "private updateWorkspaceViewportVisibility",
+      previewBootstrapStart
+    );
+    const previewBootstrap = controller.slice(previewBootstrapStart, previewBootstrapEnd);
+
+    expect(previewBootstrap).toContain('"preview-content-mode-request"');
+    expect(previewBootstrap).toContain("this.updatePreviewContentModeControl(true)");
+    expect(previewBootstrap).toContain("this.updatePreviewContentModeControl(false)");
+    expect(previewBootstrap).not.toContain("contentModeToggle.disabled = true");
+    expect(controller).toContain(
+      'listen<PreviewContentMode>("preview-content-mode-request"'
+    );
+  });
+
   test("starts one fixed native thumbnail queue after Draft presentation", () => {
     expect(controller).toContain('invoke<DraftThumbnailQueueSummary>("start_draft_thumbnail_generation"');
     expect(controller).toContain("displayedPageAssetIds");
