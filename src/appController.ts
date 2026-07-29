@@ -668,15 +668,14 @@ export class TypsastraWorkspaceController {
   private readonly recentProjectsController = new RecentProjectsController(
     path => this.openWorkspace(path),
     async path => {
-      await this.appDialogController.show({
-        title: "Recent Project Not Found",
-        subtitle: fileNameFromPath(path),
-        description: `Typsastra could not find this project folder:\n\n${path}\n\nIt will be removed from your recent projects.`,
-        actions: [
-          { id: "remove", label: "Remove from Recent Projects", primary: true }
-        ],
-        cancelAction: "remove"
-      });
+      await message(
+        `Typsastra could not find this project folder:\n\n${path}\n\nIt will be removed from your recent projects.`,
+        {
+          title: "Recent Project Not Found",
+          kind: "warning",
+          buttons: { ok: "Remove from Recent Projects" }
+        }
+      );
     }
   );
   private readonly workspaceWatcher = new WorkspaceWatcher(
@@ -8741,29 +8740,15 @@ export class TypsastraWorkspaceController {
           
           if (!rootPath) throw new Error("No export root path available");
 
-          const originalPdfPath = (this.previewStandalone
+          const defaultPdfPath = (this.previewStandalone
             ? this.activeFilePath
             : (this.previewMainPath ?? this.activeFilePath)).replace(/\.typ$/i, ".pdf");
-          const outputExists = await invoke<boolean>("workspace_path_exists", {
-            path: originalPdfPath
-          }).catch(() => false);
-          const exportAction = await this.appDialogController.show({
-            title: outputExists ? "Replace Exported PDF?" : "Export PDF?",
-            subtitle: fileNameFromPath(originalPdfPath),
-            description: outputExists
-              ? `This will replace the existing PDF at ${originalPdfPath}. Live-preview files remain private under .typsastra/cache.`
-              : `This will create ${originalPdfPath}. Live-preview files remain private under .typsastra/cache.`,
-            actions: [
-              { id: "cancel", label: "Cancel" },
-              {
-                id: "export",
-                label: outputExists ? "Replace PDF" : "Export PDF",
-                primary: true
-              }
-            ],
-            cancelAction: "cancel"
+          const exportPdfPath = await save({
+            title: "Export PDF",
+            defaultPath: defaultPdfPath,
+            filters: [{ name: "PDF Document", extensions: ["pdf"] }]
           });
-          if (exportAction !== "export") {
+          if (!exportPdfPath) {
             this.setLspStatus({ kind: "preview-ready", message: "PDF export cancelled" });
             return;
           }
@@ -8821,10 +8806,10 @@ export class TypsastraWorkspaceController {
             filePath: targetFilePath
           });
           
-          await invoke("copy_workspace_file", { source: pdfPath, dest: originalPdfPath });
+          await invoke("copy_workspace_file", { source: pdfPath, dest: exportPdfPath });
           await invoke("move_to_trash", { path: pdfPath });
           
-          this.setLspStatus({ kind: "preview-ready", message: `Exported to ${originalPdfPath}` });
+          this.setLspStatus({ kind: "preview-ready", message: `Exported to ${exportPdfPath}` });
         } catch (error) {
           this.setLspStatus({ kind: "error", message: `Export failed: ${error}` });
         } finally {
@@ -9095,16 +9080,15 @@ export class TypsastraWorkspaceController {
       const hasUnsaved = this.openTabs.some(tab => tab.isDirty);
       let proceed = true;
       if (hasUnsaved) {
-        const action = await this.appDialogController.show({
-          title: "Unsaved Changes",
-          description: "You have unsaved changes. Are you sure you want to close Typsastra?",
-          actions: [
-            { id: "cancel", label: "Cancel" },
-            { id: "close", label: "Close Without Saving", primary: true }
-          ],
-          cancelAction: "cancel"
-        });
-        proceed = action === "close";
+        proceed = await confirm(
+          "You have unsaved changes. Are you sure you want to close Typsastra?",
+          {
+            title: "Unsaved Changes",
+            kind: "warning",
+            okLabel: "Close Without Saving",
+            cancelLabel: "Cancel"
+          }
+        );
       }
       if (proceed) proceed = await this.appUpdateController.prepareForClose();
       if (proceed) {

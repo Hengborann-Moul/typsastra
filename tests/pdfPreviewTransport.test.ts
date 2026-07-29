@@ -117,12 +117,13 @@ describe("compiled PDF transport", () => {
     expect(startup).toBeGreaterThan(validation);
   });
 
-  test("requires explicit confirmation before writing a user-facing PDF", async () => {
+  test("uses a native Save dialog before writing a user-facing PDF", async () => {
     const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
-    const confirmation = source.indexOf('title: outputExists ? "Replace Exported PDF?" : "Export PDF?"');
-    const workspaceCopy = source.indexOf('invoke("copy_workspace_file", { source: pdfPath, dest: originalPdfPath })');
-    expect(confirmation).toBeGreaterThan(-1);
-    expect(workspaceCopy).toBeGreaterThan(confirmation);
-    expect(source).toContain('if (exportAction !== "export")');
+    const selector = source.indexOf('title: "Export PDF"');
+    const workspaceCopy = source.indexOf('invoke("copy_workspace_file", { source: pdfPath, dest: exportPdfPath })');
+    expect(selector).toBeGreaterThan(-1);
+    expect(workspaceCopy).toBeGreaterThan(selector);
+    expect(source).toContain('filters: [{ name: "PDF Document", extensions: ["pdf"] }]');
+    expect(source).toContain("if (!exportPdfPath)");
   });
 });
