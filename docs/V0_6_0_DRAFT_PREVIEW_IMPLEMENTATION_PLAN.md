@@ -190,6 +190,24 @@ Switching modes cancels stale preparation, queues a forced refresh, and leaves
 the last successful preview visible. Workspace loading restores the requested
 mode before starting preview compilation.
 
+## Known limitation: advanced image layout
+
+Draft Preview is qualified for an `image(...)` call used directly in content
+and for an image contained by a `block` whose `clip` value is `true`. In these
+cases Typsastra can replace the image with a linked placeholder while retaining
+the expected layout bounds and interaction area.
+
+Other image compositions may depend on positioning, transformation, clipping,
+or sizing behavior inherited from surrounding Typst expressions. The private
+Draft replacement cannot reproduce every such relationship. These uses may
+therefore produce a placeholder whose size or position differs from Normal
+Preview, or whose hover and click interaction area does not exactly match the
+original image.
+
+Normal Preview remains authoritative for layout, image placement, interaction
+validation, and final PDF output. Draft Preview never changes the source or the
+exported PDF.
+
 ## Known limitation: retained Tinymist memory
 
 Starting an image-heavy document directly in Draft Preview can require

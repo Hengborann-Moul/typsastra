@@ -156,6 +156,9 @@ manageable without changing the portable Typst source model.
   the compiled draft. Dynamic and unresolved image
   expressions must remain explicit limitations. Draft Preview must be clearly
   labeled, explicitly selected, and never used for final PDF export.
+  Placeholder geometry and interaction are qualified for standalone image
+  calls and images inside clipped blocks; other image compositions remain a
+  documented v0.6.0 limitation and must be validated in Normal Preview.
   See the [Draft Preview implementation plan](V0_6_0_DRAFT_PREVIEW_IMPLEMENTATION_PLAN.md).
 - Preserve and clearly communicate the last successful preview across normal
   and draft-preview compilation failures.

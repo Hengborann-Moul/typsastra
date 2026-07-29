@@ -76,6 +76,13 @@ The selected content mode is stored per workspace. Dynamic, remote, package,
 missing, and unsupported images remain unchanged and are listed in the Draft
 Preview details dialog. Final PDF export always uses the original images,
 regardless of the selected preview mode.
+
+Draft placeholder geometry and interaction are qualified for standalone
+`image(...)` calls and images inside a `block` with `clip: true`. Images used
+through other layout compositions may produce a differently sized or
+positioned placeholder, or an imprecise hover or click area. Switch to Normal
+Preview to validate exact image layout and interaction.
+
 Imported files continue to preview through their configured main document. The
 former standalone-preview directive remains disabled; its portable replacement
 is planned for v0.8.0 and hardened in v1.x.
