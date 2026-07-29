@@ -110,7 +110,13 @@ The preprocessor also dynamically heals condition syntax typos in rule lines (su
 
 The provider registry instantiates one provider per installed language ID, e.g. `hunspell:fr_FR`, and refreshes provider capabilities after installation without requiring an app restart.
 
-Downloaded Hunspell-compatible dictionaries are registered as **Basic · Stable** (or labeled as fallback support for segmentation-dependent scripts). They advertise spellcheck and corrections, but not typing word completion or reliable language segmentation. A future tested tokenizer-backed provider can supersede that fallback and advertise additional capabilities.
+Downloaded Hunspell-compatible dictionaries are registered according to their
+advertised capabilities. Latin-script dictionaries provide prefix-based word
+completion through reliable Unicode word boundaries and are labeled
+**Enhanced · Stable**. Dictionaries for scripts that need language-specific
+segmentation remain **Basic · Stable** and advertise spellcheck and corrections,
+but not typing word completion. A future tested tokenizer-backed provider can
+supersede that fallback without changing the editor contract.
 
 For languages with reliable whitespace or Unicode word boundaries, a Hunspell-compatible provider can provide useful Basic spellcheck and correction support quickly.
 

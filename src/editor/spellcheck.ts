@@ -241,7 +241,7 @@ export class SpellcheckController {
     }
     this.providerCatalogReady = true;
     this.onPerformance?.({
-      name: "startup.providers",
+      name: "startup.provider-catalog",
       milliseconds: performance.now() - startedAt,
       detail: { providerCount: this.providers.length }
     });

@@ -1,6 +1,7 @@
 export type PerformanceMetricName =
   | "startup.usable-editor"
-  | "startup.providers"
+  | "startup.provider-catalog"
+  | "startup.deferred-initialization"
   | "diagnostics.first"
   | "editor.input-update"
   | "editor.update-listener"

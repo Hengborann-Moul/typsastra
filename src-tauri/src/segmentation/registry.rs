@@ -941,6 +941,7 @@ fn preprocess_aff(aff: &str) -> String {
         .join("\n")
 }
 
+#[allow(dead_code)]
 struct GenericHunspellProvider {
     id: &'static str,
     display_name: &'static str,
@@ -1068,7 +1069,7 @@ impl LanguageSegmenter for GenericHunspellProvider {
     }
 
     fn support_level(&self) -> &'static str {
-        if self.word_segmenter.is_some() {
+        if self.supports_completion() {
             "enhanced"
         } else {
             "basic"
@@ -1116,7 +1117,7 @@ impl LanguageSegmenter for GenericHunspellProvider {
     }
 
     fn supports_completion(&self) -> bool {
-        self.word_segmenter.is_some()
+        generic_hunspell_supports_completion(self.language_tag)
     }
 
     fn supports_segmentation(&self) -> bool {
@@ -1581,62 +1582,79 @@ fn hunspell_install_root(data_dir: &Path) -> PathBuf {
     data_dir.join("dictionaries").join("hunspell")
 }
 
-fn installed_hunspell_providers(data_dir: &Path) -> Result<Vec<GenericHunspellProvider>, String> {
-    let root = hunspell_install_root(data_dir);
-    let mut providers = Vec::new();
-    if !root.exists() {
-        return Ok(providers);
+fn khmer_provider_capabilities() -> ProviderCapabilities {
+    ProviderCapabilities {
+        schema_version: PROVIDER_CAPABILITY_SCHEMA_VERSION,
+        id: "khmer-segmenter".to_string(),
+        pattern: "[\u{1780}-\u{17ff}]+".to_string(),
+        display_name: "Khmer".to_string(),
+        language_tag: "km".to_string(),
+        scripts: vec!["Khmr".to_string()],
+        engine: "khmer_segmenter".to_string(),
+        support_level: "deep".to_string(),
+        stability: "experimental".to_string(),
+        boundary_mode: "custom-segmenter".to_string(),
+        boundary_quality: "dedicated".to_string(),
+        correction_quality: "none".to_string(),
+        supports_spellcheck: true,
+        supports_corrections: false,
+        supports_completion: true,
+        supports_segmentation: true,
+        supports_custom_dictionary: true,
+        has_editing_policy: true,
+        provider_type: "deep".to_string(),
+        version: "0.3.0".to_string(),
+        license: "MIT; lexical data retains upstream source terms".to_string(),
     }
-    for spec in HUNSPELL_CATALOG {
-        let locale_dir = root.join(spec.locale);
-        let aff_path = locale_dir.join(format!("{}.aff", spec.locale));
-        let dic_path = locale_dir.join(format!("{}.dic", spec.locale));
-        if !aff_path.exists() || !dic_path.exists() {
-            continue;
-        }
-        let aff = std::fs::read_to_string(&aff_path)
-            .map_err(|error| format!("Failed to read {}: {error}", aff_path.display()))?;
-        let dic = std::fs::read_to_string(&dic_path)
-            .map_err(|error| format!("Failed to read {}: {error}", dic_path.display()))?;
-        providers.push(GenericHunspellProvider::new(
-            spec.locale,
-            spec.display_name,
-            spec.language_tag,
-            spec.pattern,
-            &aff,
-            &dic,
-            spec.version,
-            spec.license,
-        )?);
+}
+
+fn english_us_provider_capabilities() -> ProviderCapabilities {
+    ProviderCapabilities {
+        schema_version: PROVIDER_CAPABILITY_SCHEMA_VERSION,
+        id: "hunspell:en_US".to_string(),
+        pattern: "[A-Za-z][A-Za-z'â€™\\-]*".to_string(),
+        display_name: "English (US)".to_string(),
+        language_tag: "en-US".to_string(),
+        scripts: vec!["Latn".to_string()],
+        engine: "spellbook".to_string(),
+        support_level: "enhanced".to_string(),
+        stability: "stable".to_string(),
+        boundary_mode: "unicode-word".to_string(),
+        boundary_quality: "tested".to_string(),
+        correction_quality: "dictionary".to_string(),
+        supports_spellcheck: true,
+        supports_corrections: true,
+        supports_completion: true,
+        supports_segmentation: false,
+        supports_custom_dictionary: true,
+        has_editing_policy: false,
+        provider_type: "dictionary-only".to_string(),
+        version: "1.0.0".to_string(),
+        license: "Public Domain / MIT / BSD".to_string(),
     }
-    Ok(providers)
 }
 
-fn find_hunspell_spec(locale: &str) -> Option<&'static HunspellCatalogSpec> {
-    HUNSPELL_CATALOG
-        .iter()
-        .find(|spec| spec.locale.eq_ignore_ascii_case(locale))
+fn generic_hunspell_supports_completion(language_tag: &str) -> bool {
+    script_for_language_tag(language_tag) == "Latn" || language_tag.split('-').next() == Some("lo")
 }
 
-fn is_hunspell_installed(data_dir: &Path, locale: &str) -> bool {
-    let locale_dir = hunspell_install_root(data_dir).join(locale);
-    locale_dir.join(format!("{locale}.aff")).exists()
-        && locale_dir.join(format!("{locale}.dic")).exists()
-}
-
-fn catalog_entry(data_dir: Option<&Path>, spec: &HunspellCatalogSpec) -> HunspellCatalogEntry {
+fn generic_hunspell_provider_capabilities(spec: &HunspellCatalogSpec) -> ProviderCapabilities {
     let has_dedicated_tokenizer = spec.language_tag.split('-').next() == Some("lo");
-    HunspellCatalogEntry {
+    let supports_completion = generic_hunspell_supports_completion(spec.language_tag);
+    ProviderCapabilities {
         schema_version: PROVIDER_CAPABILITY_SCHEMA_VERSION,
         id: format!("hunspell:{}", spec.locale),
-        locale: spec.locale.to_string(),
+        pattern: spec.pattern.to_string(),
         display_name: spec.display_name.to_string(),
         language_tag: spec.language_tag.to_string(),
         scripts: vec![script_for_language_tag(spec.language_tag).to_string()],
-        installed: data_dir.is_some_and(|dir| is_hunspell_installed(dir, spec.locale)),
-        bundled: false,
-        source: "LibreOffice dictionaries".to_string(),
-        support_level: if has_dedicated_tokenizer {
+        engine: if has_dedicated_tokenizer {
+            "spellbook+icu4x"
+        } else {
+            "spellbook"
+        }
+        .to_string(),
+        support_level: if supports_completion {
             "enhanced"
         } else {
             "basic"
@@ -1663,7 +1681,74 @@ fn catalog_entry(data_dir: Option<&Path>, spec: &HunspellCatalogSpec) -> Hunspel
         correction_quality: "dictionary".to_string(),
         supports_spellcheck: true,
         supports_corrections: true,
-        supports_completion: has_dedicated_tokenizer,
+        supports_completion,
+        supports_segmentation: has_dedicated_tokenizer,
+        supports_custom_dictionary: true,
+        has_editing_policy: false,
+        provider_type: if has_dedicated_tokenizer {
+            "dictionary-plus-tokenizer"
+        } else {
+            "dictionary-only"
+        }
+        .to_string(),
+        version: spec.version.to_string(),
+        license: spec.license.to_string(),
+    }
+}
+
+fn find_hunspell_spec(locale: &str) -> Option<&'static HunspellCatalogSpec> {
+    HUNSPELL_CATALOG
+        .iter()
+        .find(|spec| spec.locale.eq_ignore_ascii_case(locale))
+}
+
+fn is_hunspell_installed(data_dir: &Path, locale: &str) -> bool {
+    let locale_dir = hunspell_install_root(data_dir).join(locale);
+    locale_dir.join(format!("{locale}.aff")).exists()
+        && locale_dir.join(format!("{locale}.dic")).exists()
+}
+
+fn catalog_entry(data_dir: Option<&Path>, spec: &HunspellCatalogSpec) -> HunspellCatalogEntry {
+    let has_dedicated_tokenizer = spec.language_tag.split('-').next() == Some("lo");
+    let supports_completion = generic_hunspell_supports_completion(spec.language_tag);
+    HunspellCatalogEntry {
+        schema_version: PROVIDER_CAPABILITY_SCHEMA_VERSION,
+        id: format!("hunspell:{}", spec.locale),
+        locale: spec.locale.to_string(),
+        display_name: spec.display_name.to_string(),
+        language_tag: spec.language_tag.to_string(),
+        scripts: vec![script_for_language_tag(spec.language_tag).to_string()],
+        installed: data_dir.is_some_and(|dir| is_hunspell_installed(dir, spec.locale)),
+        bundled: false,
+        source: "LibreOffice dictionaries".to_string(),
+        support_level: if supports_completion {
+            "enhanced"
+        } else {
+            "basic"
+        }
+        .to_string(),
+        stability: if has_dedicated_tokenizer {
+            "experimental"
+        } else {
+            "stable"
+        }
+        .to_string(),
+        boundary_mode: if has_dedicated_tokenizer {
+            "icu4x-dictionary"
+        } else {
+            "unicode-word"
+        }
+        .to_string(),
+        boundary_quality: if has_dedicated_tokenizer {
+            "dedicated"
+        } else {
+            "general"
+        }
+        .to_string(),
+        correction_quality: "dictionary".to_string(),
+        supports_spellcheck: true,
+        supports_corrections: true,
+        supports_completion,
         supports_segmentation: has_dedicated_tokenizer,
         supports_custom_dictionary: true,
         has_editing_policy: false,
@@ -1814,12 +1899,14 @@ fn is_escaped_at(text: &str, index: usize) -> bool {
 #[derive(Clone)]
 pub struct SegmentationRegistry {
     providers: Arc<RwLock<Vec<Arc<dyn LanguageSegmenter>>>>,
+    data_dir: Arc<RwLock<Option<PathBuf>>>,
 }
 
 impl SegmentationRegistry {
     pub fn empty() -> Self {
         Self {
             providers: Arc::new(RwLock::new(Vec::new())),
+            data_dir: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -1830,22 +1917,34 @@ impl SegmentationRegistry {
 
     #[cfg(test)]
     pub fn new_with_data_dir(data_dir: Option<&Path>) -> Result<Self, String> {
-        let providers = Self::load_providers(data_dir)?;
-        Ok(Self {
-            providers: Arc::new(RwLock::new(providers)),
-        })
+        let registry = Self::empty();
+        if let Some(data_dir) = data_dir {
+            registry.reload_installed(data_dir)?;
+        }
+        Ok(registry)
     }
 
     pub fn reload_installed(&self, data_dir: &Path) -> Result<(), String> {
-        let providers = Self::load_providers(Some(data_dir))?;
         *self
-            .providers
+            .data_dir
             .write()
-            .map_err(|_| "Language provider registry lock is poisoned.".to_string())? = providers;
+            .map_err(|_| "Language provider data-directory lock is poisoned.".to_string())? =
+            Some(data_dir.to_path_buf());
+        self.providers
+            .write()
+            .map_err(|_| "Language provider registry lock is poisoned.".to_string())?
+            .retain(|provider| {
+                provider.id() == "khmer-segmenter"
+                    || provider.id() == "hunspell:en_US"
+                    || provider
+                        .id()
+                        .strip_prefix("hunspell:")
+                        .is_some_and(|locale| is_hunspell_installed(data_dir, locale))
+            });
         Ok(())
     }
 
-    fn provider_snapshot(&self) -> Result<Vec<Arc<dyn LanguageSegmenter>>, String> {
+    fn loaded_provider_snapshot(&self) -> Result<Vec<Arc<dyn LanguageSegmenter>>, String> {
         Ok(self
             .providers
             .read()
@@ -1853,75 +1952,138 @@ impl SegmentationRegistry {
             .clone())
     }
 
-    pub fn provider_capabilities(&self) -> Result<Vec<ProviderCapabilities>, String> {
-        Ok(self
-            .provider_snapshot()?
+    fn ensure_provider(
+        &self,
+        provider_id: &str,
+    ) -> Result<Option<Arc<dyn LanguageSegmenter>>, String> {
+        if let Some(provider) = self
+            .providers
+            .read()
+            .map_err(|_| "Language provider registry lock is poisoned.".to_string())?
             .iter()
-            .map(|provider| ProviderCapabilities {
-                schema_version: PROVIDER_CAPABILITY_SCHEMA_VERSION,
-                id: provider.id().to_owned(),
-                pattern: provider.pattern().to_owned(),
-                display_name: provider.display_name().to_owned(),
-                language_tag: provider.language_tag().to_owned(),
-                scripts: provider
-                    .scripts()
-                    .iter()
-                    .map(|script| (*script).to_owned())
-                    .collect(),
-                engine: provider.engine().to_owned(),
-                support_level: provider.support_level().to_owned(),
-                stability: provider.stability().to_owned(),
-                boundary_mode: provider.boundary_mode().to_owned(),
-                boundary_quality: provider.boundary_quality().to_owned(),
-                correction_quality: provider.correction_quality().to_owned(),
-                supports_spellcheck: provider.supports_spellcheck(),
-                supports_corrections: provider.supports_corrections(),
-                supports_completion: provider.supports_completion(),
-                supports_segmentation: provider.supports_segmentation(),
-                supports_custom_dictionary: provider.supports_custom_dictionary(),
-                has_editing_policy: provider.has_editing_policy(),
-                provider_type: provider.provider_type().to_owned(),
-                version: provider.version().to_owned(),
-                license: provider.license().to_owned(),
-            })
-            .collect())
+            .find(|provider| provider.id() == provider_id)
+            .cloned()
+        {
+            return Ok(Some(provider));
+        }
+
+        let mut providers = self
+            .providers
+            .write()
+            .map_err(|_| "Language provider registry lock is poisoned.".to_string())?;
+        if let Some(provider) = providers
+            .iter()
+            .find(|provider| provider.id() == provider_id)
+            .cloned()
+        {
+            return Ok(Some(provider));
+        }
+
+        let provider: Arc<dyn LanguageSegmenter> = match provider_id {
+            "khmer-segmenter" => Arc::new(KhmerProvider::new()?),
+            "hunspell:en_US" => Arc::new(EnglishHunspellProvider::new()?),
+            _ => {
+                let Some(locale) = provider_id.strip_prefix("hunspell:") else {
+                    return Ok(None);
+                };
+                let Some(spec) = find_hunspell_spec(locale) else {
+                    return Ok(None);
+                };
+                let data_dir = self
+                    .data_dir
+                    .read()
+                    .map_err(|_| "Language provider data-directory lock is poisoned.".to_string())?
+                    .clone()
+                    .ok_or_else(|| {
+                        "Language provider data directory has not been initialized.".to_string()
+                    })?;
+                let locale_dir = hunspell_install_root(&data_dir).join(spec.locale);
+                let aff_path = locale_dir.join(format!("{}.aff", spec.locale));
+                let dic_path = locale_dir.join(format!("{}.dic", spec.locale));
+                if !aff_path.exists() || !dic_path.exists() {
+                    return Ok(None);
+                }
+                let aff = std::fs::read_to_string(&aff_path)
+                    .map_err(|error| format!("Failed to read {}: {error}", aff_path.display()))?;
+                let dic = std::fs::read_to_string(&dic_path)
+                    .map_err(|error| format!("Failed to read {}: {error}", dic_path.display()))?;
+                Arc::new(GenericHunspellProvider::new(
+                    spec.locale,
+                    spec.display_name,
+                    spec.language_tag,
+                    spec.pattern,
+                    &aff,
+                    &dic,
+                    spec.version,
+                    spec.license,
+                )?)
+            }
+        };
+        validate_license(provider.id(), provider.license())?;
+        providers.push(provider.clone());
+        Ok(Some(provider))
     }
 
-    fn load_providers(data_dir: Option<&Path>) -> Result<Vec<Arc<dyn LanguageSegmenter>>, String> {
-        let mut providers: Vec<Arc<dyn LanguageSegmenter>> = vec![
-            Arc::new(KhmerProvider::new()?),
-            Arc::new(EnglishHunspellProvider::new()?),
+    pub fn provider_capabilities(&self) -> Result<Vec<ProviderCapabilities>, String> {
+        let mut capabilities = vec![
+            khmer_provider_capabilities(),
+            english_us_provider_capabilities(),
         ];
+        let data_dir = self
+            .data_dir
+            .read()
+            .map_err(|_| "Language provider data-directory lock is poisoned.".to_string())?
+            .clone();
         if let Some(data_dir) = data_dir {
-            for entry in installed_hunspell_providers(data_dir)? {
-                providers.push(Arc::new(entry));
-            }
+            capabilities.extend(
+                HUNSPELL_CATALOG
+                    .iter()
+                    .filter(|spec| is_hunspell_installed(&data_dir, spec.locale))
+                    .map(generic_hunspell_provider_capabilities),
+            );
         }
-        for provider in &providers {
-            validate_license(provider.id(), provider.license()).map_err(|e| e)?;
+        for provider in &capabilities {
+            validate_license(&provider.id, &provider.license)?;
         }
-        Ok(providers)
+        Ok(capabilities)
     }
 
     pub fn analyze_ranges(&self, request: AnalyzeRequest) -> Result<AnalyzeResponse, String> {
-        let providers = self.provider_snapshot()?;
         let mut candidates = Vec::<ProviderTokenCandidate>::new();
         let mut failures = Vec::<ProviderFailure>::new();
         let mut seen_failures = HashSet::<(String, usize, usize, String)>::new();
 
         for chunk in request.chunks {
             let byte_to_utf16 = byte_to_utf16_offsets(&chunk.text);
-            let selected_providers: Vec<_> = if let Some(provider_id) = chunk.provider.as_deref() {
-                let provider = providers
-                    .iter()
-                    .find(|provider| provider.id() == provider_id)
-                    .ok_or_else(|| {
+            let selected_providers: Vec<Arc<dyn LanguageSegmenter>> =
+                if let Some(provider_id) = chunk.provider.as_deref() {
+                    let provider = self.ensure_provider(provider_id)?.ok_or_else(|| {
                         format!("Unknown or unavailable routed language provider: {provider_id}")
                     })?;
-                vec![provider]
-            } else {
-                providers.iter().collect()
-            };
+                    vec![provider]
+                } else {
+                    let mut selected = self
+                        .loaded_provider_snapshot()?
+                        .into_iter()
+                        .filter(|provider| provider.supports(&chunk.text))
+                        .collect::<Vec<_>>();
+                    for capability in self
+                        .provider_capabilities()?
+                        .into_iter()
+                        .filter(|capability| capability_supports_text(capability, &chunk.text))
+                    {
+                        if selected
+                            .iter()
+                            .any(|provider| provider.id() == capability.id)
+                        {
+                            continue;
+                        }
+                        if let Some(provider) = self.ensure_provider(&capability.id)? {
+                            selected.push(provider);
+                        }
+                    }
+                    selected
+                };
             let spans = match chunk.content_mode {
                 AnalyzeContentMode::PlainText => vec![(0, chunk.text.len())],
                 AnalyzeContentMode::TypstSource => scan_typst_content(&chunk.text)
@@ -2009,6 +2171,20 @@ struct ProviderTokenCandidate {
     priority: u8,
     provider_id: String,
     token: EditorToken,
+}
+
+fn capability_supports_text(capability: &ProviderCapabilities, text: &str) -> bool {
+    match capability.id.as_str() {
+        "khmer-segmenter" => text
+            .chars()
+            .any(|character| ('\u{1780}'..='\u{17ff}').contains(&character)),
+        "hunspell:en_US" => text
+            .chars()
+            .any(|character| character.is_ascii_alphabetic()),
+        _ => text
+            .chars()
+            .any(|character| character_matches_language_tag(character, &capability.language_tag)),
+    }
 }
 
 fn provider_priority(provider: &dyn LanguageSegmenter) -> u8 {
@@ -2311,9 +2487,9 @@ pub async fn language_suggestions(
     registry: tauri::State<'_, SegmentationRegistry>,
     request: SuggestionRequest,
 ) -> Result<SuggestionResponse, String> {
-    let providers = registry.provider_snapshot()?;
+    let registry = registry.inner().clone();
     tokio::task::spawn_blocking(move || {
-        let provider = providers.iter().find(|p| p.id() == request.provider);
+        let provider = registry.ensure_provider(&request.provider)?;
         let suggestions = if let Some(provider) = provider {
             if provider.supports_corrections() {
                 provider.suggestions(&request.word, request.limit.min(50))
@@ -2334,12 +2510,9 @@ pub async fn complete_language_word(
     registry: tauri::State<'_, SegmentationRegistry>,
     request: CompletionRequest,
 ) -> Result<Option<CompletionResponse>, String> {
-    let providers = registry.provider_snapshot()?;
+    let registry = registry.inner().clone();
     tokio::task::spawn_blocking(move || -> Result<Option<CompletionResponse>, String> {
-        let Some(provider) = providers
-            .iter()
-            .find(|provider| provider.id() == request.provider)
-        else {
+        let Some(provider) = registry.ensure_provider(&request.provider)? else {
             return Ok(None);
         };
         complete_with_provider(provider.as_ref(), &request)
@@ -2523,6 +2696,7 @@ mod tests {
         let source = "សាលារៀន ພາສາລາວ";
         let khmer_only = SegmentationRegistry {
             providers: Arc::new(RwLock::new(vec![khmer.clone()])),
+            data_dir: Arc::new(RwLock::new(None)),
         }
         .analyze_ranges(AnalyzeRequest {
             chunks: vec![AnalyzeChunk {
@@ -2535,6 +2709,7 @@ mod tests {
         .expect("Khmer-only analysis");
         let mixed = SegmentationRegistry {
             providers: Arc::new(RwLock::new(vec![khmer, lao])),
+            data_dir: Arc::new(RwLock::new(None)),
         }
         .analyze_ranges(AnalyzeRequest {
             chunks: vec![AnalyzeChunk {
@@ -3058,16 +3233,25 @@ mod tests {
                 Arc::new(KhmerProvider::new().unwrap()),
                 Arc::new(MockProvider),
             ])),
+            data_dir: Arc::new(RwLock::new(None)),
         };
 
         let response = registry
             .analyze_ranges(AnalyzeRequest {
-                chunks: vec![crate::segmentation::provider::AnalyzeChunk {
-                    text: "សាលារៀន hello invalidword".to_string(),
-                    start_utf16: 0,
-                    provider: None,
-                    content_mode: AnalyzeContentMode::TypstSource,
-                }],
+                chunks: vec![
+                    crate::segmentation::provider::AnalyzeChunk {
+                        text: "សាលារៀន hello invalidword".to_string(),
+                        start_utf16: 0,
+                        provider: Some("mock-provider".to_string()),
+                        content_mode: AnalyzeContentMode::TypstSource,
+                    },
+                    crate::segmentation::provider::AnalyzeChunk {
+                        text: "សាលារៀន hello invalidword".to_string(),
+                        start_utf16: 0,
+                        provider: Some("khmer-segmenter".to_string()),
+                        content_mode: AnalyzeContentMode::TypstSource,
+                    },
+                ],
             })
             .expect("analyze language ranges");
 
@@ -3106,6 +3290,7 @@ mod tests {
                 Arc::new(GreekMockProvider),
                 Arc::new(FailingProvider),
             ])),
+            data_dir: Arc::new(RwLock::new(None)),
         };
         let text = "😀 សាលារៀន hello κόσμος";
         let response = registry
@@ -3189,10 +3374,14 @@ mod tests {
     fn registry_bundles_english_by_default() {
         let registry = SegmentationRegistry::new().expect("registry");
         assert!(registry
-            .provider_snapshot()
-            .expect("provider snapshot")
+            .loaded_provider_snapshot()
+            .expect("loaded provider snapshot")
+            .is_empty());
+        assert!(registry
+            .provider_capabilities()
+            .expect("provider capabilities")
             .iter()
-            .any(|provider| provider.id() == "hunspell:en_US"));
+            .any(|provider| provider.id == "hunspell:en_US"));
         let response = registry
             .analyze_ranges(AnalyzeRequest {
                 chunks: vec![crate::segmentation::provider::AnalyzeChunk {
@@ -3209,6 +3398,85 @@ mod tests {
             .any(|token| token.provider == "hunspell:en_US"
                 && token.source_text == "wrld"
                 && !token.known));
+        assert_eq!(
+            registry
+                .loaded_provider_snapshot()
+                .expect("loaded provider snapshot")
+                .iter()
+                .map(|provider| provider.id())
+                .collect::<Vec<_>>(),
+            vec!["hunspell:en_US"]
+        );
+    }
+
+    #[test]
+    fn installed_provider_remains_unloaded_until_routed() {
+        let data_dir = tempfile::tempdir().expect("temporary data directory");
+        let locale_dir = hunspell_install_root(data_dir.path()).join("en_GB");
+        std::fs::create_dir_all(&locale_dir).expect("installed dictionary directory");
+        std::fs::write(locale_dir.join("en_GB.aff"), EN_US_AFF).expect("installed affix file");
+        std::fs::write(locale_dir.join("en_GB.dic"), EN_US_DIC).expect("installed dictionary file");
+
+        let registry =
+            SegmentationRegistry::new_with_data_dir(Some(data_dir.path())).expect("registry");
+        let capabilities = registry
+            .provider_capabilities()
+            .expect("provider capabilities");
+        let english_uk = capabilities
+            .iter()
+            .find(|provider| provider.id == "hunspell:en_GB")
+            .expect("English UK capabilities");
+        assert!(english_uk.supports_completion);
+        assert_eq!(english_uk.support_level, "enhanced");
+        assert!(registry
+            .loaded_provider_snapshot()
+            .expect("loaded provider snapshot")
+            .is_empty());
+
+        registry
+            .analyze_ranges(AnalyzeRequest {
+                chunks: vec![crate::segmentation::provider::AnalyzeChunk {
+                    text: "hello wrld".to_string(),
+                    start_utf16: 0,
+                    provider: Some("hunspell:en_GB".to_string()),
+                    content_mode: AnalyzeContentMode::PlainText,
+                }],
+            })
+            .expect("routed analysis");
+
+        assert_eq!(
+            registry
+                .loaded_provider_snapshot()
+                .expect("loaded provider snapshot")
+                .iter()
+                .map(|provider| provider.id())
+                .collect::<Vec<_>>(),
+            vec!["hunspell:en_GB"]
+        );
+
+        let provider = registry
+            .ensure_provider("hunspell:en_GB")
+            .expect("load English UK provider")
+            .expect("installed English UK provider");
+        let completion = complete_with_provider(
+            provider.as_ref(),
+            &CompletionRequest {
+                provider: "hunspell:en_GB".to_string(),
+                text: "hel".to_string(),
+                cursor_utf16: 3,
+                limit: 10,
+            },
+        )
+        .expect("English UK completion")
+        .expect("completion response");
+        assert!(
+            completion
+                .options
+                .iter()
+                .any(|word| word.to_lowercase().starts_with("hel")),
+            "expected an English completion for `hel`, got {:?}",
+            completion.options
+        );
     }
 
     #[test]
@@ -3286,6 +3554,14 @@ mod tests {
         assert!(fallback.supports_corrections);
         assert!(!fallback.supports_completion);
         assert!(!fallback.has_editing_policy);
+
+        let english_uk = catalog_entry(
+            None,
+            find_hunspell_spec("en_GB").expect("English UK catalog entry"),
+        );
+        assert_eq!(english_uk.support_level, "enhanced");
+        assert!(english_uk.supports_completion);
+        assert!(!english_uk.supports_segmentation);
     }
 
     #[test]
@@ -3355,9 +3631,12 @@ mod license_tests {
     /// This test fails fast if a new provider is registered without setting license().
     #[test]
     fn all_registered_providers_have_licenses() {
-        let providers = SegmentationRegistry::load_providers(None).expect("load_providers failed");
+        let providers = SegmentationRegistry::new()
+            .expect("registry")
+            .provider_capabilities()
+            .expect("provider capabilities");
         for provider in &providers {
-            validate_license(provider.id(), provider.license()).unwrap_or_else(|e| panic!("{}", e));
+            validate_license(&provider.id, &provider.license).unwrap_or_else(|e| panic!("{}", e));
         }
     }
 }

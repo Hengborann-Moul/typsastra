@@ -6039,7 +6039,7 @@ export class TypsastraWorkspaceController {
       );
       this.handleLanguageProvidersChanged(providers);
       this.performanceDiagnostics.recordFirst({
-        name: "startup.providers",
+        name: "startup.deferred-initialization",
         milliseconds: performance.now() - startedAt,
         detail: { providerCount: this.spellcheckController.getAllProviders().length }
       });

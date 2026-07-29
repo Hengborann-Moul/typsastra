@@ -1161,7 +1161,7 @@ async fn finish_startup_initialization(
         registry.reload_installed(&data_dir)?;
         timings.record(
             "deferred startup",
-            "load language providers",
+            "initialize language provider catalog",
             provider_reload_start,
         );
 

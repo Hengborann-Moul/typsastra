@@ -149,6 +149,9 @@ pub struct ProviderCapabilities {
     pub license: String,
 }
 
+// Runtime providers retain their descriptive contract even though the startup
+// catalog now publishes equivalent metadata without constructing the engines.
+#[allow(dead_code)]
 pub trait LanguageSegmenter: Send + Sync {
     fn id(&self) -> &'static str;
     fn display_name(&self) -> &'static str {
