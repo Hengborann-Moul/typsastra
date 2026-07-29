@@ -2764,6 +2764,11 @@ body.typsastra-resizing #input-container-wrapper::after {
   display: none;
 }
 
+#status-bar.welcome-screen-active > #settings-status-button {
+  display: inline-flex;
+  margin-left: auto;
+}
+
 .status-item {
   display: inline-flex;
   align-items: center;

@@ -225,16 +225,14 @@ export class SettingsController {
     });
     document.getElementById("settings-preview-render-mode")?.addEventListener("change", event => {
       const control = event.currentTarget as HTMLSelectElement;
-      const mode: PreviewRenderMode = control.value === "on-type" ? "on-type" : "on-save";
-      if (this.workspacePreviewRenderMode !== null) {
-        this.workspacePreviewRenderMode = mode;
-        this.updateWorkspacePreviewRenderMode(mode);
+      if (this.workspacePreviewRenderMode === null) {
         this.populatePanel();
         return;
       }
-      this.update(settings => {
-        settings.preview.renderMode = mode;
-      });
+      const mode: PreviewRenderMode = control.value === "on-type" ? "on-type" : "on-save";
+      this.workspacePreviewRenderMode = mode;
+      this.updateWorkspacePreviewRenderMode(mode);
+      this.populatePanel();
     });
     onChange("settings-cursor-sync", (settings, control) => { settings.preview.cursorSync = (control as HTMLInputElement).checked; });
     onChange("settings-sync-debounce", (settings, control) => { settings.preview.syncDebounceMs = Number(control.value); });
@@ -360,13 +358,12 @@ export class SettingsController {
     const previewRenderMode = document.getElementById("settings-preview-render-mode") as HTMLSelectElement | null;
     if (previewRenderMode) {
       previewRenderMode.value = effectivePreviewRenderMode;
-      previewRenderMode.disabled = false;
-      const scope = this.workspacePreviewRenderMode === null
-        ? "This is the default for projects without a saved preference."
-        : "This preference is stored in the current project.";
-      previewRenderMode.title = effectivePreviewRenderMode === "on-type"
-        ? `Update the PDF preview after typing pauses. ${scope}`
-        : `Update the PDF preview after saving. ${scope}`;
+      previewRenderMode.disabled = this.workspacePreviewRenderMode === null;
+      previewRenderMode.title = this.workspacePreviewRenderMode === null
+        ? "Open a project to configure its preview render mode."
+        : effectivePreviewRenderMode === "on-type"
+          ? "Update the PDF preview after typing pauses. This preference is stored in the current project."
+          : "Update the PDF preview after saving. This preference is stored in the current project.";
     }
     const previewDebounce = document.getElementById("settings-sync-debounce") as HTMLInputElement | null;
     if (previewDebounce) {

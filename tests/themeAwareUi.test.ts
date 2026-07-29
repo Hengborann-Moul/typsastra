@@ -8,6 +8,7 @@ const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const editorExtensions = readFileSync(new URL("../src/editor/extensions.ts", import.meta.url), "utf8");
 const editorThemes = readFileSync(new URL("../src/editor/themes.ts", import.meta.url), "utf8");
 const icons = readFileSync(new URL("../src/ui/icons.ts", import.meta.url), "utf8");
+const settingsController = readFileSync(new URL("../src/settingsController.ts", import.meta.url), "utf8");
 
 describe("theme-aware application accents", () => {
   test("uses the shared UI typography for log-console actions", async () => {
@@ -23,6 +24,21 @@ describe("theme-aware application accents", () => {
     expect(controller).toContain("preview-disabled-title preview-accent-title");
     expect(controller).not.toContain("color:#3db489");
     expect(style).toMatch(/\.preview-disabled-title\.preview-accent-title\s*\{[^}]*var\(--ui-accent-color\)/s);
+  });
+
+  test("shows only Settings in the welcome status bar and scopes render mode to projects", () => {
+    expect(style).toMatch(
+      /#status-bar\.welcome-screen-active > \*\s*\{[^}]*display:\s*none;[^}]*\}/s
+    );
+    expect(style).toMatch(
+      /#status-bar\.welcome-screen-active > #settings-status-button\s*\{[^}]*display:\s*inline-flex;[^}]*\}/s
+    );
+    expect(settingsController).toContain(
+      "previewRenderMode.disabled = this.workspacePreviewRenderMode === null"
+    );
+    expect(settingsController).toContain(
+      "Open a project to configure its preview render mode."
+    );
   });
 
   test("uses shared accent variables for application controls", () => {

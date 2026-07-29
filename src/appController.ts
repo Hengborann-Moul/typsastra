@@ -8605,6 +8605,7 @@ export class TypsastraWorkspaceController {
     this.previewSyncController.clearForward();
     this.clearDiagnostics();
     this.logConsoleController.clearAllLogs();
+    this.logConsoleController.setVisible(false);
 
     this.isLoadingFile = true;
     try {

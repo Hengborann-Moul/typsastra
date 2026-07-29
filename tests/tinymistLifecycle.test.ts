@@ -93,10 +93,13 @@ describe("Tinymist workspace lifecycle", () => {
     const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
     const closeProject = source.indexOf("private async closeProject");
     const closeClear = source.indexOf("this.logConsoleController.clearAllLogs();", closeProject);
+    const closeConsole = source.indexOf("this.logConsoleController.setVisible(false);", closeProject);
     const manualRestart = source.indexOf('document.getElementById("action-restart-lsp")');
     const restartClear = source.indexOf("this.logConsoleController.clearAllLogs();", manualRestart);
     const restartCall = source.indexOf('restartTinymistSession("Restarting LSP..."', manualRestart);
     expect(closeClear).toBeGreaterThan(closeProject);
+    expect(closeConsole).toBeGreaterThan(closeClear);
+    expect(closeConsole).toBeLessThan(manualRestart);
     expect(restartClear).toBeGreaterThan(manualRestart);
     expect(restartClear).toBeLessThan(restartCall);
   });
