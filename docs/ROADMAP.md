@@ -140,7 +140,9 @@ competition remain out of scope. Unfinished productivity tools must move to a
 later update rather than block Draft Preview, font management, resource
 workflows, portable preview scopes, RTL work, or v1.0 stability.
 
-## v0.6.0 — draft preview and font management
+## v0.6.0 — draft preview and font management (released)
+
+Released July 29, 2026.
 
 Make image-heavy authoring more responsive and make private font dependencies
 manageable without changing the portable Typst source model.
@@ -162,9 +164,6 @@ manageable without changing the portable Typst source model.
   See the [Draft Preview implementation plan](V0_6_0_DRAFT_PREVIEW_IMPLEMENTATION_PLAN.md).
 - Preserve and clearly communicate the last successful preview across normal
   and draft-preview compilation failures.
-- Add advanced management for the private global scaled-font cache: inspect
-  variants by face, scale, disk usage, and last use; delete selected or unused
-  variants; and renew stale variants under explicit user control.
 - Add private local font folders to Document Typography for fonts that users
   do not want to install system-wide. Store absolute paths only in global,
   machine-local application settings, show each font's origin, reject
@@ -172,12 +171,9 @@ manageable without changing the portable Typst source model.
   the same paths to diagnostics, preview, source mapping, and PDF export.
   Never copy, archive, redistribute, or write these font binaries into the
   project.
-- Add font-dependency health reporting for missing, moved, ambiguous, and
-  unavailable system/private fonts without silently substituting or installing
-  a replacement.
-- Publish Draft Preview and font-management qualification results covering
-  compilation latency, memory bounds, hover overlays, cache operations,
-  private-font discovery, toolchain restarts, and cross-platform behavior.
+- Publish Draft Preview qualification results covering compilation latency,
+  hover overlays, cache behavior, and known layout and retained-memory
+  limitations.
 
 ## v0.7.0 — resource-aware authoring and secondary previews
 
@@ -206,6 +202,12 @@ weakening project portability or silently modifying source assets.
   the existing PDF session when switching tabs.
 - Add a toolchain health panel showing active Typst/Tinymist versions,
   provenance, validation state, download status, and recovery actions.
+- Add advanced management for the private global scaled-font cache: inspect
+  variants by face, scale, disk usage, and last use; delete selected or unused
+  variants; and renew stale variants under explicit user control.
+- Add font-dependency health reporting for missing, moved, ambiguous, and
+  unavailable system/private fonts without silently substituting or installing
+  a replacement.
 - Publish resource-workflow benchmarks for image inspection/optimization,
   language configuration, toolchain health, and Markdown preview.
 
@@ -322,7 +324,7 @@ The long-term research tasks and gates are in the [v2 implementation plan](./V2_
 
 ## Current release status
 
-Typsastra is beta software. The latest release is v0.5.3; see the
-[release notes](./RELEASE_NOTES_V0.5.3.md). Planned development continues with
-v0.6.0 Draft Preview and font management, v0.7.0 resource-aware authoring,
-v0.8.0 portable preview scopes, and v0.9.0 prerelease RTL hardening.
+Typsastra is beta software. The latest release is v0.6.0; see the
+[release notes](./RELEASE_NOTES_V0.6.0.md). Planned development continues with
+v0.7.0 resource-aware authoring, v0.8.0 portable preview scopes, and v0.9.0
+prerelease RTL hardening.

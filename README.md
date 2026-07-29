@@ -14,7 +14,7 @@ Available packages:
 - Linux: `.AppImage` and `.deb`
 - macOS: experimental, unsigned and unnotarized build
 
-Typsastra is currently beta software. The latest release is v0.5.3.
+Typsastra is currently beta software. The latest release is v0.6.0.
 
 Typsastra is an open-source project and does not plan to purchase Apple
 Developer ID signing or notarization. On macOS, Gatekeeper may therefore report
@@ -59,7 +59,7 @@ https://github.com/user-attachments/assets/b1c45806-8747-4180-8e52-dbe8222f82db
 
 ### Document typography and language tools
 
-Assign fonts and language providers by writing script from one document-focused interface. Typsastra keeps the resulting Typst source explicit while separating document typography from editor spellcheck and word completion.
+Assign fonts and language providers by writing script from one document-focused interface. Spellcheck and word completion are enabled through Document Typography, allowing different files in the same project to use different language tools while keeping the resulting Typst source explicit.
 
 
 
@@ -69,7 +69,7 @@ https://github.com/user-attachments/assets/f58e3133-e900-4a4b-9c63-7dee587b7e90
 
 ### Source and document navigation
 
-Manual forward sync reveals the current source location in the preview without animating through a long document. Outline navigation uses the same document relationship while keeping keyboard focus predictable.
+Press `Alt+Enter` to trigger forward sync manually and reveal the current source location in the preview without animating through a long document. Outline navigation uses the same document relationship while keeping keyboard focus predictable.
 
 
 
@@ -77,7 +77,7 @@ https://github.com/user-attachments/assets/c3e44128-9e7b-49ff-aec2-3965de3572e1
 
 
 
-Inverse sync and clickable references make it possible to move from rendered content back to its source, or follow internal and external document links directly in the preview.
+Inverse sync and clickable references make it possible to move from rendered content back to its source, or follow internal and external document links directly in the preview. Hold `Ctrl` on Windows and Linux, or `Command` on macOS, while the pointer is inside the preview to reveal clickable references.
 
 
 
@@ -91,6 +91,21 @@ https://github.com/user-attachments/assets/56add64e-5d10-47fc-8b0a-30ce1388c46f
 ### Image optimization guidance
 
 Typsastra profiles referenced raster images and reports unusually expensive assets without modifying them. Editor-gutter and preview-toolbar warnings help authors find images that may slow compilation or enlarge exported PDFs.
+
+In this context, a high-resolution or pathological image is one whose decoded
+pixel workload is disproportionately large for the size at which it appears in
+the document. A compressed image may occupy only a few megabytes on disk while
+expanding to hundreds of megabytes in memory, especially when a very large
+photograph is scaled down to a small figure. These images can slow Typst
+compilation, increase Tinymist memory usage in image-heavy documents, and slow
+PDF loading, page rendering, and repeated live-preview updates.
+
+Typsastra focuses on optimized document creation. Its current recommendations
+identify expensive images and explain whether downscaling or re-encoding may
+help, without changing the source asset automatically. Future releases will
+add more non-destructive guidance and explicit optimization tools so authors
+can improve preview and exported-PDF performance while retaining control over
+image quality and project files.
 
 
 
@@ -227,7 +242,7 @@ Typsastra downloads and manages Tinymist for preview and diagnostics. A separate
 - [PDF preview and source synchronization](./docs/tutorials/PDF_PREVIEW_AND_SYNC.md)
 - [Roadmap](./docs/ROADMAP.md)
 - [Troubleshooting](./docs/TROUBLESHOOTING.md)
-- [Typsastra v0.5.3 release notes](./docs/RELEASE_NOTES_V0.5.3.md)
+- [Typsastra v0.6.0 release notes](./docs/RELEASE_NOTES_V0.6.0.md)
 
 ## Contributing a language
 
