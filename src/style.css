@@ -1247,6 +1247,10 @@ body.typsastra-resizing #input-container-wrapper::after {
   height: min(620px, calc(100vh - 48px));
 }
 
+.recent-projects-dialog .settings-header h2 {
+  font-weight: 400;
+}
+
 .recent-projects-content {
   display: flex;
   flex: 1;
@@ -1329,7 +1333,7 @@ body.typsastra-resizing #input-container-wrapper::after {
   overflow: hidden;
   color: var(--ui-text);
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 400;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

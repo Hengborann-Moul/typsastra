@@ -482,6 +482,8 @@ export class TypsastraWorkspaceController {
   private latestDocumentVersion = 1;
   private diagnosticWaitStartedAt: number | null = null;
   private openTabs: EditorTab[] = [];
+  private readonly detectedPlainTextPaths = new Set<string>();
+  private readonly classifiedUnknownPaths = new Set<string>();
   private suppressFoldStatePersistence = false;
   private documentOutlineUpdateTimer: number | null = null;
   private documentOutlineUpdateGeneration = 0;
@@ -1642,7 +1644,7 @@ export class TypsastraWorkspaceController {
     this.flushEditorContentMutation();
     const tab = this.getActiveTab();
     if (!tab || !tab.contentLoaded || !this.editorInstance) return;
-    if (!isSupportedInAppPath(tab.path) || isBinaryImagePath(tab.path) || fileExtension(tab.path) === "pdf") return;
+    if (!this.isInternallySupportedPath(tab.path) || isBinaryImagePath(tab.path) || fileExtension(tab.path) === "pdf") return;
 
     const content = this.activeMode === "WYSIWYM"
       ? this.mapWysiwymToMarkup()
@@ -1742,7 +1744,7 @@ export class TypsastraWorkspaceController {
   }
 
   private foldCurrentFile(): void {
-    if (!this.getActiveTab() || !isSupportedInAppPath(this.activeFilePath ?? "") || isBinaryImagePath(this.activeFilePath ?? "") || fileExtension(this.activeFilePath ?? "") === "pdf") return;
+    if (!this.getActiveTab() || !this.isInternallySupportedPath(this.activeFilePath ?? "") || isBinaryImagePath(this.activeFilePath ?? "") || fileExtension(this.activeFilePath ?? "") === "pdf") return;
     const tab = this.getActiveTab();
     if (tab) tab.foldStateExplicit = true;
     foldAll(this.editorInstance);
@@ -1750,7 +1752,7 @@ export class TypsastraWorkspaceController {
   }
 
   private unfoldCurrentFile(): void {
-    if (!this.getActiveTab() || !isSupportedInAppPath(this.activeFilePath ?? "") || isBinaryImagePath(this.activeFilePath ?? "") || fileExtension(this.activeFilePath ?? "") === "pdf") return;
+    if (!this.getActiveTab() || !this.isInternallySupportedPath(this.activeFilePath ?? "") || isBinaryImagePath(this.activeFilePath ?? "") || fileExtension(this.activeFilePath ?? "") === "pdf") return;
     const tab = this.getActiveTab();
     if (tab) tab.foldStateExplicit = true;
     unfoldAll(this.editorInstance);
@@ -2066,7 +2068,7 @@ export class TypsastraWorkspaceController {
       }
     }
     const sizeNotice = largeFileOpeningNotice(tab.path, tab.sizeBytes);
-    if (sizeNotice?.kind === "pdf" || fileExtension(tab.path) === "pdf" || isBinaryImagePath(tab.path) || !isSupportedInAppPath(tab.path)) {
+    if (sizeNotice?.kind === "pdf" || fileExtension(tab.path) === "pdf" || isBinaryImagePath(tab.path) || !this.isInternallySupportedPath(tab.path)) {
       return sizeNotice;
     }
     if (!sizeNotice && tab.lineCount === undefined) {
@@ -2513,6 +2515,23 @@ export class TypsastraWorkspaceController {
       : this.normalizeFoldRanges(tab.foldRanges, contents.length);
   }
 
+  private isInternallySupportedPath(path: string): boolean {
+    return isSupportedInAppPath(path) || this.detectedPlainTextPaths.has(filePathKey(path));
+  }
+
+  private async classifyUnknownTextPath(path: string): Promise<boolean> {
+    if (isSupportedInAppPath(path)) return true;
+    const key = filePathKey(path);
+    if (this.classifiedUnknownPaths.has(key)) {
+      return this.detectedPlainTextPaths.has(key);
+    }
+    const isPlainText = await invoke<boolean>("is_probably_plain_text_file", { path })
+      .catch(() => false);
+    this.classifiedUnknownPaths.add(key);
+    if (isPlainText) this.detectedPlainTextPaths.add(key);
+    return isPlainText;
+  }
+
   private async activateEditorTab(path: string, persistCurrent = true, options: ActivateEditorTabOptions = {}) {
     this.explorer.setActiveFile(path);
     if (this.workspaceRootPath) {
@@ -2523,6 +2542,12 @@ export class TypsastraWorkspaceController {
     }
     const tab = this.openTabs.find((candidate) => filePathKey(candidate.path) === filePathKey(path));
     const sameActivePath = this.activeFilePath !== null && filePathKey(this.activeFilePath) === filePathKey(path);
+    if (tab && !isSupportedInAppPath(tab.path) && await this.classifyUnknownTextPath(tab.path)) {
+      // Restored unknown tabs begin as lightweight external-file descriptors.
+      // Once their content is identified as text, defer loading it through the
+      // same large-file guard and text-editor path as a known text extension.
+      if (!tab.content && !tab.savedContent) tab.contentLoaded = false;
+    }
     if (tab && !tab.contentLoaded) {
       const notice = await this.largeFileNoticeForTab(tab);
       if (notice && !options.largeFileConfirmed) {
@@ -2534,7 +2559,7 @@ export class TypsastraWorkspaceController {
     }
     this.clearGuardrailAlignment();
     const activeEditorMatchesTab = tab !== undefined && (
-      !isSupportedInAppPath(tab.path) ||
+      !this.isInternallySupportedPath(tab.path) ||
       isBinaryImagePath(tab.path) ||
       fileExtension(tab.path) === "pdf" ||
       this.editorInstance.state.doc.toString() === tab.content
@@ -2586,7 +2611,7 @@ export class TypsastraWorkspaceController {
       const imageViewerPane = document.getElementById("image-viewer-pane");
       const imageViewerImg = document.getElementById("image-viewer-img") as HTMLImageElement;
 
-      const unsupportedFile = !isSupportedInAppPath(path);
+      const unsupportedFile = !this.isInternallySupportedPath(path);
       const isPdf = fileExtension(path) === "pdf";
       if (unsupportedFile || isBinaryImagePath(path) || isPdf) {
         codeRenderPane?.classList.add("hidden");
@@ -3077,8 +3102,8 @@ export class TypsastraWorkspaceController {
     }
 
     try {
-      const deferredContent = isSupportedInAppPath(path)
-        && !isBinaryImagePath(path);
+      const internallySupported = await this.classifyUnknownTextPath(path);
+      const deferredContent = internallySupported && !isBinaryImagePath(path);
       const contents = isBinaryImagePath(path)
         ? await invoke<string>("read_workspace_file_as_base64", { path })
         : "";
@@ -3137,7 +3162,7 @@ export class TypsastraWorkspaceController {
   }
 
   private async saveActiveFileAs(): Promise<void> {
-    if (!this.activeFilePath || !isSupportedInAppPath(this.activeFilePath) || isBinaryImagePath(this.activeFilePath) || fileExtension(this.activeFilePath) === "pdf") {
+    if (!this.activeFilePath || !this.isInternallySupportedPath(this.activeFilePath) || isBinaryImagePath(this.activeFilePath) || fileExtension(this.activeFilePath) === "pdf") {
       return;
     }
 
@@ -3247,7 +3272,7 @@ export class TypsastraWorkspaceController {
   }
 
   private async performSaveActiveFile(): Promise<void> {
-    if (!this.activeFilePath || !isSupportedInAppPath(this.activeFilePath) || isBinaryImagePath(this.activeFilePath) || fileExtension(this.activeFilePath) === "pdf") {
+    if (!this.activeFilePath || !this.isInternallySupportedPath(this.activeFilePath) || isBinaryImagePath(this.activeFilePath) || fileExtension(this.activeFilePath) === "pdf") {
       return;
     }
 
@@ -5913,7 +5938,7 @@ export class TypsastraWorkspaceController {
     const ext = fileExtension(path);
     const isImage = isBinaryImagePath(path);
     const isPdf = ext === "pdf";
-    const isUnsupported = !isSupportedInAppPath(path);
+    const isUnsupported = !this.isInternallySupportedPath(path);
 
     if (isUnsupported && !isImage && !isPdf) {
       previewActions.classList.add("hidden");
@@ -7069,7 +7094,7 @@ export class TypsastraWorkspaceController {
 
       // Unsupported files are represented by a lightweight editor placeholder
       // and are never decoded or synchronized as text.
-      if (!isSupportedInAppPath(tab.path)) continue;
+      if (!this.isInternallySupportedPath(tab.path)) continue;
       // Restored inactive tabs are descriptors only. Reading them here would
       // defeat lazy restoration and can eagerly decode very large PDFs.
       if (!tab.contentLoaded) {
@@ -7608,7 +7633,7 @@ export class TypsastraWorkspaceController {
     if (!this.activeFilePath) return;
     const path = this.activeFilePath;
     const ext = fileExtension(path);
-    const unsupportedFile = !isSupportedInAppPath(path);
+    const unsupportedFile = !this.isInternallySupportedPath(path);
     const isPdf = ext === "pdf";
 
     this.imageZoomIn = null;

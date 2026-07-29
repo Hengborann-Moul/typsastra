@@ -616,6 +616,61 @@ fn read_workspace_file(path: String) -> Result<String, String> {
     std::fs::read_to_string(&path).map_err(|e| format!("Failed to read file: {}", e))
 }
 
+fn is_probably_plain_text_bytes(bytes: &[u8]) -> bool {
+    if bytes.is_empty() {
+        return true;
+    }
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return false;
+    };
+    if text.contains('\0') {
+        return false;
+    }
+    let disallowed_controls = text
+        .chars()
+        .filter(|character| {
+            character.is_control() && !matches!(*character, '\n' | '\r' | '\t' | '\u{000C}')
+        })
+        .count();
+    disallowed_controls <= (text.chars().count() / 100).max(1)
+}
+
+#[tauri::command]
+fn is_probably_plain_text_file(path: String) -> Result<bool, String> {
+    use std::io::Read;
+
+    const PROBE_BYTES: u64 = 64 * 1024;
+    let file =
+        std::fs::File::open(&path).map_err(|error| format!("Failed to inspect file: {error}"))?;
+    let mut bytes = Vec::with_capacity(PROBE_BYTES as usize);
+    file.take(PROBE_BYTES)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("Failed to inspect file: {error}"))?;
+    Ok(is_probably_plain_text_bytes(&bytes))
+}
+
+#[cfg(test)]
+mod plain_text_detection_tests {
+    use super::is_probably_plain_text_bytes;
+
+    #[test]
+    fn accepts_utf8_source_text_and_empty_files() {
+        assert!(is_probably_plain_text_bytes(
+            b"function y = example(x)\n  y = x + 1;\nend\n"
+        ));
+        assert!(is_probably_plain_text_bytes("កំណត់សម្គាល់\n".as_bytes()));
+        assert!(is_probably_plain_text_bytes(b""));
+    }
+
+    #[test]
+    fn rejects_binary_and_invalid_utf8_data() {
+        assert!(!is_probably_plain_text_bytes(b"text\0with\0nulls"));
+        assert!(!is_probably_plain_text_bytes(&[
+            0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+        ]));
+    }
+}
+
 #[tauri::command]
 fn read_binary_file(path: String) -> Result<tauri::ipc::Response, String> {
     // `canonicalize` retains Windows' extended-length prefix, allowing Draft
@@ -3536,6 +3591,7 @@ pub fn run() {
             compile_typst_document,
             check_typst_document,
             read_workspace_file,
+            is_probably_plain_text_file,
             read_binary_file,
             read_workspace_text_prefix,
             workspace_file_size,

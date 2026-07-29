@@ -22,6 +22,13 @@ describe("file types", () => {
     expect(isSupportedInAppPath("/docs/no-extension")).toBe(false);
   });
 
+  test("probes unknown extensions before falling back to external opening", async () => {
+    const controller = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
+    expect(controller).toContain('invoke<boolean>("is_probably_plain_text_file", { path })');
+    expect(controller).toContain("this.detectedPlainTextPaths.add(key)");
+    expect(controller).toContain("languageCompartment.reconfigure(isTypstDocument ? typstLanguage : [])");
+  });
+
   test("extracts only a file-name extension", () => {
     expect(fileExtension("C:\\folder.with.dot\\main.typ")).toBe("typ");
   });
