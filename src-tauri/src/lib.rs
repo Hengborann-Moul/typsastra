@@ -3028,6 +3028,7 @@ fn preview_ws_origin(target_port: u16) -> String {
 }
 
 const PREVIEW_WS_MAX_UPSTREAM_MESSAGE_BYTES: usize = 256 << 20;
+const PREVIEW_WS_PROXY_READY_FRAME: &[u8] = b"proxy-ready,";
 const PREVIEW_WS_SOURCE_MAP_READY_FRAME: &[u8] = b"source-map-ready,";
 
 fn preview_ws_upstream_config() -> WebSocketConfig {
@@ -3158,6 +3159,21 @@ async fn start_preview_ws_proxy(target_url: String) -> Result<String, String> {
 
         let (mut client_write, mut client_read) = client_ws.split();
         let (mut server_write, mut server_read) = server_ws.split();
+        // The downstream WebView socket becomes OPEN before this bridge has
+        // necessarily completed its upstream Tinymist handshake. A warm-up
+        // command sent during that gap can produce the only source-map update
+        // before the bridge is subscribed. Explicitly acknowledge the
+        // completed upstream connection so the frontend can serialize the
+        // first source lookup behind it.
+        if let Err(error) = client_write
+            .send(WsMessage::Binary(
+                PREVIEW_WS_PROXY_READY_FRAME.to_vec().into(),
+            ))
+            .await
+        {
+            report_preview_ws_proxy_error("proxy-ready", error);
+            return;
+        }
         let client_to_server = async {
             while let Some(message) = client_read.next().await {
                 server_write.send(message?).await?;
@@ -3216,7 +3232,7 @@ async fn start_preview_ws_proxy(target_url: String) -> Result<String, String> {
 mod preview_ws_proxy_tests {
     use super::{
         is_tinymist_vector_document_message, parse_loopback_url, preview_ws_origin,
-        start_preview_ws_proxy, PREVIEW_WS_SOURCE_MAP_READY_FRAME,
+        start_preview_ws_proxy, PREVIEW_WS_PROXY_READY_FRAME, PREVIEW_WS_SOURCE_MAP_READY_FRAME,
     };
     use futures_util::{SinkExt, StreamExt};
     use std::sync::{Arc, Mutex};
@@ -3294,6 +3310,12 @@ mod preview_ws_proxy_tests {
             .await
             .unwrap();
         let (mut client, _) = connect_async(proxy_url).await.unwrap();
+        let proxy_ready = tokio::time::timeout(std::time::Duration::from_secs(5), client.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(proxy_ready.into_data(), PREVIEW_WS_PROXY_READY_FRAME);
         client.send(Message::Text("current".into())).await.unwrap();
         let frame = tokio::time::timeout(std::time::Duration::from_secs(5), client.next())
             .await
@@ -3339,6 +3361,12 @@ mod preview_ws_proxy_tests {
             .await
             .unwrap();
         let (mut client, _) = connect_async(proxy_url).await.unwrap();
+        let proxy_ready = tokio::time::timeout(std::time::Duration::from_secs(10), client.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(proxy_ready.into_data(), PREVIEW_WS_PROXY_READY_FRAME);
         let ready = tokio::time::timeout(std::time::Duration::from_secs(10), client.next())
             .await
             .unwrap()

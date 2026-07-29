@@ -25,12 +25,14 @@ describe("Tinymist preview data plane", () => {
   test("classifies source-map and unknown frames without decoding document payloads", async () => {
     expect(await tinymistDataPlaneFrameKind(bytes("jump,3 56.69 98.25"))).toBe("position");
     expect(await tinymistDataPlaneFrameKind("viewport,2 10 20")).toBe("position");
+    expect(await tinymistDataPlaneFrameKind(bytes("proxy-ready,"))).toBe("transport");
     expect(await tinymistDataPlaneFrameKind(bytes("outline,payload"))).toBe("unknown");
   });
 
   test("accepts either a document update or resolved position as source-map readiness", () => {
     expect(tinymistDataPlaneFrameConfirmsSourceMap("document")).toBeTrue();
     expect(tinymistDataPlaneFrameConfirmsSourceMap("position")).toBeTrue();
+    expect(tinymistDataPlaneFrameConfirmsSourceMap("transport")).toBeFalse();
     expect(tinymistDataPlaneFrameConfirmsSourceMap("unknown")).toBeFalse();
   });
 });

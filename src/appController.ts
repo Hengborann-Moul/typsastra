@@ -5686,20 +5686,28 @@ export class TypsastraWorkspaceController {
         finish(null);
       }, 10000);
       socket.addEventListener("open", () => {
-        this.pdfSyncSocket = socket;
         this.appendDeveloperLog({
           kind: "info",
           source,
-          message: `Tinymist source-map data plane connected without requesting a vector document snapshot: ${url}.`
+          message: `Source-map bridge connected locally; waiting for its Tinymist upstream: ${url}.`
         });
-        // Typsastra renders the compiled PDF itself and consumes only Tinymist's
-        // jump/viewport source-map frames. Requesting `current` here forces the
-        // hidden preview task to serialize the entire vector document, which can
-        // block the first source lookup for very long documents.
-        finish(socket);
       }, { once: true });
       socket.addEventListener("message", event => {
         void this.handlePdfSyncSocketMessage(event.data, socket);
+        void tinymistDataPlaneFrameKind(event.data).then(frameKind => {
+          if (frameKind !== "transport" || this.pdfSyncSocketUrl !== url) return;
+          this.pdfSyncSocket = socket;
+          this.appendDeveloperLog({
+            kind: "info",
+            source,
+            message: `Tinymist source-map data plane connected without requesting a vector document snapshot: ${url}.`
+          });
+          // Typsastra renders the compiled PDF itself and consumes only
+          // Tinymist's jump/viewport source-map frames. The native bridge sends
+          // this transport acknowledgement only after its upstream handshake,
+          // so the first warm-up lookup cannot race ahead of the subscription.
+          finish(socket);
+        });
       });
       socket.addEventListener("close", () => {
         if (this.pdfSyncSocket === socket) {

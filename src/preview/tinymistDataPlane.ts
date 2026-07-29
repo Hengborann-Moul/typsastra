@@ -1,8 +1,9 @@
 const decoder = new TextDecoder();
 const positionFrameKinds = new Set(["jump", "viewport"]);
 const documentFrameKinds = new Set(["new", "diff-v1", "source-map-ready"]);
+const transportFrameKinds = new Set(["proxy-ready"]);
 
-export type TinymistDataPlaneFrameKind = "position" | "document" | "unknown";
+export type TinymistDataPlaneFrameKind = "position" | "document" | "transport" | "unknown";
 
 export function tinymistDataPlaneFrameConfirmsSourceMap(
   kind: TinymistDataPlaneFrameKind
@@ -15,6 +16,7 @@ function protocolKindFromBytes(bytes: Uint8Array): TinymistDataPlaneFrameKind {
   if (comma < 0) return "unknown";
   const kind = decoder.decode(bytes.subarray(0, comma));
   if (documentFrameKinds.has(kind)) return "document";
+  if (transportFrameKinds.has(kind)) return "transport";
   return positionFrameKinds.has(kind) ? "position" : "unknown";
 }
 
@@ -28,6 +30,7 @@ export async function tinymistDataPlaneFrameKind(data: unknown): Promise<Tinymis
     if (comma < 0) return "unknown";
     const kind = data.slice(0, comma);
     if (documentFrameKinds.has(kind)) return "document";
+    if (transportFrameKinds.has(kind)) return "transport";
     return positionFrameKinds.has(kind) ? "position" : "unknown";
   }
   if (data instanceof ArrayBuffer) return protocolKindFromBytes(new Uint8Array(data));
