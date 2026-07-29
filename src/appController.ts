@@ -2413,7 +2413,10 @@ export class TypsastraWorkspaceController {
     if (renderMode === "on-type") {
       actions.push({ id: "switch-on-save", label: "Use On Save", primary: true });
     }
-    if (this.previewContentMode !== "draft") {
+    // AppDialogController supports at most three actions. In Normal + On Type
+    // mode, prefer the less disruptive render-on-save recommendation; the
+    // toolbar toggle remains available for switching to Draft Preview.
+    if (this.previewContentMode !== "draft" && actions.length < 3) {
       actions.push({ id: "use-draft", label: "Use Draft Preview", primary: renderMode !== "on-type" });
     }
     const action = await this.appDialogController.show({
