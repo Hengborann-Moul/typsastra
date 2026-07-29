@@ -35,23 +35,58 @@ Do not disable Gatekeeper globally.
 
 Typsastra is a local-first writing environment for Typst, designed for research papers, technical documentation, theses, books, and other long-form documents.
 
+Typsastra (pronounced “tip-SAS-tra”) began with a relatively focused goal: make writing complex scripts easier and more natural in a Typst editor.
+
+The name combines Typst, the typesetting system at the center of the project, with *sastra*—a word associated with writing, literature, and knowledge. It reflects the idea that a document editor should support not only typesetting, but also the languages, scripts, and long-form work that give writing its meaning.
+
 It serves writers and researchers whose languages are not always well supported by traditional technical-writing tools. Typsastra focuses on Unicode-safe editing, script-aware interaction, responsive PDF preview, extensible language tools, and multi-file project workflows while keeping the underlying Typst source portable.
 
 Khmer is the first language with deep support, including tailored cursor and deletion behavior, spellcheck, and word completion. Khmer demonstrates the depth Typsastra aims to provide; it is not the boundary of the project. The editing-policy and language-provider architecture is designed so other languages can add their own behavior without changing or weakening Khmer support.
 
+## v0.6.0 feature showcase
+
+Typsastra v0.6.0 focuses on responsive image-heavy authoring, document typography, private font workflows, and clearer navigation between Typst source and the rendered document.
+
+### Draft Preview
+
+Draft Preview replaces supported image calls in Typsastra’s private render mirror with lightweight, layout-preserving placeholders. Hover over a placeholder to inspect a cached thumbnail without adding the full image to the draft document. Normal Preview and exported PDFs continue to use the original images.
+
+
+
+### Document typography and language tools
+
+Assign fonts and language providers by writing script from one document-focused interface. Typsastra keeps the resulting Typst source explicit while separating document typography from editor spellcheck and word completion.
+
+
+
+### Source and document navigation
+
+Manual forward sync reveals the current source location in the preview without animating through a long document. Outline navigation uses the same document relationship while keeping keyboard focus predictable.
+
+
+
+Inverse sync and clickable references make it possible to move from rendered content back to its source, or follow internal and external document links directly in the preview.
+
+
+
+<details>
+<summary>More v0.6.0 demonstrations</summary>
+
+### Image optimization guidance
+
+Typsastra profiles referenced raster images and reports unusually expensive assets without modifying them. Editor-gutter and preview-toolbar warnings help authors find images that may slow compilation or enlarge exported PDFs.
+
+
+
+### Docked and undocked preview
+
+The same virtualized PDF preview can be docked beside the editor or moved into a separate window while retaining its theme, controls, document position, Draft Preview interaction, and source-navigation behavior.
+
+
+
+</details>
+
 ## Screenshots
-
-<!--
-Recommended capture list:
-
-1. Replace or update ./assets/screenshot-editor.png with a multi-file research project, editor, and docked PDF preview.
-2. Add ./assets/demo-live-preview.gif showing an included chapter updating the shared full-document preview.
-3. Add ./assets/demo-khmer-script-editing.gif showing Khmer cursor movement, deletion, completion, and spellcheck.
-4. Add ./assets/screenshot-language-settings.png showing support levels, separate spellcheck and typing-suggestion controls, and downloadable dictionaries.
-5. Add ./assets/screenshot-project-workflow.png showing main.typ, templates, chapters, bibliography, and figures in one workspace.
-
-Keep images around 1600px wide or smaller so GitHub README loading stays reasonable.
--->
 
 ### Editor and document preview
 
@@ -59,38 +94,17 @@ Keep images around 1600px wide or smaller so GitHub README loading stays reasona
   <img src="./assets/screenshot-editor.png" alt="Typsastra editor with docked document preview" width="800"/>
 </p>
 
-<!-- TODO: Add an animated multi-file preview demo.
-<p align="center">
-  <img src="./assets/demo-live-preview.gif" alt="Editing an included Typst chapter while the full document preview updates" width="800"/>
-</p>
--->
-
 ### Khmer script-aware editing and language tools
 
 <p align="center">
   <img src="./assets/screenshot-khmer-word-suggestion.png" alt="Khmer word completion in Typsastra" width="800"/>
 </p>
 
-<!-- TODO: Add the Khmer script-aware editing demo.
-<p align="center">
-  <img src="./assets/demo-khmer-script-editing.gif" alt="Khmer script-aware navigation, deletion, spellcheck, and completion in Typsastra" width="800"/>
-</p>
--->
-
 ### Project workspace
 
 <p align="center">
   <img src="./assets/screenshot-welcome.png" alt="Typsastra welcome screen" width="800"/>
 </p>
-
-<!-- TODO: Add project-workflow and language-settings screenshots after their layouts are final.
-<p align="center">
-  <img src="./assets/screenshot-project-workflow.png" alt="A multi-file Typsastra project with templates, chapters, bibliography, and figures" width="800"/>
-</p>
-<p align="center">
-  <img src="./assets/screenshot-language-settings.png" alt="Typsastra language settings with support levels and downloadable dictionaries" width="800"/>
-</p>
--->
 
 ## Why Typsastra?
 

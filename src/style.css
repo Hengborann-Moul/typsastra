@@ -3201,11 +3201,11 @@ body.typsastra-resizing #input-container-wrapper::after {
 }
 
 .welcome-title-container p {
-  font-size: 14px;
-  color: var(--ui-text);
-  opacity: 0.7;
-  margin: 4px 0 0 0;
-  font-style: italic;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.2em;
+  color: var(--ui-accent-color);
+  margin: 7px 0 0 0;
 }
 
 .welcome-section {

@@ -6,6 +6,17 @@ export type ReleaseSummary = {
 };
 
 const releaseSummaries: Record<string, ReleaseSummary> = {
+  "0.6.0": {
+    version: "0.6.0",
+    title: "Draft Preview and private font workflows",
+    highlights: [
+      "Draft Preview replaces supported images with layout-preserving placeholders and cached hover thumbnails for responsive image-heavy authoring.",
+      "Private local font directories make uninstalled fonts available to typography, diagnostics, preview, source mapping, and PDF export without copying fonts into projects.",
+      "Preview navigation retains scroll position, exposes clickable links, and recovers source synchronization more reliably across cache and workspace changes.",
+      "Contextual completion, persistent compiler diagnostics, safer project guardrails, and refined editor interaction improve everyday document work."
+    ],
+    detailsUrl: "https://github.com/Sovichea/typsastra/releases/tag/v0.6.0"
+  },
   "0.5.3": {
     version: "0.5.3",
     title: "Reliable previews and safer image-heavy workflows",

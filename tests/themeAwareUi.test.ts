@@ -41,6 +41,17 @@ describe("theme-aware application accents", () => {
     );
   });
 
+  test("uses the Typsastra textmark wording on the welcome screen", () => {
+    expect(html).toContain("<h1>Typsastra</h1>");
+    expect(html).toContain(
+      'WRITE <span aria-hidden="true">•</span> COMPOSE <span aria-hidden="true">•</span> PUBLISH'
+    );
+    expect(html).not.toContain("The editor for what's next");
+    expect(style).toMatch(
+      /\.welcome-title-container p\s*\{[^}]*letter-spacing:\s*0\.2em;[^}]*color:\s*var\(--ui-accent-color\);/s
+    );
+  });
+
   test("uses shared accent variables for application controls", () => {
     expect(style).toContain("--ui-accent-foreground: var(--ui-bg)");
     expect(style).toContain("--ui-accent-hover: color-mix(");

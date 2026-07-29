@@ -10,9 +10,9 @@ describe("release summary", () => {
   });
 
   test("shows a known release only once for that version", () => {
-    expect(shouldShowReleaseSummary("0.5.3", null)).toBe(true);
-    expect(shouldShowReleaseSummary("0.5.3", "0.5.2")).toBe(true);
-    expect(shouldShowReleaseSummary("0.5.3", "0.5.3")).toBe(false);
+    expect(shouldShowReleaseSummary("0.6.0", null)).toBe(true);
+    expect(shouldShowReleaseSummary("0.6.0", "0.5.3")).toBe(true);
+    expect(shouldShowReleaseSummary("0.6.0", "0.6.0")).toBe(false);
   });
 
   test("does not show an empty summary for an unregistered version", () => {
