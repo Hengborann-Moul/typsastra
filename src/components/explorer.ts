@@ -58,8 +58,8 @@ function getFileIconSvg(filename: string): string {
   return createAppIcon(icon, { size: 16, color }).outerHTML;
 }
 
-export function isHiddenWorkspaceEntry(name: string): boolean {
-  return name === ".typsastra" || name === ".typstella";
+export function isHiddenWorkspaceEntry(name: string, isDirectory: boolean): boolean {
+  return isDirectory && name.startsWith(".");
 }
 
 export class WorkspaceExplorer {
@@ -238,7 +238,7 @@ export class WorkspaceExplorer {
 
   private async readDirectory(dirPath: string): Promise<FileNode[]> {
     const entries: {name: string, isDirectory: boolean}[] = await invoke("read_workspace_dir", { path: dirPath });
-    const visibleEntries = entries.filter(entry => !isHiddenWorkspaceEntry(entry.name));
+    const visibleEntries = entries.filter(entry => !isHiddenWorkspaceEntry(entry.name, entry.isDirectory));
     const nodes = await Promise.all(visibleEntries.map(async entry => ({
       name: entry.name,
       path: await join(dirPath, entry.name),

@@ -59,11 +59,15 @@ describe("workspace explorer", () => {
     expect(inlineCreationPlacement(false, 8)).toEqual({ nestUnderTarget: false, depth: 0 });
   });
 
-  test("hides Typsastra's managed workspace cache directory", () => {
-    expect(isHiddenWorkspaceEntry(".typsastra")).toBe(true);
-    expect(isHiddenWorkspaceEntry(".typstella")).toBe(true);
-    expect(isHiddenWorkspaceEntry(".typst")).toBe(false);
-    expect(isHiddenWorkspaceEntry("typsastra")).toBe(false);
+  test("hides dot directories without hiding dot files", () => {
+    expect(isHiddenWorkspaceEntry(".typsastra", true)).toBe(true);
+    expect(isHiddenWorkspaceEntry(".typstella", true)).toBe(true);
+    expect(isHiddenWorkspaceEntry(".vscode", true)).toBe(true);
+    expect(isHiddenWorkspaceEntry(".nested-tools", true)).toBe(true);
+    expect(isHiddenWorkspaceEntry(".gitignore", false)).toBe(false);
+    expect(isHiddenWorkspaceEntry(".DS_Store", false)).toBe(false);
+    expect(isHiddenWorkspaceEntry("assets", true)).toBe(false);
+    expect(isHiddenWorkspaceEntry("chapter.typ", false)).toBe(false);
   });
 
   test("offers main-file actions only for Typst files", async () => {
