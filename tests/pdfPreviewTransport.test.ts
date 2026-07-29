@@ -98,11 +98,19 @@ describe("compiled PDF transport", () => {
     expect(renderMethod).not.toContain("if (!this.previewFrame.currentUrl)");
     expect(renderMethod).not.toContain('if (reportRenderStatus) {\n        this.setLspStatus({ kind: "preview-ready", message: "Preview ready" });');
     expect(renderMethod).toContain('this.setLspStatus({ kind: "preview-ready", message: "Preview ready" });');
+    expect(renderMethod).toContain('this.logConsoleController.clearLogsBySource(["compiler", "package compatibility"]);');
+    expect(renderMethod).toContain('this.setLspStatus({ kind: "preview-error", message: "PDF compile failed" });');
     expect(diagnosticsMethod).not.toContain('this.previewFrame.setError("Preview Render Failed"');
     expect(diagnosticsMethod).not.toContain("this.previewFrame.clearErrorOverlay()");
     expect(diagnosticsMethod).toContain("this.lastFailedPreviewContents !== null");
     expect(diagnosticsMethod).toContain("LSP accepted a corrected revision after preview failure");
-    expect(source).toContain("function previewRenderErrorMessage(error: unknown)");
+    expect(source).toContain("parsePreviewCompilerFailure(error)");
+    expect(renderMethod).toContain("this.publishPreviewCompilerFailure(failure, packageHint)");
+    expect(source).toContain("private async previewPackageFailureHint(");
+    expect(source).toContain("private async typstPackageDependencyChain(");
+    expect(source).toMatch(
+      /source:\s*"package compatibility",[\s\S]*?kind:\s*"error"|kind:\s*"error",[\s\S]*?source:\s*"package compatibility"/
+    );
   });
 
   test("validates copied workspace caches before starting Tinymist", async () => {

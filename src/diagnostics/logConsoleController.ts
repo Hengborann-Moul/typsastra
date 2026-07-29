@@ -49,6 +49,24 @@ export function spellcheckConsoleGroupKey(sourceText: string, ignored: boolean):
   return `${ignored ? "ignored" : "unknown"}:${sourceText}`;
 }
 
+export function countedLogTotals(
+  logs: readonly Pick<LogConsoleEntryInput, "kind" | "channel" | "counted">[]
+): { errors: number; warnings: number; lsp: number; all: number } {
+  const counted = logs.filter(entry => entry.counted === true);
+  return {
+    errors: counted.filter(entry => entry.kind === "error").length,
+    warnings: counted.filter(entry => entry.kind === "warning").length,
+    lsp: counted.filter(entry => (entry.channel ?? "lsp") === "lsp").length,
+    all: counted.length
+  };
+}
+
+export function persistentLogsAfterManualClear<T extends Pick<LogConsoleEntryInput, "counted">>(
+  logs: readonly T[]
+): T[] {
+  return logs.filter(entry => entry.counted === true);
+}
+
 function canonicalDiagnosticMessage(message: string): string {
   let msg = message
     .normalize("NFKC")
@@ -124,7 +142,8 @@ export class LogConsoleController {
   }
 
   public getErrorCount(): number {
-    return this.diagnostics.filter(entry => entry.kind === "error").length;
+    return this.diagnostics.filter(entry => entry.kind === "error").length
+      + countedLogTotals(this.logs).errors;
   }
 
   public setDiagnostics(filePath: string, entries: LogConsoleEntryInput[]): void {
@@ -196,7 +215,20 @@ export class LogConsoleController {
   }
 
   public clearLogs(): void {
+    this.logs = persistentLogsAfterManualClear(this.logs);
+    this.requestRender();
+  }
+
+  public clearAllLogs(): void {
     this.logs = [];
+    this.requestRender();
+  }
+
+  public clearLogsBySource(sources: readonly string[]): void {
+    const sourceSet = new Set(sources);
+    const remaining = this.logs.filter(entry => !sourceSet.has(entry.source));
+    if (remaining.length === this.logs.length) return;
+    this.logs = remaining;
     this.requestRender();
   }
 
@@ -390,12 +422,13 @@ export class LogConsoleController {
   }
 
   private updateCount(): void {
-    const errors = this.diagnostics.filter(entry => entry.kind === "error").length;
-    const warnings = this.diagnostics.filter(entry => entry.kind === "warning").length;
+    const countedLogs = countedLogTotals(this.logs);
+    const errors = this.diagnostics.filter(entry => entry.kind === "error").length + countedLogs.errors;
+    const warnings = this.diagnostics.filter(entry => entry.kind === "warning").length + countedLogs.warnings;
     const total = this.diagnostics.length;
     const spellcheck = this.spellcheckIssues.filter(entry => entry.counted !== false).length;
     const imageWarnings = this.imageOptimizationIssues.filter(entry => entry.counted !== false).length;
-    const problems = total + spellcheck + imageWarnings;
+    const problems = total + spellcheck + imageWarnings + countedLogs.all;
     const totalWarnings = warnings + spellcheck + imageWarnings;
 
     this.errorCount.textContent = errors > 99 ? "99+" : String(errors);
@@ -412,7 +445,7 @@ export class LogConsoleController {
     }
 
     this.setTabCount("all", problems);
-    this.setTabCount("lsp", total);
+    this.setTabCount("lsp", total + countedLogs.lsp);
     this.setTabCount("spellcheck", spellcheck);
     this.setTabCount("images", imageWarnings);
     this.setTabCount("dev", this.logs.filter(entry => entry.channel === "dev").length);

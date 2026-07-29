@@ -33,6 +33,15 @@ describe("theme-aware application accents", () => {
     expect(explorer).toContain('input.style.border = "1px solid var(--ui-accent-color)"');
   });
 
+  test("wraps long compiler paths inside the preview error card", () => {
+    expect(style).toMatch(
+      /\.compiler-preview-error-content\s*\{[^}]*min-width:\s*0;[^}]*overflow-x:\s*hidden;[^}]*overflow-y:\s*auto;/s
+    );
+    expect(style).toMatch(
+      /\.compiler-preview-error-message\s*\{[^}]*white-space:\s*pre-wrap;[^}]*overflow-wrap:\s*anywhere;[^}]*word-break:\s*break-word;/s
+    );
+  });
+
   test("applies and follows the active theme in the undocked preview", () => {
     const previewBootstrapStart = controller.indexOf("private async bootstrapPreviewWindow");
     const previewBootstrapEnd = controller.indexOf(

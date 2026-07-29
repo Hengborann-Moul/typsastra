@@ -21,7 +21,14 @@ import type { EditorDiagnostic, EditorDiagnosticSeverity } from "./editor/diagno
 import { WorkspaceExplorer } from "./components/explorer";
 import { TinymistLspClient } from "./compiler/lsp";
 import { isTinymistStoppedRequestError, type EditorTextEdit, type LspDiagnostic, type LspInverseSyncResult, type LspLogEntry, type LspSourcePosition, type LspStatus, type PreviewDocumentPosition } from "./compiler/lsp";
-import { asRecord } from "./compiler/jsonRpc";
+import {
+  parsePreviewCompilerFailure,
+  typstPackageEntrypoint,
+  typstPackageImports,
+  type PreviewCompilerFailure,
+  type TypstPackageImport,
+  type TypstPackageReference
+} from "./compiler/previewError";
 import type { AppSettings, DeveloperLogCategory, PreviewRenderMode, ThemeName } from "./settings";
 import { SettingsController } from "./settingsController";
 import { fileNameFromPath, filePathFromUri, filePathKey, filePathToUri, nativeFilePath, relativeFilePath, remapFilePath } from "./platform/paths";
@@ -110,27 +117,6 @@ import {
 } from "./editor/templateTypography";
 
 type EditorMode = "CODE" | "WYSIWYM";
-
-function previewRenderErrorMessage(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  if (typeof error === "string") return error;
-  const record = asRecord(error);
-  const message = typeof record?.message === "string" ? record.message : "";
-  const data = record?.data;
-  const detail = typeof data === "string"
-    ? data
-    : data === undefined
-      ? ""
-      : JSON.stringify(data, null, 2);
-  if (message && detail && detail !== message) return `${message}\n\n${detail}`;
-  if (message || detail) return message || detail;
-  try {
-    return JSON.stringify(error, null, 2);
-  } catch {
-    return String(error);
-  }
-}
-
 
 type StartupTimingEntry = {
   source: string;
@@ -357,6 +343,12 @@ type PreparedPdfPreview = {
   projectPreparationMs: number;
   overlayPreparationMs: number;
   backendTimings: RenderPreparationTimings;
+  reachableSourcePaths: string[];
+};
+
+type PreviewPackageFailureHint = {
+  message: string;
+  projectImport: TypstPackageImport;
 };
 
 type ActivateEditorTabOptions = {
@@ -4072,6 +4064,7 @@ export class TypsastraWorkspaceController {
     const generationContentMode = this.previewContentMode;
     const preparationRevision = this.pdfPreparationRevision;
     let renderSucceeded = false;
+    let preparedPreview: PreparedPdfPreview | null = null;
     await this.logMemoryDiagnostics(`render ${generation}: before preparation`);
     this.appendDeveloperLog({
       kind: "info",
@@ -4088,7 +4081,7 @@ export class TypsastraWorkspaceController {
       this.ensurePreviewPreparationCurrent(preparationRevision);
       const draftPreparationStartedAt = performance.now();
       const useEditorOverlays = this.effectivePreviewRenderMode === "on-type" || force;
-      const preparedPreview = await this.preparePdfPreviewExportPath(
+      preparedPreview = await this.preparePdfPreviewExportPath(
         contents,
         preparationRevision,
         generationContentMode,
@@ -4245,6 +4238,7 @@ export class TypsastraWorkspaceController {
       // Presentation is authoritative even when the previous PDF stayed
       // visible during compilation. In particular, clear a stale compile
       // failure status after a recovered generation succeeds.
+      this.logConsoleController.clearLogsBySource(["compiler", "package compatibility"]);
       this.setLspStatus({ kind: "preview-ready", message: "Preview ready" });
       this.appendDeveloperLog({ kind: "info", source: "preview scheduler", message: `Render generation ${generation}: PDF presentation complete.` });
       renderSucceeded = true;
@@ -4317,14 +4311,19 @@ export class TypsastraWorkspaceController {
         return;
       }
       console.error("PDF Preview compilation failed:", JSON.stringify(error, null, 2));
-      const failureMessage = previewRenderErrorMessage(error);
+      const failure = parsePreviewCompilerFailure(error);
+      const packageHint = await this.previewPackageFailureHint(failure, preparedPreview);
+      const failureMessage = packageHint
+        ? `${failure.message}\n\nPackage compatibility hint\n${packageHint.message}`
+        : failure.message;
       this.lastFailedPreviewContents = contents;
       this.lastPreviewRecoveryRequestedContents = null;
       // Keep the last successful PDF mounted, but make an actual compiler
       // failure visible until a later generation presents successfully.
       this.previewFrame.setError("Preview Render Failed", failureMessage);
+      this.publishPreviewCompilerFailure(failure, packageHint);
       this.updatePreviewContentModeControl(false);
-      this.setLspStatus({ kind: "preview-ready", message: "PDF compile failed" });
+      this.setLspStatus({ kind: "preview-error", message: "PDF compile failed" });
       this.pdfPreviewFailureAt ??= performance.now();
     } finally {
       this.pdfPreviewRunning = false;
@@ -4494,7 +4493,8 @@ export class TypsastraWorkspaceController {
       draftOverlayPreparations: contentMode === "draft" ? draftOverlayPreparations : 0,
       projectPreparationMs,
       overlayPreparationMs,
-      backendTimings: result.timings
+      backendTimings: result.timings,
+      reachableSourcePaths: result.draftReachableFiles.map(path => this.mapToOriginalPath(path))
     };
   }
 
@@ -6316,6 +6316,114 @@ export class TypsastraWorkspaceController {
       source: entry.source ?? "tinymist",
       message: entry.message,
       channel: "lsp"
+    });
+  }
+
+  private async previewPackageFailureHint(
+    failure: PreviewCompilerFailure,
+    preparedPreview: PreparedPdfPreview | null
+  ): Promise<PreviewPackageFailureHint | null> {
+    if (
+      !failure.package
+      || !failure.packageCacheRoot
+      || !preparedPreview?.reachableSourcePaths.length
+    ) return null;
+
+    const projectImports: TypstPackageImport[] = [];
+    for (const path of preparedPreview.reachableSourcePaths.slice(0, 128)) {
+      const originalPath = this.mapToOriginalPath(path);
+      const generated = this.pdfPreviewGeneratedFiles.get(filePathKey(originalPath));
+      const openTab = this.openTabs.find(tab => filePathKey(tab.path) === filePathKey(originalPath));
+      const source = generated?.preparedText
+        ?? (openTab?.contentLoaded ? openTab.content : null)
+        ?? await invoke<string>("read_workspace_file", { path: originalPath }).catch(() => "");
+      projectImports.push(...typstPackageImports(source, originalPath));
+    }
+
+    const uniqueImports = projectImports.filter((entry, index, entries) =>
+      entries.findIndex(candidate =>
+        candidate.package.spec === entry.package.spec
+        && filePathKey(candidate.filePath) === filePathKey(entry.filePath)
+        && candidate.line === entry.line
+      ) === index
+    );
+    for (const projectImport of uniqueImports) {
+      const chain = await this.typstPackageDependencyChain(
+        projectImport.package,
+        failure.package,
+        failure.packageCacheRoot
+      );
+      if (!chain) continue;
+      const relation = chain.length === 1
+        ? `${projectImport.package.spec} is the package that failed.`
+        : `${projectImport.package.spec} loads ${chain.slice(1).map(entry => entry.spec).join(" → ")}.`;
+      return {
+        projectImport,
+        message: `${relation}\nUpdate ${projectImport.package.spec} to a release compatible with the selected Typst version.`
+      };
+    }
+    return null;
+  }
+
+  private async typstPackageDependencyChain(
+    root: TypstPackageReference,
+    target: TypstPackageReference,
+    packageCacheRoot: string
+  ): Promise<TypstPackageReference[] | null> {
+    const targetSpec = target.spec.toLocaleLowerCase();
+    const queue: TypstPackageReference[][] = [[root]];
+    const visited = new Set<string>();
+    while (queue.length > 0 && visited.size < 64) {
+      const chain = queue.shift()!;
+      const current = chain[chain.length - 1];
+      const key = current.spec.toLocaleLowerCase();
+      if (key === targetSpec) return chain;
+      if (visited.has(key) || chain.length >= 5) continue;
+      visited.add(key);
+
+      const packageDirectory = `${packageCacheRoot}/${current.namespace}/${current.name}/${current.version}`;
+      const manifest = await invoke<string>("read_workspace_file", {
+        path: `${packageDirectory}/typst.toml`
+      }).catch(() => "");
+      const entrypoint = typstPackageEntrypoint(manifest);
+      if (!entrypoint) continue;
+      const entrypointPath = `${packageDirectory}/${entrypoint}`;
+      const packageSource = await invoke<string>("read_workspace_file", {
+        path: entrypointPath
+      }).catch(() => "");
+      for (const dependency of typstPackageImports(packageSource, entrypointPath)) {
+        queue.push([...chain, dependency.package]);
+      }
+    }
+    return null;
+  }
+
+  private publishPreviewCompilerFailure(
+    failure: PreviewCompilerFailure,
+    packageHint: PreviewPackageFailureHint | null
+  ): void {
+    this.logConsoleController.appendLog({
+      kind: "error",
+      source: "compiler",
+      message: failure.message,
+      channel: "lsp",
+      counted: true,
+      filePath: failure.location?.filePath,
+      fileName: failure.location ? fileNameFromPath(failure.location.filePath) : undefined,
+      line: failure.location?.line,
+      column: failure.location?.column
+    });
+    if (!packageHint) return;
+    this.logConsoleController.appendLog({
+      kind: "error",
+      source: "package compatibility",
+      message: packageHint.message,
+      channel: "lsp",
+      counted: true,
+      filePath: packageHint.projectImport.filePath,
+      fileName: fileNameFromPath(packageHint.projectImport.filePath),
+      line: packageHint.projectImport.line,
+      column: packageHint.projectImport.column
     });
   }
 
@@ -8496,7 +8604,7 @@ export class TypsastraWorkspaceController {
     this.clearPendingLspSync();
     this.previewSyncController.clearForward();
     this.clearDiagnostics();
-    this.logConsoleController.clearLogs();
+    this.logConsoleController.clearAllLogs();
 
     this.isLoadingFile = true;
     try {
@@ -8999,7 +9107,7 @@ export class TypsastraWorkspaceController {
     document.getElementById("action-restart-lsp")?.addEventListener("click", async () => {
       const activePath = this.activeFilePath;
       this.tinymistPreviewRecoveryAttempts = 0;
-      this.logConsoleController.clearLogs();
+      this.logConsoleController.clearAllLogs();
       this.previewFrame.clear();
       try {
         await this.restartTinymistSession("Restarting LSP...");

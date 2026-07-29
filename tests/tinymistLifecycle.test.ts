@@ -92,9 +92,9 @@ describe("Tinymist workspace lifecycle", () => {
   test("clears logs at user-requested lifecycle boundaries", async () => {
     const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
     const closeProject = source.indexOf("private async closeProject");
-    const closeClear = source.indexOf("this.logConsoleController.clearLogs();", closeProject);
+    const closeClear = source.indexOf("this.logConsoleController.clearAllLogs();", closeProject);
     const manualRestart = source.indexOf('document.getElementById("action-restart-lsp")');
-    const restartClear = source.indexOf("this.logConsoleController.clearLogs();", manualRestart);
+    const restartClear = source.indexOf("this.logConsoleController.clearAllLogs();", manualRestart);
     const restartCall = source.indexOf('restartTinymistSession("Restarting LSP..."', manualRestart);
     expect(closeClear).toBeGreaterThan(closeProject);
     expect(restartClear).toBeGreaterThan(manualRestart);

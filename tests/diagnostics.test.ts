@@ -1,7 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { Text } from "@codemirror/state";
 import { looksLikeStalePrefixDiagnostic } from "../src/editor/diagnostics";
-import { duplicatesStructuredDiagnostic, spellcheckConsoleGroupKey } from "../src/diagnostics/logConsoleController";
+import {
+  countedLogTotals,
+  duplicatesStructuredDiagnostic,
+  persistentLogsAfterManualClear,
+  spellcheckConsoleGroupKey
+} from "../src/diagnostics/logConsoleController";
 
 describe("editor diagnostics", () => {
   test("rejects stale LSP diagnostics for a boolean literal prefix", () => {
@@ -77,5 +82,30 @@ describe("spellcheck console grouping", () => {
     const keys = ["Tyst", "typst", "TyPSt"].map(word => spellcheckConsoleGroupKey(word, false));
     expect(new Set(keys).size).toBe(3);
     expect(spellcheckConsoleGroupKey("typst", true)).not.toBe(spellcheckConsoleGroupKey("typst", false));
+  });
+});
+
+describe("counted console logs", () => {
+  test("contribute to problem, severity, and LSP totals only when explicitly counted", () => {
+    expect(countedLogTotals([
+      { kind: "error", channel: "lsp", counted: true },
+      { kind: "error", channel: "lsp", counted: true },
+      { kind: "warning", channel: "images", counted: true },
+      { kind: "error", channel: "dev" },
+      { kind: "info", channel: "lsp" }
+    ])).toEqual({
+      errors: 2,
+      warnings: 1,
+      lsp: 2,
+      all: 3
+    });
+  });
+
+  test("survive manual clearing until their owning subsystem resolves them", () => {
+    const compilerFailure = { kind: "error" as const, counted: true, message: "compile failed" };
+    const developerLog = { kind: "info" as const, message: "render started" };
+
+    expect(persistentLogsAfterManualClear([compilerFailure, developerLog]))
+      .toEqual([compilerFailure]);
   });
 });

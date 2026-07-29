@@ -23,7 +23,7 @@ export type TinymistPdfExport = {
 // configured preview root at a time, so the document name is sufficient.
 const PREVIEW_OUTPUT_PATH = "$root/.typsastra/cache/preview/$name";
 
-export type LspStatusKind = "starting" | "running" | "initializing" | "ready" | "preview-starting" | "preview-ready" | "sync-pending" | "syncing" | "stopped" | "error";
+export type LspStatusKind = "starting" | "running" | "initializing" | "ready" | "preview-starting" | "preview-ready" | "preview-error" | "sync-pending" | "syncing" | "stopped" | "error";
 
 export type LspStatus = {
   kind: LspStatusKind;
