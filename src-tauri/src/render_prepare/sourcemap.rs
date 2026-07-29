@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-pub const SOURCE_MAP_VERSION: u32 = 4;
+pub const SOURCE_MAP_VERSION: u32 = 5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -24,6 +24,8 @@ pub struct SourceMap {
     pub version: u32,
     pub source_file: String,
     pub generated_file: String,
+    #[serde(default)]
+    pub source_digest: String,
     pub mappings: Vec<TextMapping>,
     #[serde(default)]
     pub preview_content_mode: String,
@@ -35,6 +37,7 @@ impl SourceMap {
             version: SOURCE_MAP_VERSION,
             source_file,
             generated_file,
+            source_digest: String::new(),
             mappings: Vec::new(),
             preview_content_mode: "normal".into(),
         }

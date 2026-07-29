@@ -395,7 +395,12 @@ fn clean_stale_cache_files(
     walk_for_stale(render_dir, render_dir, project_root, &mut to_delete)?;
     for path in to_delete {
         if path.is_dir() {
+            let rel = path.strip_prefix(render_dir).unwrap_or(&path);
             let _ = fs::remove_dir_all(&path);
+            let stale_maps_dir = maps_dir.join(rel);
+            if stale_maps_dir.exists() {
+                let _ = fs::remove_dir_all(stale_maps_dir);
+            }
         } else {
             let _ = fs::remove_file(&path);
             let rel = path.strip_prefix(render_dir).unwrap_or(&path);
@@ -480,6 +485,7 @@ pub fn prepare_single_in_memory_file(
         file_path.to_string_lossy().to_string(),
         dest_path.to_string_lossy().to_string(),
     );
+    sourcemap.source_digest = source_digest(source_code);
     sourcemap.preview_content_mode = content_mode_key(options.preview_content_mode).into();
     let draft = draft_preparation(options, file_path, &dest_path, source_code);
     let generated_content =
@@ -736,8 +742,9 @@ fn process_typ_file(
     options: &RenderPrepareOptions,
     segmenter: Option<&KhmerTextSegmenter>,
 ) -> Result<ProcessedTypFile, String> {
+    let source_content = fs::read_to_string(src).map_err(|e| e.to_string())?;
+    let current_source_digest = source_digest(&source_content);
     if options.preview_content_mode == PreviewContentMode::Draft {
-        let source_content = fs::read_to_string(src).map_err(|e| e.to_string())?;
         if let Some(cached) =
             read_current_draft_cache(&draft_cache_path(maps_dir, rel_path), &source_content)
         {
@@ -765,7 +772,11 @@ fn process_typ_file(
                 .and_then(|content| serde_json::from_str::<SourceMap>(&content).ok())
                 .is_some_and(|map| {
                     map.version == SOURCE_MAP_VERSION
-                        && map.preview_content_mode == content_mode_key(options.preview_content_mode)
+                        && map.preview_content_mode
+                            == content_mode_key(options.preview_content_mode)
+                        && Path::new(&map.source_file) == src
+                        && Path::new(&map.generated_file) == dest
+                        && map.source_digest == current_source_digest
                 })
         } else {
             true
@@ -785,13 +796,12 @@ fn process_typ_file(
         }
     }
 
-    let source_content = fs::read_to_string(src).map_err(|e| e.to_string())?;
-
     let mut sourcemap = SourceMap::new(
         src.to_string_lossy().to_string(),
         dest.to_string_lossy().to_string(),
     );
 
+    sourcemap.source_digest = current_source_digest;
     sourcemap.preview_content_mode = content_mode_key(options.preview_content_mode).into();
     let draft = draft_preparation(options, src, dest, &source_content);
     let generated_content =
@@ -1133,15 +1143,62 @@ mod tests {
         let draft_dir = render_dir.join(".typsastra-draft-assets");
         let placeholder = draft_dir.join("placeholder.svg");
         let stale_mirror = render_dir.join("removed-from-project.png");
+        let stale_render_dir = render_dir.join("old-chapters");
+        let stale_maps_dir = maps_dir.join("old-chapters");
         fs::create_dir_all(&draft_dir).unwrap();
-        fs::create_dir_all(&maps_dir).unwrap();
+        fs::create_dir_all(&stale_render_dir).unwrap();
+        fs::create_dir_all(&stale_maps_dir).unwrap();
         fs::write(&placeholder, b"<svg/>").unwrap();
         fs::write(&stale_mirror, b"stale").unwrap();
+        fs::write(stale_render_dir.join("chapter.typ"), b"stale").unwrap();
+        fs::write(stale_maps_dir.join("chapter.typ.map.json"), b"stale").unwrap();
 
         clean_stale_cache_files(&render_dir, &maps_dir, workspace.path()).unwrap();
 
         assert!(!placeholder.exists());
         assert!(!stale_mirror.exists());
+        assert!(!stale_render_dir.exists());
+        assert!(!stale_maps_dir.exists());
+    }
+
+    #[test]
+    fn normal_preview_rebuilds_a_map_that_belongs_to_an_old_source_path() {
+        let workspace = tempfile::tempdir().unwrap();
+        let source_dir = workspace.path().join("chapters");
+        let source = source_dir.join("main.typ");
+        let cache_root = workspace.path().join(".typsastra/cache");
+        let render = cache_root.join("render/chapters/main.typ");
+        let maps = cache_root.join("maps");
+        let relative = Path::new("chapters/main.typ");
+        fs::create_dir_all(&source_dir).unwrap();
+        fs::create_dir_all(render.parent().unwrap()).unwrap();
+        fs::write(&source, "= Current chapter").unwrap();
+        let options = RenderPrepareOptions {
+            enable_khmer_zws: false,
+            project_root: workspace.path().to_path_buf(),
+            entry_file: source.clone(),
+            cache_root,
+            generate_source_map: true,
+            preview_content_mode: PreviewContentMode::Normal,
+        };
+
+        process_typ_file(&source, &render, relative, &maps, &options, None).unwrap();
+        let map_path = derived_metadata_path(&maps, relative, "map");
+        let mut stale_map: SourceMap =
+            serde_json::from_str(&fs::read_to_string(&map_path).unwrap()).unwrap();
+        stale_map.source_file = workspace
+            .path()
+            .join("old-chapters/main.typ")
+            .to_string_lossy()
+            .to_string();
+        fs::write(&map_path, serde_json::to_string_pretty(&stale_map).unwrap()).unwrap();
+
+        let result = process_typ_file(&source, &render, relative, &maps, &options, None).unwrap();
+        assert!(result.changed);
+        let refreshed: SourceMap =
+            serde_json::from_str(&fs::read_to_string(map_path).unwrap()).unwrap();
+        assert_eq!(Path::new(&refreshed.source_file), source);
+        assert_eq!(refreshed.source_digest, source_digest("= Current chapter"));
     }
 
     #[test]

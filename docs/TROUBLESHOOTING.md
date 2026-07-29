@@ -108,6 +108,33 @@ source-map warm state. Typsastra therefore does not restart Tinymist
 automatically when switching preview modes. A later release will review a
 memory-aware recovery policy after repeated Normal/Draft measurements.
 
+### Moving project files while Typsastra is open may be detected in stages
+
+This is a known limitation. Typsastra watches the workspace recursively, but
+operating systems, cloud-synchronized directories, and network filesystems may
+report one move as a rename or as separate remove and create events. Events can
+also arrive late or, less commonly, be missed.
+
+Typsastra validates the render cache during the next preview preparation.
+Source maps are reused only when their source path, generated path, content
+digest, schema version, and preview mode still match. Obsolete mirrored
+directories and their corresponding source-map directories are removed.
+Moving a file through Typsastra performs this refresh directly; an externally
+moved file normally triggers it through the workspace watcher.
+
+If a watcher event is missed, stale disposable artifacts may remain under
+`.typsastra/cache` until the next compilation, manual recompile, main-file
+change, or workspace restart. They must not be treated as authoritative after
+that preparation cycle. If preview synchronization still refers to an old
+location, manually recompile or restart the workspace; deleting `.typsastra`
+should be a last-resort diagnostic because it also removes local workspace
+state.
+
+A future hardening pass should introduce a serialized workspace-structure
+revision. Every accepted create, remove, or rename event would invalidate
+in-flight preparation and schedule one consolidated mirror rebuild after the
+event stream settles.
+
 ### Linux preview is completely white
 
 If PDF export succeeds but the embedded preview is white or only appears briefly while resizing, open **Settings → Preview → Linux preview compatibility**. Review the detected session, WebKitGTK version, and graphics vendor, then enable **Disable WebKitGTK DMA-BUF renderer** and restart Typsastra.
