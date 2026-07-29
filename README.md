@@ -53,9 +53,17 @@ Draft Preview replaces supported image calls in Typsastra’s private render mir
 
 
 
+https://github.com/user-attachments/assets/b1c45806-8747-4180-8e52-dbe8222f82db
+
+
+
 ### Document typography and language tools
 
 Assign fonts and language providers by writing script from one document-focused interface. Typsastra keeps the resulting Typst source explicit while separating document typography from editor spellcheck and word completion.
+
+
+
+https://github.com/user-attachments/assets/f58e3133-e900-4a4b-9c63-7dee587b7e90
 
 
 
@@ -65,7 +73,15 @@ Manual forward sync reveals the current source location in the preview without a
 
 
 
+https://github.com/user-attachments/assets/c3e44128-9e7b-49ff-aec2-3965de3572e1
+
+
+
 Inverse sync and clickable references make it possible to move from rendered content back to its source, or follow internal and external document links directly in the preview.
+
+
+
+https://github.com/user-attachments/assets/56add64e-5d10-47fc-8b0a-30ce1388c46f
 
 
 
@@ -78,9 +94,17 @@ Typsastra profiles referenced raster images and reports unusually expensive asse
 
 
 
+https://github.com/user-attachments/assets/b9de3d81-47e7-4b34-b3d8-2fdb4e702e19
+
+
+
 ### Docked and undocked preview
 
 The same virtualized PDF preview can be docked beside the editor or moved into a separate window while retaining its theme, controls, document position, Draft Preview interaction, and source-navigation behavior.
+
+
+
+https://github.com/user-attachments/assets/c1278ad8-eca5-43c7-8aed-ba371ee8a14e
 
 
 
