@@ -88,6 +88,26 @@ When reporting preview issues, include:
 - Whether the file is `main.typ` or an included file.
 - Any visible messages from the developer log console.
 
+### Tinymist memory remains high after switching to Draft Preview
+
+This is a known limitation. Opening an image-heavy document in Normal Preview
+can establish a much higher Tinymist memory watermark than opening the same
+document directly in Draft Preview. Switching from Normal to Draft reduces the
+cost of later preview compilations, but it does not immediately return memory
+already retained by the running Tinymist process.
+
+Tinymist ages different compiler caches over multiple compilation generations,
+and its allocator or the operating system may continue to retain released
+pages. The internal cache age of 10 used for some memoized work is not a
+guarantee that process memory will fall after exactly 10 edits; other caches
+have different lifetimes.
+
+Restarting Tinymist is currently the only dependable way to request immediate
+process-level reclamation, but it also discards incremental compilation and
+source-map warm state. Typsastra therefore does not restart Tinymist
+automatically when switching preview modes. A later release will review a
+memory-aware recovery policy after repeated Normal/Draft measurements.
+
 ### Linux preview is completely white
 
 If PDF export succeeds but the embedded preview is white or only appears briefly while resizing, open **Settings → Preview → Linux preview compatibility**. Review the detected session, WebKitGTK version, and graphics vendor, then enable **Disable WebKitGTK DMA-BUF renderer** and restart Typsastra.

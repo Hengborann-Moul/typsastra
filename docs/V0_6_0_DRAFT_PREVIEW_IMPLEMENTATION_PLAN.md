@@ -190,6 +190,22 @@ Switching modes cancels stale preparation, queues a forced refresh, and leaves
 the last successful preview visible. Workspace loading restores the requested
 mode before starting preview compilation.
 
+## Known limitation: retained Tinymist memory
+
+Starting an image-heavy document directly in Draft Preview can require
+substantially less Tinymist memory than starting it in Normal Preview. Switching
+an already warmed Normal session to Draft does not immediately reduce the
+process to the same memory level. Compiler caches age over different numbers of
+compilation generations, and allocator or operating-system retention can keep
+released pages in the process working set.
+
+The `comemo` cache age of 10 is not an edit-cycle memory-reclamation contract.
+Typsastra must not claim that RAM will be recycled after exactly 10 edits.
+Restarting Tinymist provides the only predictable process reset today, but
+doing so also loses incremental compiler and source-map warm state. Automatic
+or threshold-based recovery is deferred until it can be qualified with
+process-level Normal-to-Draft memory measurements.
+
 ## Measurements
 
 Developer performance diagnostics record:
