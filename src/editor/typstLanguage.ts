@@ -287,6 +287,16 @@ function readToken(stream: StringStream, state: TypstParserState): string | null
     // MARKUP MODE
     // ==========================================
     if (mode === "markup") {
+      // Keep visually paired square brackets balanced in markup as well as in
+      // code-owned content blocks. Without this, an outer markup `[` is
+      // classified as plain content while its closing `]` is punctuation,
+      // causing nested endings such as `[#text[content]]` to mark the second
+      // closing bracket as non-matching.
+      if (stream.match("[")) {
+        state.bracketStack.push("[");
+        return "punctuation";
+      }
+
       // Term list header parsing
       if (state.inTermListHeader) {
         if (stream.eatSpace()) return null;
