@@ -69,7 +69,7 @@ describe("large file opening notice", () => {
     expect(formatFileSize(100 * 1024 * 1024)).toBe("100 MB");
   });
 
-  test("replaces a stale live preview while a large PDF awaits confirmation", async () => {
+  test("keeps standalone PDF confirmation in the preview pane", async () => {
     const controller = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
     const confirmationStart = controller.indexOf("private showLargeFileConfirmation");
     const confirmationEnd = controller.indexOf("private async openFileExternally", confirmationStart);
@@ -79,8 +79,10 @@ describe("large file opening notice", () => {
     expect(confirmationSource).toContain("this.blockedLargePdfPaths.add(filePathKey(path))");
     expect(confirmationSource).toContain("this.pdfLoadRequestGeneration += 1");
     expect(confirmationSource).toContain("this.invalidatePreviewWork(");
-    expect(confirmationSource).toContain("this.previewFrame.setMessage(");
-    expect(confirmationSource).toContain("Large PDF Preview Paused");
+    expect(confirmationSource).toContain("this.previewFrame.setConfirmationMessage({");
+    expect(confirmationSource).toContain("Large PDF Preview Not Started");
+    expect(confirmationSource).toContain('confirmLabel: "Open Large PDF"');
+    expect(confirmationSource).toContain('if (notice.kind === "pdf")');
     expect(confirmationSource).toContain("this.blockedLargePdfPaths.delete(filePathKey(path))");
 
     const loadStart = controller.indexOf("private async loadPdfPath");
@@ -89,5 +91,29 @@ describe("large file opening notice", () => {
     expect(loadSource).toContain("if (this.blockedLargePdfPaths.has(pathKey)) return 0");
     expect(loadSource).toContain("const requestGeneration = ++this.pdfLoadRequestGeneration");
     expect(loadSource).toContain("this.blockedLargePdfPaths.has(pathKey)");
+  });
+
+  test("routes large Typst preview approval through the editor guard", async () => {
+    const controller = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
+    const noticeStart = controller.indexOf("private async largeFileNoticeForTab");
+    const noticeEnd = controller.indexOf("private activeCompilerPreviewMatchesRoot", noticeStart);
+    const noticeSource = controller.slice(noticeStart, noticeEnd);
+    expect(noticeSource).toContain("this.previewTargetForUnloadedTab(tab)");
+    expect(noticeSource).toContain("this.largePreviewNoticeForRoot(target.rootPath)");
+
+    const confirmationStart = controller.indexOf("private showLargeFileConfirmation");
+    const confirmationEnd = controller.indexOf("private async openFileExternally", confirmationStart);
+    const confirmationSource = controller.slice(confirmationStart, confirmationEnd);
+    expect(confirmationSource).toContain("this.workspaceServicesDeferredForLargeFile = true");
+    expect(confirmationSource).toContain("await this.approveLargePreviewForTab(tab, notice)");
+    expect(confirmationSource).toContain('"Large Typst Document"');
+    expect(confirmationSource).not.toContain('"Large Main Document Preview"');
+    expect(confirmationSource).toContain("Open and Compile Preview");
+    expect(confirmationSource).toContain("The compiler preview will start after you confirm opening the large Typst file.");
+
+    const servicesStart = controller.indexOf("private async startWorkspaceServices");
+    const servicesEnd = controller.indexOf("private async restoreActiveDocumentAfterTinymistRestart", servicesStart);
+    const servicesSource = controller.slice(servicesStart, servicesEnd);
+    expect(servicesSource).toContain("if (this.workspaceServicesDeferredForLargeFile) return");
   });
 });

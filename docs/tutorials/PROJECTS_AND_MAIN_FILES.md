@@ -43,7 +43,9 @@ directory and are never copied into the workspace.
 ## Large restored tabs
 
 Restored inactive tabs are lazy: Typsastra does not read a large text file or
-PDF merely because it appears in the tab bar. Activating a large file shows an
-editor-pane confirmation before expensive loading begins.
+PDF merely because it appears in the tab bar. Activating a large Typst source
+shows an editor-pane confirmation before either editor initialization or
+preview compilation begins. A directly opened large PDF asks for confirmation
+in the preview pane before decoding.
 
 Try the bundled `05-project-portability/01-main-and-included-files` example.

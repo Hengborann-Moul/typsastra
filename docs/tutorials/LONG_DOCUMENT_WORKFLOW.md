@@ -7,12 +7,17 @@ compile after each edit. Language analysis and editor extensions are bounded or
 deferred where possible, but a 20,000-line active source still requires more
 work than an ordinary chapter.
 
-Typsastra uses two independent guard rails. A large text file or PDF is not
-loaded into the editor until you confirm it in the editor pane. Separately, a
-large preview does not start Tinymist or render until you confirm it in the
-preview pane. The preview check measures the configured root together with its
-reachable local includes, templates, and libraries. It therefore applies
-whether the editor currently shows the main file or one of its dependencies.
+Typsastra uses one coordinated guard rail for Typst authoring. If either the
+selected Typst source or its effective preview root is large, the file is not
+loaded into the code editor until you confirm it there. That same confirmation
+then permits Tinymist to start and compile the preview; a second preview-pane
+confirmation is not required. The preview check measures the configured root
+together with its reachable local includes, templates, and libraries. It
+therefore applies whether the selected file is the main document or one of its
+dependencies.
+
+Directly opened large PDF files use a separate confirmation in the preview
+pane because they do not initialize the Typst code editor or compiler.
 
 ### Known editor limitation for very large source files
 

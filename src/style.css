@@ -3765,6 +3765,17 @@ button.welcome-item:disabled {
   font-family: var(--font-family-sans);
 }
 
+.guardrail-placeholder-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  max-width: 100%;
+}
+
+.guardrail-preview-placeholder .guardrail-placeholder-content {
+  transform: translateY(var(--guardrail-center-offset, 0));
+}
+
 .preview-disabled-icon {
   font-size: 32px;
   margin-bottom: 16px;

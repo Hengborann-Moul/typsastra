@@ -29,10 +29,13 @@ describe("Tinymist workspace lifecycle", () => {
     expect(source).toContain('restartTinymistSession("Restarting Tinymist for the new main file..."');
     expect(source).toContain('stopTinymistSession("Project closed")');
     expect(source).toContain("tinymistLifecycleQueue");
-    const unpinReset = source.indexOf("this.blockedLargePreviewRoot = null", source.indexOf("private async setPinnedMainFile"));
-    const previewGate = source.indexOf("ensureLargePreviewApproved(path", source.indexOf("private async setPinnedMainFile"));
-    expect(unpinReset).toBeGreaterThan(-1);
-    expect(unpinReset).toBeLessThan(previewGate);
+    const setMainStart = source.indexOf("private async setPinnedMainFile");
+    const setMainEnd = source.indexOf("private async closeProject", setMainStart);
+    const setMainSource = source.slice(setMainStart, setMainEnd);
+    expect(setMainSource).toContain("this.blockedLargePreviewRoot = null");
+    expect(setMainSource).toContain("await this.largePreviewNoticeForRoot(path)");
+    expect(setMainSource).toContain("this.workspaceServicesDeferredForLargeFile = true");
+    expect(setMainSource).toContain('stopTinymistSession("Large Typst file waiting for editor approval")');
     expect(source).toContain("private async restoreActiveDocumentAfterTinymistRestart");
     expect(source).toContain("if (mainChanged && (!path || mainWasAlreadyActive))");
     expect(source).toContain("await this.restoreActiveDocumentAfterTinymistRestart();");

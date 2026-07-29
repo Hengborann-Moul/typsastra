@@ -1660,6 +1660,7 @@ export class PreviewFrame {
     confirmLabel: string;
     onConfirm: () => void | Promise<void>;
     preservePreview?: boolean;
+    pairedGuardrail?: boolean;
   }): void {
     if (options.preservePreview && this.currentUrl) {
       this.setMessageOverlay("");
@@ -1670,6 +1671,11 @@ export class PreviewFrame {
     if (!host) return;
     const placeholder = document.createElement("div");
     placeholder.className = "preview-disabled-placeholder";
+    if (options.pairedGuardrail) {
+      placeholder.classList.add("guardrail-paired-placeholder", "guardrail-preview-placeholder");
+    }
+    const content = document.createElement("div");
+    content.className = "guardrail-placeholder-content";
     const title = document.createElement("div");
     title.className = "preview-disabled-title";
     title.textContent = options.title;
@@ -1689,7 +1695,8 @@ export class PreviewFrame {
         button.textContent = options.confirmLabel;
       });
     });
-    placeholder.append(title, description, button);
+    content.append(title, description, button);
+    placeholder.append(content);
     host.appendChild(placeholder);
   }
 
