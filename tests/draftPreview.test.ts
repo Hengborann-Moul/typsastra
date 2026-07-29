@@ -82,6 +82,9 @@ describe("Draft Preview", () => {
     expect(previewFrame).toContain("this.rememberDraftPointer(event)");
     expect(previewFrame).toContain("elementFromPoint(point.x, point.y)");
     expect(previewFrame).toContain("this.retargetDraftHoverAtPointer()");
+    expect(previewFrame).toContain("this.rememberDraftPointer(event)");
+    expect(previewFrame).toContain("this.scheduleDraftHoverRetarget()");
+    expect(previewFrame).toContain("window.requestAnimationFrame(() => this.retargetDraftHoverAtPointer())");
     expect(previewFrame).toContain('this.motion.current().state !== "moving"');
     expect(previewFrame).toContain("this.isDraftLinkActive(link)");
     expect(previewFrame).not.toContain('link.matches(":hover, :focus")');

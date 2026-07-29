@@ -138,6 +138,7 @@ export class PreviewFrame {
   private draftHoverGeneration = 0;
   private draftHoverLink: HTMLElement | null = null;
   private draftPointerPosition: { x: number; y: number } | null = null;
+  private draftHoverRetargetTimer: number | null = null;
   private pendingRestoredScrollTop: number | null = null;
   private previewPointerInside = false;
 
@@ -1277,7 +1278,10 @@ export class PreviewFrame {
     doc.addEventListener("pointerout", event => {
       const link = (event.target as Element | null)?.closest<HTMLElement>(".draft-image-link");
       const related = event.relatedTarget as Node | null;
-      if (link && (!related || !link.contains(related))) this.hideDraftImagePopover();
+      if (link && (!related || !link.contains(related))) {
+        this.hideDraftImagePopover();
+        this.scheduleDraftHoverRetarget(0);
+      }
     });
     doc.addEventListener("focusin", event => {
       const link = (event.target as Element | null)?.closest<HTMLElement>(".draft-image-link");
@@ -1334,6 +1338,8 @@ export class PreviewFrame {
     }, true);
 
     doc.addEventListener("wheel", event => {
+      this.previewPointerInside = true;
+      this.rememberDraftPointer(event);
       if (event.ctrlKey) {
         event.preventDefault();
         if (event.deltaY < 0) {
@@ -1341,12 +1347,15 @@ export class PreviewFrame {
         } else {
           this.zoomOut();
         }
+      } else {
+        this.scheduleDraftHoverRetarget();
       }
     }, { passive: false });
     this.iframe?.contentWindow?.addEventListener(
       "scroll",
       () => {
         this.hideDraftImagePopover();
+        this.scheduleDraftHoverRetarget();
         this.updateGoToFirstPageButton();
         this.onScrollPositionChanged?.(this.iframe?.contentWindow?.scrollY ?? 0);
         this.deferPageRenderingDuringScroll();
@@ -1608,8 +1617,18 @@ export class PreviewFrame {
     this.draftObjectUrl = null;
   }
 
-  private rememberDraftPointer(event: PointerEvent): void {
+  private rememberDraftPointer(event: Pick<MouseEvent, "clientX" | "clientY">): void {
     this.draftPointerPosition = { x: event.clientX, y: event.clientY };
+  }
+
+  private scheduleDraftHoverRetarget(delay = 90): void {
+    if (this.draftHoverRetargetTimer !== null) {
+      window.clearTimeout(this.draftHoverRetargetTimer);
+    }
+    this.draftHoverRetargetTimer = window.setTimeout(() => {
+      this.draftHoverRetargetTimer = null;
+      window.requestAnimationFrame(() => this.retargetDraftHoverAtPointer());
+    }, delay);
   }
 
   private draftLinkAtPointer(): HTMLElement | null {
