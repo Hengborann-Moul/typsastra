@@ -129,6 +129,11 @@ open unfolded until the user creates and persists a fold.
   image calls and images inside clipped blocks. Other image compositions may
   produce different placeholder sizing or interaction and should be checked in
   Normal Preview.
+- PDF files referenced as image assets are not profiled or replaced by Draft
+  Preview. They remain unchanged for Normal Preview and export. Meaningful
+  optimization guidance requires future analysis of page selection, embedded
+  rasters, vector complexity, fonts, and transparency rather than relying on
+  the PDF's file size alone.
 - The first Draft Preview use must generate thumbnails for uncached images.
   Pathological source images can make that initial preparation noticeably
   slower; later cache hits are substantially faster.
