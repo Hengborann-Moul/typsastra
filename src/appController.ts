@@ -5432,9 +5432,34 @@ export class TypsastraWorkspaceController {
     // Template-aware standalone wrappers use workspace-root (`/...`) imports.
     // Those imports retain the original source IDs even when the wrapper itself
     // is mirrored into the render cache.
-    const generated = usesTemplateAwareStandaloneRoot(path, this.previewRootPath, this.previewStandalone)
+    const keepsOriginalSourceIdentity = usesTemplateAwareStandaloneRoot(
+      path,
+      this.previewRootPath,
+      this.previewStandalone
+    );
+    let generated = keepsOriginalSourceIdentity
       ? undefined
       : this.pdfPreviewGeneratedFiles.get(filePathKey(path));
+    if (
+      !keepsOriginalSourceIdentity
+      && !generated
+      && this.isRenderCachePath(this.pdfPreviewSourceMapRootPath ?? "")
+    ) {
+      // On-save preparation mirrors files without creating editor overlays, so
+      // its generated-file registry starts empty. A real inverse sync used to
+      // populate this entry lazily, which accidentally made the *second*
+      // forward sync work. Load the prepared source before the first request so
+      // Tinymist receives the cache path owned by the hidden source-map task.
+      await this.pdfGeneratedPreviewText(this.mapToOriginalPath(path));
+      generated = this.pdfPreviewGeneratedFiles.get(filePathKey(path));
+      this.appendDeveloperLog({
+        kind: generated ? "info" : "warning",
+        source: "forward sync",
+        message: generated
+          ? `Loaded prepared source identity before forward sync: original=${path}, generated=${generated.generatedPath}.`
+          : `Could not load prepared source identity before forward sync: ${path}.`
+      });
+    }
     if (!generated) {
       const line = editor.state.doc.lineAt(position);
       return {
@@ -5862,10 +5887,27 @@ export class TypsastraWorkspaceController {
     if (this.pdfSourceMapWarmupTimer !== null) {
       window.clearTimeout(this.pdfSourceMapWarmupTimer);
     }
+    const startedAt = performance.now();
     const attempt = () => {
       this.pdfSourceMapWarmupTimer = null;
       if (generation !== this.pdfPreviewGeneration) return;
-      if (this.horizontalPaneResizeActive || this.pdfPreviewRunning) {
+      const prerequisitesReady = this.lspReady
+        && !!this.lspClient
+        && !!(this.pdfPreviewSourceMapRootPath ?? this.previewRootPath)
+        && !!(this.pdfPreviewSourceMapTaskId ?? this.previewTaskId);
+      const interactionBlocksWarmup = this.horizontalPaneResizeActive || this.pdfPreviewRunning;
+      if (
+        interactionBlocksWarmup
+        || !prerequisitesReady
+      ) {
+        if (performance.now() - startedAt >= PDF_SOURCE_MAP_READY_TIMEOUT_MS) {
+          this.appendDeveloperLog({
+            kind: "warning",
+            source: "forward sync",
+            message: "Source-map warm-up was not scheduled because project reload prerequisites did not become ready."
+          });
+          return;
+        }
         this.pdfSourceMapWarmupTimer = window.setTimeout(attempt, 250);
         return;
       }

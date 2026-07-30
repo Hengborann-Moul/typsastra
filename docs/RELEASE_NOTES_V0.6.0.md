@@ -162,5 +162,5 @@ open unfolded until the user creates and persists a fold.
   remove the disposable `.typsastra/cache` directory, after external moves.
 - The experimental macOS build remains unsigned and unnotarized.
 
-See the [v0.6.0 feature showcase](../README.md#v060-feature-showcase) for video
+See the [v0.6.0 feature showcase](https://github.com/Sovichea/typsastra#v060-feature-showcase) for video
 demonstrations.

@@ -35,4 +35,24 @@ describe("Tinymist preview data plane", () => {
     expect(tinymistDataPlaneFrameConfirmsSourceMap("transport")).toBeFalse();
     expect(tinymistDataPlaneFrameConfirmsSourceMap("unknown")).toBeFalse();
   });
+
+  test("keeps retrying warm-up scheduling while a reloaded project initializes", async () => {
+    const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
+    const scheduleStart = source.indexOf("  private schedulePdfSourceMapWarmup");
+    const scheduleEnd = source.indexOf("\n  private ", scheduleStart + 10);
+    const schedule = source.slice(scheduleStart, scheduleEnd);
+    expect(schedule).toContain("prerequisitesReady");
+    expect(schedule).toContain("this.lspReady");
+    expect(schedule).toContain("window.setTimeout(attempt, 250)");
+  });
+
+  test("loads the prepared source identity before the first cache-backed forward sync", async () => {
+    const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
+    const targetStart = source.indexOf("  private async forwardSyncTarget");
+    const targetEnd = source.indexOf("\n  private ", targetStart + 10);
+    const target = source.slice(targetStart, targetEnd);
+    expect(target).toContain("this.isRenderCachePath(this.pdfPreviewSourceMapRootPath");
+    expect(target).toContain("await this.pdfGeneratedPreviewText");
+    expect(target).toContain("Loaded prepared source identity before forward sync");
+  });
 });
