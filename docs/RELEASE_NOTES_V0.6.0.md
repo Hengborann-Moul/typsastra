@@ -90,6 +90,10 @@ Released July 29, 2026.
 
 ## Editor and project workflow
 
+- Expanded the versioned example workspace with focused Draft Preview, image
+  guidance, preview-navigation, and private-local-font exercises, and updated
+  the existing multilingual and research examples to the v0.6.0 typography
+  and language-provider model.
 - Opened files fully unfolded by default and persisted only folds explicitly
   created by the user.
 - Improved contextual completion so function arguments take priority and

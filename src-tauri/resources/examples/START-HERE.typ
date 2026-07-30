@@ -22,12 +22,12 @@ example that matches the feature you want to learn.
 
 == 02. Multilingual writing
 
-- `01-script-font-assignments`: script-specific fonts, Unicode coverage, and
-  independent visual scaling.
+- `01-script-font-assignments`: ordered font fallback and independent visual
+  scaling.
 - `02-language-scoped-spellcheck`: explicit per-script language providers,
-  fail-closed routing, and terminology.
-- `03-keyboard-language-completion`: document-script word completion (the
-  folder name is retained for compatibility with older example workspaces).
+  provider-off behavior, and terminology.
+- `03-keyboard-language-completion`: document-script word completion without
+  keyboard-layout detection (the folder name is retained for compatibility).
 - `04-complex-script-typography`: shaping samples for several complex scripts.
 - `05-script-and-direction-samples`: mixed scripts, CJK, and bidirectional
   rendering samples. First-class RTL editing is planned for v0.9.0.
@@ -44,7 +44,7 @@ English and Khmer are bundled. Optional providers are installed from Settings
 
 == 04. Research projects
 
-- `01-multilingual-article`: the complete multilingual language-scope workflow.
+- `01-multilingual-article`: a complete multilingual document-language workflow.
 - `02-simple-thesis`: chapters, labels, and cross-file references.
 - `03-khmer-folklore-book`: a long-form multi-file Khmer project.
 - `04-typsastra-readme`: templates, imports, bibliography, images, and chapters.
@@ -54,6 +54,15 @@ English and Khmer are bundled. Optional providers are installed from Settings
 - `01-main-and-included-files`: main-document preview ownership.
 - `02-portable-workspace-state`: what Typsastra stores in `.typsastra`.
 - `03-font-free-project-export`: lightweight archives and external font requirements.
+
+== 06. v0.6.0 feature showcase
+
+- `01-draft-preview-and-image-guidance`: Normal/Draft preview, cached hover
+  thumbnails, direct placeholder inverse sync, and image diagnostics.
+- `02-preview-navigation`: manual forward sync plus internal and external
+  clickable references.
+- `03-private-local-fonts`: machine-local font directories, source portability,
+  fallback order, and export boundaries.
 
 Open a `main.typ` file from Explorer. Set it as the project main file when the
 example contains included files. Your installed examples are writable. Each

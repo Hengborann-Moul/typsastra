@@ -18,6 +18,8 @@ Khmer is the first language with deep support, including tailored cursor and del
 
 == Highlights
 
+- Normal and Draft Preview for responsive image-heavy authoring.
+- Cached image hover cards and non-destructive image optimization guidance.
 - Local-first desktop authoring with ordinary, portable Typst source files.
 - CodeMirror editing with Unicode-safe ranges and complex-script font fallback.
 - Script-aware editing-policy registry with deeply tailored Khmer behavior.
@@ -27,7 +29,9 @@ Khmer is the first language with deep support, including tailored cursor and del
 - Independent controls for script-aware editing, spellcheck, and typing suggestions.
 - Tinymist diagnostics and managed Typst tooling.
 - Virtualized PDF preview designed for long documents and constrained memory use.
+- Manual forward sync, inverse sync, and discoverable internal or external links.
 - Main-document preview workflows for multi-file projects.
+- Private local font directories that never redistribute font binaries.
 - Project support for templates, chapters, includes, bibliography files, figures, and external assets.
 - Contributor framework for adding new complex-script languages without modifying core editor code.
 

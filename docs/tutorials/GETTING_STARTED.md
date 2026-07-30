@@ -30,6 +30,16 @@ Use the preview page field to jump to a page. Use **Reveal Cursor in Preview**
 or `Alt+Enter` (`Option+Enter` on macOS) for manual forward sync. Double-click
 supported preview content for inverse sync.
 
+For an image-heavy document, switch the preview toolbar from **Normal** to
+**Draft**. Typsastra replaces supported raster-image calls only in its private
+render mirror, preserving the source and original images for PDF export. Hover
+a placeholder to inspect a cached thumbnail, original dimensions, and encoded
+source size. Image warnings remain recommendations: Typsastra identifies
+expensive assets but never resizes or re-encodes them automatically.
+
+Try the bundled `06-v0.6-feature-showcase` examples for Draft Preview, image
+guidance, preview links, manual synchronization, and private local fonts.
+
 ## Save and export
 
 Save with `Ctrl+S` or `Cmd+S`. Export a PDF for the current preview target from

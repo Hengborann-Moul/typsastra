@@ -47,6 +47,10 @@ Khmer is the first language with deep support, including tailored cursor and del
 
 Typsastra v0.6.0 focuses on responsive image-heavy authoring, document typography, private font workflows, and clearer navigation between Typst source and the rendered document.
 
+Choose **Open Examples** from the welcome screen and follow
+`06-v0.6-feature-showcase` for editable Draft Preview, image-diagnostic,
+preview-navigation, and private-font exercises.
+
 ### Draft Preview
 
 Draft Preview replaces supported image calls in Typsastra’s private render mirror with lightweight, layout-preserving placeholders. Hover over a placeholder to inspect a cached thumbnail without adding the full image to the draft document. Normal Preview and exported PDFs continue to use the original images.

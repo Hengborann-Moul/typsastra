@@ -446,7 +446,7 @@ mod tests {
     }
 
     #[test]
-    fn v051_learning_path_and_readmes_are_bundled() {
+    fn current_learning_path_and_readmes_are_bundled() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("resources/examples");
         for relative in [
             "README.md",
@@ -458,6 +458,12 @@ mod tests {
             "05-project-portability/01-main-and-included-files/main.typ",
             "05-project-portability/02-portable-workspace-state/main.typ",
             "05-project-portability/03-font-free-project-export/main.typ",
+            "06-v0.6-feature-showcase/01-draft-preview-and-image-guidance/main.typ",
+            "06-v0.6-feature-showcase/01-draft-preview-and-image-guidance/README.md",
+            "06-v0.6-feature-showcase/02-preview-navigation/main.typ",
+            "06-v0.6-feature-showcase/02-preview-navigation/README.md",
+            "06-v0.6-feature-showcase/03-private-local-fonts/main.typ",
+            "06-v0.6-feature-showcase/03-private-local-fonts/README.md",
         ] {
             assert!(
                 root.join(relative).is_file(),
