@@ -263,7 +263,10 @@ fn collect_reachable_typst_files(project_root: &Path, entry_file: &Path) -> Hash
     let mut reachable = HashSet::new();
     let mut pending = VecDeque::from([entry_file]);
     while let Some(source_path) = pending.pop_front() {
-        if source_path.extension().and_then(|extension| extension.to_str()) != Some("typ")
+        if source_path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            != Some("typ")
             || !source_path.starts_with(&project_root)
             || !reachable.insert(source_path.clone())
         {
@@ -276,7 +279,10 @@ fn collect_reachable_typst_files(project_root: &Path, entry_file: &Path) -> Hash
         for dependency in crate::local_typst_dependencies(&source, parent) {
             let dependency = canonical_or_original(&dependency);
             if dependency.starts_with(&project_root)
-                && dependency.extension().and_then(|extension| extension.to_str()) == Some("typ")
+                && dependency
+                    .extension()
+                    .and_then(|extension| extension.to_str())
+                    == Some("typ")
                 && !reachable.contains(&dependency)
             {
                 pending.push_back(dependency);
@@ -1337,20 +1343,21 @@ mod tests {
         let prepared = mirror_project_cancellable(&options, None, || false).unwrap();
 
         assert_eq!(prepared.draft_assets.len(), 1);
-        assert_eq!(prepared.draft_assets[0].path, canonical_or_original(&included_image));
+        assert_eq!(
+            prepared.draft_assets[0].path,
+            canonical_or_original(&included_image)
+        );
         assert_eq!(
             prepared.draft_reachable_files,
-            [canonical_or_original(&chapter), canonical_or_original(&main)]
+            [
+                canonical_or_original(&chapter),
+                canonical_or_original(&main)
+            ]
         );
         assert!(
-            fs::read_to_string(
-                options
-                    .cache_root
-                    .join("render")
-                    .join("unrelated.typ")
-            )
-            .unwrap()
-            .contains("draft-preview.typsastra.invalid"),
+            fs::read_to_string(options.cache_root.join("render").join("unrelated.typ"))
+                .unwrap()
+                .contains("draft-preview.typsastra.invalid"),
             "unrelated Typst files should remain prepared for mirror correctness"
         );
     }

@@ -172,14 +172,7 @@ pub fn prepare_draft_images(
             block_arguments.push("width: 100%,".into());
         }
         let mut generated = if uses_default_width {
-            intrinsic_ratio_draft_placeholder(
-                &id,
-                &raw_path,
-                width,
-                height,
-                &block_arguments,
-                true,
-            )
+            intrinsic_ratio_draft_placeholder(&id, &raw_path, width, height, &block_arguments, true)
         } else if call.has_width == call.has_height {
             fixed_draft_placeholder(&id, &raw_path, &block_arguments, &call)
         } else {

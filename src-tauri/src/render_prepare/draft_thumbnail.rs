@@ -858,10 +858,8 @@ mod tests {
         fs::write(&first, "= First").unwrap();
         fs::write(&second, "= Second").unwrap();
 
-        let first_namespace =
-            thumbnail_document_namespace(workspace.path(), &first).unwrap();
-        let second_namespace =
-            thumbnail_document_namespace(workspace.path(), &second).unwrap();
+        let first_namespace = thumbnail_document_namespace(workspace.path(), &first).unwrap();
+        let second_namespace = thumbnail_document_namespace(workspace.path(), &second).unwrap();
 
         assert_ne!(first_namespace, second_namespace);
         assert_eq!(
