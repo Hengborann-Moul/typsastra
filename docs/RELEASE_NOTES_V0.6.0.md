@@ -41,6 +41,9 @@ Released July 29, 2026.
 - Kept absolute font paths in machine-local settings only. Typsastra never
   copies private font binaries into `.typsastra`, project archives, generated
   font variants, or exports.
+- Supported desktop TTF, OTF, TTC, and OTC files from private directories.
+  WOFF and WOFF2 remain unsupported web-font formats; variable TTF and OTF
+  files are supported at `1.0×`, without arbitrary variation-axis controls.
 
 ## Language tools and document typography
 

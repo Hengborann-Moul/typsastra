@@ -132,6 +132,14 @@ the active Tinymist session. These compiler-only paths do not add fonts to the
 CodeMirror code-font or Unicode UI-font selectors because the WebView cannot
 load an arbitrary filesystem font as an installed browser font.
 
+Private directory discovery supports `.ttf`, `.otf`, `.ttc`, and `.otc`.
+Collections are available at their original scale but cannot be transformed
+into scaled variants. WOFF and WOFF2 files are ignored; a directory containing
+only those web-font formats is rejected. Variable TTF and OTF files are
+available at `1.0×`, but Document Typography does not expose arbitrary
+variation axes and non-unit scaling remains experimental. See
+[Document typography](DOCUMENT_TYPOGRAPHY.md#supported-private-font-formats).
+
 Typsastra never downloads fonts without confirmation and does not repeat a recommendation the user declines. MiSans downloads and use are subject to Xiaomi's [MiSans license agreement](https://hyperos.mi.com/font/en/download/); Noto fonts use the [SIL Open Font License](https://openfontlicense.org/).
 
 The selected Unicode fallback is also included in Typsastra's own UI font stack for app-rendered text such as search controls, hover popups, and preview status messages.

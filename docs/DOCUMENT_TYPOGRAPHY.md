@@ -136,6 +136,28 @@ fonts. Those selectors continue to use browser-accessible installed fonts.
 Recipients must configure or install the same family themselves; the Typst
 source remains ordinary and does not contain the private machine path.
 
+### Supported private font formats
+
+Private directory discovery supports individual TrueType and OpenType fonts
+(`.ttf` and `.otf`) and font collections (`.ttc` and `.otc`). Collections can
+be used at their original `1.0` scale, but Typsastra cannot generate scaled
+variants from an individual face inside a collection.
+
+WOFF and WOFF2 are web-delivery formats and are not loaded from private font
+directories. They are ignored when supported desktop fonts are present in the
+same directory. A directory containing only WOFF or WOFF2 files is rejected as
+having no supported fonts. Obtain a desktop TTF or OTF release from the font
+publisher instead of renaming or redistributing the web-font file.
+
+Variable fonts are supported when packaged as TTF or OTF. At `1.0` scale,
+Typsastra passes the original file to Tinymist without creating named
+instances. Document Typography selects the family and does not expose
+arbitrary variation axes; Typst remains responsible for supported weight,
+style, and stretch selection. Non-unit scaling preserves the font's variation
+tables while changing its em square, but this path is not qualified across all
+variable-font implementations and inherits the experimental PDF-scaling
+limitation below.
+
 ## Uniform script scaling
 
 Every script entry accepts a uniform scale from `0.5` to `2.0`, relative to the

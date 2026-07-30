@@ -65,6 +65,13 @@ Assign fonts and language providers by writing script from one document-focused 
 
 https://github.com/user-attachments/assets/f58e3133-e900-4a4b-9c63-7dee587b7e90
 
+Fine per-script scaling can optically balance fonts whose glyphs appear at
+different sizes even when Typst gives them the same point size:
+
+<p align="center">
+  <img src="./assets/screenshot-font-scaling.png" alt="Khmer and Latin text before and after a 10 percent Khmer font adjustment in Typsastra" width="800"/>
+</p>
+
 
 
 ### Source and document navigation
