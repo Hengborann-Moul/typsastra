@@ -1,4 +1,4 @@
-#set document(title: "Script-Specific Font Assignments")
+#set document(title: "Multiscript Font Fallback")
 #set page(margin: 24mm)
 // typsastra:typography:start
 // typsastra:document-scripts [{"family":"New Computer Modern","script":"latin","scale":1,"language":"en-US"},{"family":"MiSans Khmer","script":"khmer","scale":1,"language":"km"},{"family":"MiSans Arabic","script":"arabic","scale":1,"language":"ar"}]
@@ -14,7 +14,7 @@
 #set heading(numbering: "1.")
 #set text(lang: "en")
 
-= Script-specific font assignments
+= Multiscript font fallback
 
 Typst applies one size to every family in a normal font fallback stack. Fonts
 for different scripts may therefore look unbalanced at the same point size.
@@ -25,9 +25,10 @@ prevent New Computer Modern from being used.
 
 == Typsastra's solution
 
-Document Typography assigns a font and optional scale to each script. By
-default, the rows produce the same ordered fallback stack you would write in
-Typst. This example puts Latin first, followed by Khmer and Arabic:
+Document Typography records a preferred font and optional scale for each
+script. The rows produce the same ordered fallback stack you would write in
+Typst, and Typst still chooses the first family containing each glyph. This
+example puts Latin first, followed by Khmer and Arabic:
 
 ```typ
 font: ("New Computer Modern", "MiSans Khmer", "MiSans Arabic")
@@ -40,17 +41,10 @@ Western digits to the Khmer font. However, MiSans Khmer also contains Latin
 glyphs, so embedded English may never reach New Computer Modern. Putting Latin
 first fixes English but gives those shared characters to the Latin font.
 
-This is why **Override** exists. Select it on the Khmer row to restrict every
-font by Unicode Script Extensions (`scx`), give shared characters to MiSans
-Khmer, and still route actual Latin letters to New Computer Modern:
-
-```typ
-(name: "MiSans Khmer", covers: regex("[\p{scx=Khmer}\p{scx=Common}]"))
-(name: "New Computer Modern", covers: regex("\p{scx=Latin}"))
-```
-
-Use ordinary fallback whenever its order already produces the intended result.
-Clearing the checkbox restores that default behavior.
+Typsastra 0.6 uses ordinary Typst fallback order. Choose the order that best
+matches the document's dominant typography. Script-specific font enforcement
+is intentionally deferred until its behavior for shared digits, punctuation,
+and inherited marks can be made predictable.
 
 == Independent visual scaling
 

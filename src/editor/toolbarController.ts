@@ -12,7 +12,6 @@ import {
 import {
   detectTypographyScripts,
   isTypstInternalOnlyFont,
-  normalizeCommonOverride,
   parseTypographyBlock,
   preferredInstalledFamily,
   TYPST_INTERNAL_FONT_FAMILIES,
@@ -452,15 +451,6 @@ export class EditorToolbarController {
     const language = document.createElement("select");
     language.dataset.fallbackLanguage = "";
     language.setAttribute("aria-label", "Script language tools");
-    const common = document.createElement("input");
-    common.dataset.fallbackCommon = "";
-    common.type = "checkbox";
-    common.checked = fallback.common === true;
-    common.setAttribute("aria-label", "Use this font for numbers and punctuation");
-    common.title = "Override the fallback order for spaces, numbers, punctuation, and shared symbols";
-    const commonLabel = document.createElement("label");
-    commonLabel.className = "document-typography-common-control";
-    commonLabel.append(common, document.createTextNode("Override"));
     const remove = document.createElement("button");
     remove.type = "button";
     remove.className = "toolbar-remove-fallback";
@@ -496,7 +486,6 @@ export class EditorToolbarController {
       scriptCell,
       cell("Font", font, hint),
       cell("Scale", scale, scaleWarning),
-      cell("Numbers / punctuation", commonLabel),
       cell("Language tools", language),
       cell("Status", status),
       cell("", remove),
@@ -522,14 +511,6 @@ export class EditorToolbarController {
       this.updateTypographyAvailability();
     });
     language.addEventListener("change", () => this.populateRowLanguages(row, script.value, language.value || null));
-    common.addEventListener("change", () => {
-      if (!common.checked) return;
-      this.fallbackRows().forEach(other => {
-        if (other === row) return;
-        const checkbox = other.querySelector<HTMLInputElement>("[data-fallback-common]");
-        if (checkbox) checkbox.checked = false;
-      });
-    });
     scale.addEventListener("input", () => this.updateRowScaleAvailability(row));
     this.updateRowScaleAvailability(row);
     settingsButton.addEventListener("click", () => {
@@ -619,12 +600,12 @@ export class EditorToolbarController {
     const preferred = existing ?? this.rememberedTypography;
     const detected = detectTypographyScripts(text);
     const scripts = detected.length > 0 ? detected : [typographyScripts[0]];
-    const fonts = normalizeCommonOverride(preferred?.fonts ?? scripts.map(script => ({
+    const fonts = preferred?.fonts ?? scripts.map(script => ({
       script: script.id,
       family: preferredInstalledFamily(script, this.supportedFonts(script.id)) ?? this.supportedFonts(script.id)[0] ?? "",
       scale: 1,
       language: null
-    })));
+    }));
     this.typographyDefaults = {
       baseSizePt: preferred?.baseSizePt ?? 11,
       fonts
@@ -674,8 +655,7 @@ export class EditorToolbarController {
         family,
         script: this.rowScript(row).value,
         scale: this.boundedTypographyNumber(row.querySelector<HTMLInputElement>("[data-fallback-scale]")?.value ?? "1", 0.5, 2, 1),
-        language: row.querySelector<HTMLSelectElement>("[data-fallback-language]")?.value || null,
-        ...(row.querySelector<HTMLInputElement>("[data-fallback-common]")?.checked ? { common: true } : {})
+        language: row.querySelector<HTMLSelectElement>("[data-fallback-language]")?.value || null
       }];
     });
     if (fonts.length === 0) return;
@@ -730,15 +710,14 @@ export class EditorToolbarController {
             family: font.family,
             script: font.script,
             scale: this.boundedTypographyNumber(String(font.scale), 0.5, 2, 1),
-            language: typeof font.language === "string" ? font.language : null,
-            ...("common" in font && font.common === true ? { common: true } : {})
+            language: typeof font.language === "string" ? font.language : null
           }]
           : []
       ).filter((font, index, all) => all.findIndex(candidate => candidate.script === font.script) === index);
       if (fonts.length === 0) return null;
       return {
         baseSizePt: this.boundedTypographyNumber(String(baseSizePt), 6, 96, 11),
-        fonts: normalizeCommonOverride(fonts)
+        fonts
       };
     } catch {
       return null;

@@ -1,8 +1,9 @@
 # Document typography
 
-Typsastra assigns a font and optional scale directly to each writing script.
-There is no primary or embedded typography role: Latin, Khmer, Arabic, and
-other scripts use the same configuration model and may be listed in any order.
+Typsastra records a preferred font and optional scale for each writing script,
+then writes those families as an ordinary ordered Typst fallback stack. There
+is no primary or embedded typography role: Latin, Khmer, Arabic, and other
+scripts use the same configuration model and may be listed in any order.
 
 ## Problems addressed
 
@@ -12,9 +13,9 @@ point size may not look balanced.
 
 A font may also contain glyphs for several scripts. For example, a Khmer family
 may contain Latin glyphs. In an ordinary ordered stack, placing that family
-first can prevent the intended Latin family from being reached. Typsastra keeps
-ordinary fallback as the default and offers an explicit shared-character
-override when an author needs strict script ownership.
+first can prevent the intended Latin family from being reached. Typsastra 0.6
+uses ordinary Typst fallback order and does not enforce script-specific font
+ownership. Strict script routing remains an area for future exploration.
 
 Regex show rules can force another font or size onto a script, but they
 reconstruct matching content. Forward and inverse sync can then resolve to a
@@ -43,67 +44,31 @@ the same meaning it has in a handwritten Typst document:
 This is the most portable and predictable default. If an earlier font contains
 a requested glyph, Typst uses it; otherwise Typst proceeds through the stack.
 
-## Optional numbers and punctuation override
+## Fallback order and mixed scripts
 
-Ordinary order cannot always satisfy a mixed-script document. Consider a
-Khmer-dominant document that should use Siemreap for Khmer and shared
-punctuation, but Calibri for embedded English:
+Ordinary order cannot guarantee a distinct family for every script when an
+earlier font contains glyphs for later scripts:
 
-- `("Calibri", "Siemreap")` reaches the desired Latin font, but also gives
-  Western digits and shared punctuation to Calibri.
-- `("Siemreap", "Calibri")` gives those shared characters to Siemreap, but
-  Siemreap also contains Latin glyphs, so embedded English may never reach
-  Calibri.
+- `("Calibri", "Siemreap")` preserves Calibri for Latin text and normally uses
+  it for Western digits and shared punctuation.
+- `("Siemreap", "Calibri")` gives Siemreap priority, but its bundled Latin
+  glyphs may prevent embedded English from reaching Calibri.
 
-The override resolves these two requirements independently. It is unnecessary
-when ordinary fallback order already produces the intended typography.
-
-The **Override** checkbox beside a script is optional. At most one row can be
-selected. Selecting it asks that font to own Unicode `Common` characters,
-including spaces, Western digits, generic punctuation, and many shared symbols.
-Typsastra then restricts every configured font to its assigned script:
-
-```typst
-// typsastra:document-scripts [{"family":"Siemreap","script":"khmer","scale":1,"language":"km","common":true},{"family":"Calibri","script":"latin","scale":1,"language":"en-US"}]
-#set text(
-  font: (
-    (name: "Siemreap", covers: regex("[\p{scx=Khmer}\p{scx=Common}]")),
-    (name: "Calibri", covers: regex("\p{scx=Latin}")),
-  ),
-  size: 11pt,
-)
-```
-
-Clearing the checkbox returns the document to ordinary fallback mode. Selecting
-another row moves ownership to that row; Typsastra never writes more than one
-`"common": true` entry. In the example above, Khmer letters and shared
-characters use Siemreap while Latin letters use Calibri, regardless of the
-extra Latin glyphs bundled in Siemreap.
-
-`scx` is the Unicode Script Extensions property. It includes characters that
-Unicode associates with a script, including relevant marks that may not have
-that script as their primary `Script` property.
-
-Font coverage descriptors require Typst 0.13 or newer, matching Typsastra's
-supported managed-toolchain baseline.
+For v0.6, choose the order that best matches the document's dominant
+typography. Typsastra deliberately keeps the generated rule simple and
+portable. Script-specific enforcement may be introduced later only after its
+handling of punctuation, digits, inherited marks, and mixed-script shaping has
+been fully defined.
 
 The Document Typography dialog lets authors drag script rows into the desired
 priority order. A focused drag handle also supports Up and Down Arrow for
-keyboard reordering. In default mode this is the actual Typst fallback order.
-In override mode, script restrictions prevent one font's extra glyphs from
-capturing another configured script, so reordering does not change ownership
-of the selected shared characters.
-
-Inherited marks are not automatically assigned to the override font. Typst continues
-to resolve them through its shaping and fallback context; script-specific
-letters and Script Extensions marks remain restricted by the descriptors above.
+keyboard reordering. This is the actual Typst fallback order.
 
 The metadata comment is ignored by Typst. Typsastra uses it to restore the
 toolbar configuration, prepare private cached font variants, and select one
 optional language-tools provider per script. Older typography metadata is
-migrated when Typsastra reads and reapplies the configuration. The former
-format that gave `Common` coverage to every row is interpreted as an override
-owned by its first row, preserving its effective shared-character priority.
+migrated when Typsastra reads and reapplies the configuration. Retired
+shared-mark metadata is ignored and removed the next time the rule is applied.
 
 ## Private local font directories
 

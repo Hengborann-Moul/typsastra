@@ -62,7 +62,7 @@ describe("document typography", () => {
       .toEqual([{ family: "Khmer", script: "khmer", scale: 1, language: null }]);
     expect(parseDocumentScripts('// typsastra:document-scripts [{"family":"Latin","script":"latin","scale":1,"common":true},{"family":"Khmer","script":"khmer","scale":1,"common":true}]'))
       .toEqual([
-        { family: "Latin", script: "latin", scale: 1, language: null, common: true },
+        { family: "Latin", script: "latin", scale: 1, language: null },
         { family: "Khmer", script: "khmer", scale: 1, language: null }
       ]);
   });
@@ -147,22 +147,29 @@ describe("document typography", () => {
     expect(parseTypographyBlock(latinBlock)).toEqual(latinOnly);
   });
 
-  test("lets exactly one script override fallback for shared characters", () => {
-    const advanced = {
+  test("always renders ordinary fallback and drops retired shared-mark metadata", () => {
+    const formerOverride = {
       baseSizePt: 11,
       fonts: [
         { family: "Siemreap", script: "khmer", scale: 1, language: "km" },
         { family: "Calibri", script: "latin", scale: 1, language: "en-US", common: true }
       ]
     };
-    const block = renderTypographyBlock(advanced);
-    expect(block).toContain('(name: "Siemreap", covers: regex("\\p{scx=Khmer}"))');
-    expect(block).toContain('(name: "Calibri", covers: regex("[\\p{scx=Latin}\\p{scx=Common}]"))');
-    expect(block).toContain('"common":true');
-    expect(parseTypographyBlock(block)).toEqual(advanced);
+    const block = renderTypographyBlock(formerOverride);
+    expect(block).toContain('    "Siemreap",');
+    expect(block).toContain('    "Calibri",');
+    expect(block).not.toContain("covers:");
+    expect(block).not.toContain('"common":true');
+    expect(parseTypographyBlock(block)).toEqual({
+      baseSizePt: 11,
+      fonts: [
+        { family: "Siemreap", script: "khmer", scale: 1, language: "km" },
+        { family: "Calibri", script: "latin", scale: 1, language: "en-US" }
+      ]
+    });
   });
 
-  test("preserves the first-row priority of the former all-Common format", () => {
+  test("reads the former coverage format but rewrites it as ordinary fallback", () => {
     const legacy = [
       "// typsastra:typography:start",
       '// typsastra:document-scripts [{"family":"Khmer","script":"khmer","scale":1},{"family":"Latin","script":"latin","scale":1}]',
@@ -175,10 +182,13 @@ describe("document typography", () => {
       ")",
       "// typsastra:typography:end"
     ].join("\n");
-    expect(parseTypographyBlock(legacy)?.fonts).toEqual([
-      { family: "Khmer", script: "khmer", scale: 1, language: null, common: true },
+    const parsed = parseTypographyBlock(legacy);
+    expect(parsed?.fonts).toEqual([
+      { family: "Khmer", script: "khmer", scale: 1, language: null },
       { family: "Latin", script: "latin", scale: 1, language: null }
     ]);
+    expect(renderTypographyBlock(parsed!)).toContain('    "Khmer",');
+    expect(renderTypographyBlock(parsed!)).not.toContain("covers:");
   });
 
   test("supports disabling managed typography", () => {

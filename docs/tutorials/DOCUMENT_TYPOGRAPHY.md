@@ -14,8 +14,8 @@ This creates two practical problems:
 - a font listed first may contain another script and prevent that script's
   intended font from being used.
 
-Typsastra preserves the familiar fallback stack by default and can optionally
-restrict each font to one script without rewriting document content.
+Typsastra preserves the familiar fallback stack without rewriting document
+content.
 
 ## Configure script fonts
 
@@ -26,9 +26,7 @@ restrict each font to one script without rewriting document content.
 5. Optionally assign the language provider used for spellcheck and completion.
 6. Drag the script rows into priority order. With the drag handle focused, Up
    and Down Arrow provide the same operation from the keyboard.
-7. Optional: select **Override** on one row if that font should own numbers,
-   punctuation, spaces, and other shared symbols.
-8. Choose **Apply to document**, or **Apply as template** for shared project
+7. Choose **Apply to document**, or **Apply as template** for shared project
    typography.
 
 For example:
@@ -40,7 +38,7 @@ Latin          MiSans Latin    1.10×
 Arabic         MiSans Arabic   1.00×
 ```
 
-With no override selected, Typsastra generates an ordinary ordered fallback:
+Typsastra generates an ordinary ordered fallback:
 
 ```typst
 font: ("MiSans Khmer", "MiSans Latin", "MiSans Arabic")
@@ -55,19 +53,10 @@ fonts:
   Khmer family, but many Khmer fonts also contain Latin glyphs. Embedded English
   may therefore use the Khmer family without ever reaching MiSans Latin.
 
-This overlapping coverage is the main reason to enable **Override**. If Khmer
-owns the override, Typsastra generates descriptors like:
-
-```typst
-(name: "MiSans Khmer", covers: regex("[\p{scx=Khmer}\p{scx=Common}]"))
-(name: "MiSans Latin", covers: regex("\p{scx=Latin}"))
-```
-
-`scx` means Unicode Script Extensions. The restriction prevents a Khmer font's
-built-in Latin glyphs from taking ownership of embedded English. `Common` gives
-the selected Khmer font spaces, Western digits, generic punctuation, and shared
-symbols. The result is Khmer typography for the dominant text and MiSans Latin
-for actual Latin letters. Clear the checkbox to return to ordinary fallback.
+For v0.6, choose the order that best matches the dominant typography. Strict
+script-font enforcement is not enabled because shared digits, punctuation,
+inherited marks, and fonts with overlapping glyph coverage require a clearer
+authoring model. Typsastra may explore that model in a later release.
 
 Typsastra asks for confirmation before generating a scaled font. Generated
 variants live only in Typsastra's private global application-data cache, where

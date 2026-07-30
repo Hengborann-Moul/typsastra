@@ -2086,7 +2086,7 @@
                         <div class="document-typography-section-header">
                             <div>
                                 <h3 id="document-scripts-title">Document scripts</h3>
-                                <p id="document-scripts-description">Drag scripts into fallback order. Optionally let one font override that order for numbers and punctuation.</p>
+                                <p id="document-scripts-description">Drag scripts into the ordinary Typst fallback order used by the document.</p>
                             </div>
                             <button id="toolbar-add-script-font" type="button">+ Add script</button>
                         </div>
@@ -2094,7 +2094,6 @@
                             <span>Order / Script</span>
                             <span>Font</span>
                             <span>Scale</span>
-                            <span>Shared marks</span>
                             <span>Language tools</span>
                             <span>Status</span>
                             <span></span>
@@ -2106,9 +2105,8 @@
                     <details class="document-typography-about">
                         <summary>About document scripts</summary>
                         <p>
-                            By default, fonts use ordinary Typst fallback order. Select Override on one script only when
-                            that font should own spaces, numbers, punctuation, and shared symbols; this restricts every
-                            configured font to its assigned script and gives Unicode Common characters to the selected font.
+                            Fonts use ordinary Typst fallback order. Earlier fonts may supply numbers, punctuation, or
+                            glyphs for another configured script, so arrange the list for the document's dominant typography.
                             Scale is intended for small visual corrections; values beyond &plusmn;10% may vary between fonts.
                             Typsastra writes portable Typst font assignments where possible and preserves source synchronization.
                         </p>

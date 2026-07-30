@@ -47,6 +47,10 @@ Released July 29, 2026.
 
 ## Language tools and document typography
 
+- Simplified generated document typography to ordinary ordered Typst font
+  fallback. The short-lived shared-mark override and its `scx` coverage
+  descriptors are not part of v0.6.0; script-specific enforcement remains a
+  future design area.
 - Routed spellcheck and word completion from each file's Document Typography
   configuration, allowing files in one project to select different language
   providers.
