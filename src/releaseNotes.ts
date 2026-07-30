@@ -6,6 +6,17 @@ export type ReleaseSummary = {
 };
 
 const releaseSummaries: Record<string, ReleaseSummary> = {
+  "0.6.1": {
+    version: "0.6.1",
+    title: "Lower-memory PDF loading",
+    highlights: [
+      "Progressive PDF range loading avoids transferring an entire large PDF into the WebView before preview can begin.",
+      "Large release-build previews use substantially less peak memory while retaining responsive settled-page rendering.",
+      "Immutable preview generations prevent Windows file-lock failures when switching between Normal and Draft modes.",
+      "Typsastra v0.6.1 otherwise retains the complete v0.6.0 feature set and project compatibility."
+    ],
+    detailsUrl: "https://github.com/Sovichea/typsastra/releases/tag/v0.6.1"
+  },
   "0.6.0": {
     version: "0.6.0",
     title: "Draft Preview and private font workflows",

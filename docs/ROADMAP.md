@@ -324,7 +324,7 @@ The long-term research tasks and gates are in the [v2 implementation plan](./V2_
 
 ## Current release status
 
-Typsastra is beta software. The latest release is v0.6.0; see the
-[release notes](./RELEASE_NOTES_V0.6.0.md). Planned development continues with
+Typsastra is beta software. The latest release is v0.6.1; see the
+[release notes](./RELEASE_NOTES_V0.6.1.md). Planned development continues with
 v0.7.0 resource-aware authoring, v0.8.0 portable preview scopes, and v0.9.0
 prerelease RTL hardening.
