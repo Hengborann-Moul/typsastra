@@ -187,6 +187,16 @@ describe("theme-aware application accents", () => {
     expect(editorThemes).toContain(
       'backgroundColor: "var(--ui-word-selection-focus-background, rgba(3, 102, 214, 0.52)) !important"',
     );
+    const selectionLayerTheme = editorThemes.slice(
+      editorThemes.indexOf('"& .cm-selectionLayer .cm-selectionBackground"'),
+      editorThemes.indexOf('"& .cm-content .cm-line::selection'),
+    );
+    expect(selectionLayerTheme).toContain(
+      'backgroundColor: "var(--ui-word-selection-background, rgba(3, 102, 214, 0.4)) !important"',
+    );
+    expect(selectionLayerTheme).not.toContain(
+      'backgroundColor: "transparent !important"',
+    );
     expect(editorThemes).not.toContain(".cm-content ::selection");
     expect(editorThemes).not.toContain("ui-word-selection-outline");
     expect(editorThemes).not.toContain('".typsastra-text-selection::before"');
