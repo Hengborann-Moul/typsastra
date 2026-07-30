@@ -16,7 +16,11 @@
     "tauri": "tauri",
     "dev:update": "bun run tauri:dev:update",
     "tauri:dev:update": "tauri dev --config src-tauri/tauri.update-test.conf.json",
-    "tauri:dev:macos-titlebar": "tauri dev --config src-tauri/tauri.macos-layout-test.conf.json"
+    "tauri:dev:macos-titlebar": "tauri dev --config src-tauri/tauri.macos-layout-test.conf.json",
+    "tauri:dev:pdf-full": "bun scripts/run-pdf-transport-experiment.ts full",
+    "tauri:dev:pdf-range": "bun scripts/run-pdf-transport-experiment.ts range",
+    "tauri:release:pdf-full": "bun scripts/run-pdf-transport-experiment.ts full release",
+    "tauri:release:pdf-range": "bun scripts/run-pdf-transport-experiment.ts range release"
   },
   "dependencies": {
     "@babel/runtime": "^8.0.0",

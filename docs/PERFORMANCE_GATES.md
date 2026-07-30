@@ -45,6 +45,10 @@ These CLI values measure reproducibility and compiler cost, not WebView renderin
 - Spellcheck maps existing issues through edits, expands only changed logical ranges, coalesces overlaps, and permits one active plus one queued request.
 - Suggestions use provider indexes. Khmer edit-distance ranking is capped at 1,000 candidates and completion scanning at 1,024 candidates.
 - PDF preview presentation reads the first page geometry synchronously, estimates the remaining slots, and hydrates exact page sizes in yielding background batches.
+- PDF files are opened through bounded byte-range requests. The complete PDF must
+  not cross the Tauri-to-WebView IPC boundary as one JavaScript buffer; release
+  qualification found that an approximately 76 MiB PDF temporarily expanded
+  WebView working-set memory by more than 2 GiB on Windows.
 - Only the focused window of at most seven pages retains canvases. The obsolete invisible PDF text layer is not built; source synchronization remains coordinate-based and links use the annotation layer.
 - Preview iframe scrollbar rules target its scrolling body instead of every rendered PDF element.
 - Visible page canvases render through a priority queue using PDF.js hardware acceleration, direct canvas ownership, and browser FontFace rendering.

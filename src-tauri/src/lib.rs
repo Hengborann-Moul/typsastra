@@ -681,6 +681,236 @@ fn read_binary_file(path: String) -> Result<tauri::ipc::Response, String> {
     Ok(tauri::ipc::Response::new(bytes))
 }
 
+#[derive(Default)]
+struct PdfRangeSources {
+    next_id: AtomicU64,
+    sources: Mutex<HashMap<u64, PdfRangeSource>>,
+}
+
+struct PdfRangeSource {
+    file: std::fs::File,
+    length: u64,
+    path: PathBuf,
+    delete_on_close: bool,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PdfRangeSourceInfo {
+    source_id: u64,
+    length: u64,
+}
+
+#[tauri::command]
+fn open_pdf_range_source(
+    state: tauri::State<'_, PdfRangeSources>,
+    path: String,
+    delete_on_close: Option<bool>,
+) -> Result<PdfRangeSourceInfo, String> {
+    let io_path = std::fs::canonicalize(&path).unwrap_or_else(|_| PathBuf::from(&path));
+    let file = std::fs::File::open(&io_path)
+        .map_err(|error| format!("Failed to open PDF range source: {error}"))?;
+    let metadata = file
+        .metadata()
+        .map_err(|error| format!("Failed to inspect PDF range source: {error}"))?;
+    if !metadata.is_file() {
+        return Err("The PDF range source is not a file.".to_string());
+    }
+    let length = metadata.len();
+    let source_id = state.next_id.fetch_add(1, Ordering::Relaxed) + 1;
+    state
+        .sources
+        .lock()
+        .map_err(|_| "The PDF range source registry is unavailable.".to_string())?
+        .insert(
+            source_id,
+            PdfRangeSource {
+                file,
+                length,
+                path: io_path,
+                delete_on_close: delete_on_close.unwrap_or(false),
+            },
+        );
+    Ok(PdfRangeSourceInfo { source_id, length })
+}
+
+#[tauri::command]
+fn read_pdf_range(
+    state: tauri::State<'_, PdfRangeSources>,
+    source_id: u64,
+    begin: u64,
+    end: u64,
+) -> Result<tauri::ipc::Response, String> {
+    use std::io::{Read, Seek, SeekFrom};
+
+    const MAX_RANGE_BYTES: u64 = 8 * 1024 * 1024;
+    let (mut file, length) = {
+        let sources = state
+            .sources
+            .lock()
+            .map_err(|_| "The PDF range source registry is unavailable.".to_string())?;
+        let source = sources
+            .get(&source_id)
+            .ok_or_else(|| "The PDF range source is no longer available.".to_string())?;
+        let file = source
+            .file
+            .try_clone()
+            .map_err(|error| format!("Failed to access PDF range source: {error}"))?;
+        (file, source.length)
+    };
+    if begin >= end || end > length {
+        return Err(format!(
+            "Invalid PDF byte range {begin}..{end} for a {length}-byte document."
+        ));
+    }
+    let requested = end - begin;
+    if requested > MAX_RANGE_BYTES {
+        return Err(format!(
+            "PDF byte range request exceeds the {MAX_RANGE_BYTES}-byte safety limit."
+        ));
+    }
+    let requested = usize::try_from(requested)
+        .map_err(|_| "The requested PDF byte range is too large.".to_string())?;
+    let mut bytes = vec![0; requested];
+    file.seek(SeekFrom::Start(begin))
+        .map_err(|error| format!("Failed to seek PDF range source: {error}"))?;
+    file.read_exact(&mut bytes)
+        .map_err(|error| format!("Failed to read PDF byte range: {error}"))?;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
+#[tauri::command]
+fn close_pdf_range_source(state: tauri::State<'_, PdfRangeSources>, source_id: u64) {
+    let source = state
+        .sources
+        .lock()
+        .ok()
+        .and_then(|mut sources| sources.remove(&source_id));
+    if let Some(source) = source {
+        let path = source.path.clone();
+        let delete_on_close = source.delete_on_close;
+        drop(source);
+        if delete_on_close {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
+fn is_preview_generation_path(path: &Path) -> bool {
+    let Some(generations) = path.parent() else {
+        return false;
+    };
+    let Some(preview) = generations.parent() else {
+        return false;
+    };
+    let Some(cache) = preview.parent() else {
+        return false;
+    };
+    let Some(typsastra) = cache.parent() else {
+        return false;
+    };
+    generations.file_name().and_then(|name| name.to_str()) == Some("generations")
+        && preview.file_name().and_then(|name| name.to_str()) == Some("preview")
+        && cache.file_name().and_then(|name| name.to_str()) == Some("cache")
+        && typsastra.file_name().and_then(|name| name.to_str()) == Some(".typsastra")
+}
+
+#[tauri::command]
+fn stage_pdf_preview_generation(path: String, generation: u64) -> Result<String, String> {
+    let source = std::fs::canonicalize(&path).unwrap_or_else(|_| PathBuf::from(&path));
+    let parent = source
+        .parent()
+        .ok_or_else(|| "The generated PDF has no parent directory.".to_string())?;
+    let cache = parent.parent();
+    let typsastra = cache.and_then(Path::parent);
+    if parent.file_name().and_then(|name| name.to_str()) != Some("preview")
+        || cache
+            .and_then(Path::file_name)
+            .and_then(|name| name.to_str())
+            != Some("cache")
+        || typsastra
+            .and_then(Path::file_name)
+            .and_then(|name| name.to_str())
+            != Some(".typsastra")
+    {
+        return Err("Only generated PDFs in .typsastra/cache/preview can be staged.".to_string());
+    }
+    let generations = parent.join("generations");
+    std::fs::create_dir_all(&generations)
+        .map_err(|error| format!("Failed to create preview generation cache: {error}"))?;
+    let stem = source
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .unwrap_or("preview");
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let target = generations.join(format!(
+        "{stem}-{}-{generation}-{timestamp}.pdf",
+        std::process::id()
+    ));
+    std::fs::rename(&source, &target)
+        .map_err(|error| format!("Failed to stage compiled PDF preview: {error}"))?;
+    Ok(target.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn remove_preview_generation_file(path: String) -> Result<(), String> {
+    let path = PathBuf::from(path);
+    if !is_preview_generation_path(&path) {
+        return Err("Only staged PDF preview generations can be removed.".to_string());
+    }
+    match std::fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("Failed to remove staged PDF preview: {error}")),
+    }
+}
+
+#[cfg(test)]
+mod pdf_preview_generation_tests {
+    use super::{
+        is_preview_generation_path, remove_preview_generation_file, stage_pdf_preview_generation,
+    };
+
+    #[test]
+    fn stages_and_removes_compiled_pdf_inside_preview_cache() {
+        let workspace = tempfile::tempdir().unwrap();
+        let preview = workspace.path().join(".typsastra/cache/preview");
+        std::fs::create_dir_all(&preview).unwrap();
+        let compiled = preview.join("main.pdf");
+        std::fs::write(&compiled, b"%PDF-1.7\n").unwrap();
+
+        let staged = stage_pdf_preview_generation(compiled.to_string_lossy().into_owned(), 7)
+            .expect("stage compiled preview");
+        let staged = std::path::PathBuf::from(staged);
+
+        assert!(!compiled.exists());
+        assert!(staged.is_file());
+        assert!(is_preview_generation_path(&staged));
+        assert_eq!(
+            std::fs::canonicalize(staged.parent().unwrap()).unwrap(),
+            std::fs::canonicalize(preview.join("generations")).unwrap()
+        );
+
+        remove_preview_generation_file(staged.to_string_lossy().into_owned())
+            .expect("remove staged preview");
+        assert!(!staged.exists());
+    }
+
+    #[test]
+    fn rejects_staging_and_removal_outside_preview_generation_cache() {
+        let workspace = tempfile::tempdir().unwrap();
+        let external = workspace.path().join("document.pdf");
+        std::fs::write(&external, b"%PDF-1.7\n").unwrap();
+
+        assert!(stage_pdf_preview_generation(external.to_string_lossy().into_owned(), 1).is_err());
+        assert!(remove_preview_generation_file(external.to_string_lossy().into_owned()).is_err());
+        assert!(external.exists());
+    }
+}
+
 #[tauri::command]
 fn read_workspace_text_prefix(path: String, max_bytes: usize) -> Result<String, String> {
     use std::io::Read;
@@ -3553,6 +3783,7 @@ pub fn run() {
         })
         .manage(pending_project_imports)
         .manage(ProjectImportOperations::default())
+        .manage(PdfRangeSources::default())
         .plugin(tauri_plugin_single_instance::init(
             |app, arguments, _working_directory| {
                 let pending = app.state::<PendingProjectImports>();
@@ -3621,6 +3852,11 @@ pub fn run() {
             read_workspace_file,
             is_probably_plain_text_file,
             read_binary_file,
+            open_pdf_range_source,
+            read_pdf_range,
+            close_pdf_range_source,
+            stage_pdf_preview_generation,
+            remove_preview_generation_file,
             read_workspace_text_prefix,
             workspace_file_size,
             workspace_text_line_count,

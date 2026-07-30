@@ -143,6 +143,29 @@ The 208-image run spent 4,555.0 ms decoding, 10,378.8 ms resizing, and
 3,317.0 ms resizing, and 806.1 ms encoding. This one-time work is deliberately
 asynchronous; subsequent cache lookup is inexpensive.
 
+## Release PDF transport qualification
+
+A Windows release-build comparison used the same 76.3 MiB, 46-page PDF in
+both runs. The legacy path read the complete PDF through one Tauri IPC response.
+The replacement path uses bounded local byte ranges and progressively prefetches
+data into the PDF.js worker.
+
+| Transport | Peak WebView during source transfer | WebView when viewer installed | JavaScript heap when viewer installed | Data read when viewer installed |
+|---|---:|---:|---:|---:|
+| Full IPC buffer | 2,920.8 MiB | 1,565.1 MiB | 857.1 MiB | 76.3 MiB |
+| 1 MiB ranges with worker prefetch | no equivalent transfer spike | 656.0 MiB | 30.8 MiB | 3.3 MiB |
+
+The full-buffer spike occurred before PDF.js opened the document or allocated a
+visible canvas: WebView memory rose from 636.5 MiB to 2,920.8 MiB immediately
+after the IPC read. This identifies production IPC/JavaScript representation
+amplification as the cause rather than page rasterization. Bounded range
+transport removed that spike while the larger one-MiB chunks and progressive
+worker prefetch improved distant-page rendering after scrollbar release.
+
+These are single-machine working-set observations rather than universal memory
+figures. The full-buffer path remains available through an explicit developer
+experiment for regression comparison; normal builds use range transport.
+
 ## Manual 200-page memory observation
 
 On the same Windows development machine, the same approximately 200-page Typst

@@ -35,6 +35,9 @@ export type DraftPreviewImageResult = DraftPreviewImage | {
 export type PreviewMemorySnapshot = {
   pdfGeneration: number;
   pdfBytes: number;
+  pdfBytesRead: number;
+  pdfRangeRequests: number;
+  pdfTransport: "none" | "full-buffer" | "range";
   pdfPages: number;
   residentCanvases: number;
   residentFinalCanvases: number;
@@ -44,6 +47,7 @@ export type PreviewMemorySnapshot = {
   loading: boolean;
 };
 
+import { invoke } from "@tauri-apps/api/core";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { PERFORMANCE_BUDGETS, type PerformanceMetric } from "../performance/diagnostics";
 import { formatFileSize } from "../workspace/largeFileOpening";
@@ -67,6 +71,25 @@ import {
 
 type PdfJsModule = typeof import("pdfjs-dist");
 
+type PreviewPdfSource =
+  | { kind: "bytes"; source: Uint8Array | ArrayBuffer | Promise<Uint8Array | ArrayBuffer> }
+  | { kind: "range"; path: string; deleteOnClose: boolean };
+
+type PdfRangeSourceInfo = {
+  sourceId: number;
+  length: number;
+};
+
+type PdfTransportStats = {
+  transport: "full-buffer" | "range";
+  bytesRead: number;
+  rangeRequests: number;
+};
+
+type PdfLoadingHandle = {
+  destroy(): Promise<void>;
+};
+
 type PageDimensions = {
   width: number;
   height: number;
@@ -89,6 +112,10 @@ type ActivePageRender = {
 const ZOOM_LEVELS = [25, 33, 50, 67, 75, 80, 90, 100, 110, 125, 150, 175, 200, 250, 300, 400, 500];
 const FALLBACK_ZOOM_PERCENT = 90;
 const MAX_OUTPUT_SCALE = 2;
+// Local PDFs do not have network latency, but every range still crosses the
+// Tauri IPC boundary. One MiB keeps each allocation bounded while avoiding the
+// several round trips a typical image-heavy page required with 256 KiB chunks.
+const LOCAL_PDF_RANGE_CHUNK_SIZE = 1024 * 1024;
 // The viewer has 20px padding on each side. Keep an additional gutter for the
 // vertical scrollbar and fractional layout rounding so fit mode never overflows.
 const FIT_PADDING_PX = 56;
@@ -109,8 +136,8 @@ export class PreviewFrame {
   private lastInteractionStatusKey = "";
   private pdfJsPromise: Promise<PdfJsModule> | null = null;
   private pdfWorker: { destroyed?: boolean; destroy(): void } | null = null;
-  private pdfLoadingTask: { destroy(): Promise<void> } | null = null;
-  private pendingPdfLoadingTask: { destroy(): Promise<void> } | null = null;
+  private pdfLoadingTask: PdfLoadingHandle | null = null;
+  private pendingPdfLoadingTask: PdfLoadingHandle | null = null;
   private pdfDoc: any = null;
   private observer: IntersectionObserver | null = null;
   private pageDimensions = new Map<number, PageDimensions>();
@@ -127,6 +154,9 @@ export class PreviewFrame {
   private finalDecisionAt: number | null = null;
   private pdfGeneration = 0;
   private currentPdfBytes = 0;
+  private currentPdfBytesRead = 0;
+  private currentPdfRangeRequests = 0;
+  private currentPdfTransport: PreviewMemorySnapshot["pdfTransport"] = "none";
   private firstRenderedGeneration = 0;
   private forwardRippleGeneration = 0;
   private zoomStartedAt: number | null = null;
@@ -150,7 +180,11 @@ export class PreviewFrame {
     private readonly onPerformance?: (metric: Omit<PerformanceMetric, "recordedAt">) => void,
     private readonly onPageChanged?: (status: PreviewPageStatus) => void,
     private readonly onDraftImageRequest?: (id: string) => Promise<DraftPreviewImageResult | null>,
-    private readonly onScrollPositionChanged?: (scrollTop: number) => void
+    private readonly onScrollPositionChanged?: (scrollTop: number) => void,
+    private readonly onLoadStage?: (
+      stage: string,
+      detail: Record<string, number | string | boolean>
+    ) => void | Promise<void>
   ) {
     this.pane.addEventListener("wheel", event => {
       if (event.ctrlKey) {
@@ -259,6 +293,9 @@ export class PreviewFrame {
     return {
       pdfGeneration: this.pdfGeneration,
       pdfBytes: this.currentPdfBytes,
+      pdfBytesRead: this.currentPdfBytesRead,
+      pdfRangeRequests: this.currentPdfRangeRequests,
+      pdfTransport: this.currentPdfTransport,
       pdfPages: Number(this.pdfDoc?.numPages ?? 0),
       residentCanvases: canvases.length,
       residentFinalCanvases: iframeDoc?.querySelectorAll(".pdf-page-canvas").length ?? 0,
@@ -333,6 +370,25 @@ export class PreviewFrame {
     sessionKey = identity,
     surface: PreviewSurface = "live",
   ): Promise<void> {
+    await this.loadPdfSource({ kind: "bytes", source }, identity, sessionKey, surface);
+  }
+
+  public async loadPdfPath(
+    path: string,
+    identity = path,
+    sessionKey = identity,
+    surface: PreviewSurface = "live",
+    deleteOnClose = false,
+  ): Promise<number> {
+    return this.loadPdfSource({ kind: "range", path, deleteOnClose }, identity, sessionKey, surface);
+  }
+
+  private async loadPdfSource(
+    source: PreviewPdfSource,
+    identity: string,
+    sessionKey: string,
+    surface: PreviewSurface,
+  ): Promise<number> {
     this.hideDraftImagePopover();
     const startedAt = performance.now();
     const generation = ++this.pdfGeneration;
@@ -347,26 +403,118 @@ export class PreviewFrame {
     this.clearMessageHost();
 
     const iframe = await this.ensureIframe();
-    if (generation !== this.pdfGeneration) return;
+    if (generation !== this.pdfGeneration) return 0;
     const iframeDoc = iframe.contentDocument;
     if (!iframeDoc) throw new Error("PDF preview document is unavailable.");
     iframe.dataset.previewSurface = surface;
     iframeDoc.documentElement.dataset.previewSurface = surface;
 
     let nextPdfDoc: any = null;
-    let nextLoadingTask: { destroy(): Promise<void> } | null = null;
+    let nextLoadingTask: PdfLoadingHandle | null = null;
+    let orphanedRangeSourceCleanup: (() => Promise<void>) | null = null;
+    let pdfByteLength = 0;
+    const transportStats: PdfTransportStats = {
+      transport: source.kind === "range" ? "range" : "full-buffer",
+      bytesRead: 0,
+      rangeRequests: 0
+    };
     try {
       const pdfjs = await this.pdfJs();
-      if (generation !== this.pdfGeneration) return;
+      if (generation !== this.pdfGeneration) return 0;
       if (!this.pdfWorker || this.pdfWorker.destroyed) {
         this.pdfWorker = pdfjs.PDFWorker.create({ name: "typsastra-preview" });
       }
-      const resolved = await source;
-      if (generation !== this.pdfGeneration) return;
-      const bytes = resolved instanceof Uint8Array ? resolved : new Uint8Array(resolved);
-      const pdfByteLength = bytes.byteLength;
+      let pdfInput: { data: Uint8Array } | {
+        range: InstanceType<typeof pdfjs.PDFDataRangeTransport>;
+        disableStream: true;
+        disableAutoFetch: false;
+        rangeChunkSize: number;
+      };
+      let closeRangeSource: (() => Promise<void>) | null = null;
+      if (source.kind === "bytes") {
+        const resolved = await source.source;
+        if (generation !== this.pdfGeneration) return 0;
+        const bytes = resolved instanceof Uint8Array ? resolved : new Uint8Array(resolved);
+        pdfByteLength = bytes.byteLength;
+        transportStats.bytesRead = pdfByteLength;
+        pdfInput = { data: bytes };
+      } else {
+        const opened = await invoke<PdfRangeSourceInfo>("open_pdf_range_source", {
+          path: source.path,
+          deleteOnClose: source.deleteOnClose
+        });
+        if (generation !== this.pdfGeneration) {
+          await invoke("close_pdf_range_source", { sourceId: opened.sourceId }).catch(() => {});
+          return 0;
+        }
+        pdfByteLength = opened.length;
+        let closed = false;
+        closeRangeSource = async () => {
+          if (closed) return;
+          closed = true;
+          await invoke("close_pdf_range_source", { sourceId: opened.sourceId }).catch(() => {});
+        };
+        orphanedRangeSourceCleanup = closeRangeSource;
+        const thisFrame = this;
+        const RangeTransport = class extends pdfjs.PDFDataRangeTransport {
+          private aborted = false;
+
+          constructor() {
+            super(opened.length, null, false);
+          }
+
+          public requestDataRange(begin: number, end: number): void {
+            if (this.aborted) return;
+            transportStats.rangeRequests += 1;
+            void invoke<ArrayBuffer | Uint8Array | number[]>("read_pdf_range", {
+              sourceId: opened.sourceId,
+              begin,
+              end
+            }).then(response => {
+              if (this.aborted) return;
+              const bytes = response instanceof Uint8Array
+                ? response
+                : response instanceof ArrayBuffer
+                  ? new Uint8Array(response)
+                  : new Uint8Array(response);
+              transportStats.bytesRead += bytes.byteLength;
+              if (generation === thisFrame.pdfGeneration && thisFrame.currentPdfTransport === "range") {
+                thisFrame.currentPdfBytesRead = transportStats.bytesRead;
+                thisFrame.currentPdfRangeRequests = transportStats.rangeRequests;
+              }
+              this.onDataRange(begin, bytes);
+            }).catch(error => {
+              if (this.aborted) return;
+              console.error("PDF range request failed:", error);
+              this.onDataRange(begin, null);
+              this.abort();
+            });
+          }
+
+          public abort(): void {
+            if (this.aborted) return;
+            this.aborted = true;
+            void closeRangeSource?.();
+          }
+        };
+        pdfInput = {
+          range: new RangeTransport(),
+          disableStream: true,
+          // Keep filling the PDF worker's bounded range cache in the
+          // background. Fast scrollbar jumps can then render from worker
+          // memory instead of waiting for several post-release IPC reads.
+          disableAutoFetch: false,
+          rangeChunkSize: LOCAL_PDF_RANGE_CHUNK_SIZE
+        };
+      }
+      await this.onLoadStage?.("source ready", {
+        transport: transportStats.transport,
+        pdfBytes: pdfByteLength,
+        bytesRead: transportStats.bytesRead,
+        rangeRequests: transportStats.rangeRequests
+      });
       const loadingTask = pdfjs.getDocument({
-        data: bytes,
+        ...pdfInput,
         worker: this.pdfWorker as InstanceType<typeof pdfjs.PDFWorker>,
         ownerDocument: iframeDoc,
         // Browser FontFace rendering is substantially faster than rebuilding
@@ -379,18 +527,36 @@ export class PreviewFrame {
         cMapPacked: true,
         standardFontDataUrl: "/standard_fonts/"
       });
-      nextLoadingTask = loadingTask as unknown as { destroy(): Promise<void> };
+      nextLoadingTask = pdfLoadingHandle(
+        loadingTask as unknown as PdfLoadingHandle,
+        closeRangeSource
+      );
+      orphanedRangeSourceCleanup = null;
       this.pendingPdfLoadingTask = nextLoadingTask;
       const pdfDoc = await loadingTask.promise;
       nextPdfDoc = pdfDoc;
+      await this.onLoadStage?.("document opened", {
+        transport: transportStats.transport,
+        pdfBytes: pdfByteLength,
+        bytesRead: transportStats.bytesRead,
+        rangeRequests: transportStats.rangeRequests,
+        pageCount: pdfDoc.numPages
+      });
       if (generation !== this.pdfGeneration) {
         await (pdfDoc as any).destroy();
-        return;
+        return 0;
       }
       const nextDimensions = await readInitialPdfPageDimensions(pdfDoc);
+      await this.onLoadStage?.("initial geometry ready", {
+        transport: transportStats.transport,
+        pdfBytes: pdfByteLength,
+        bytesRead: transportStats.bytesRead,
+        rangeRequests: transportStats.rangeRequests,
+        pageCount: pdfDoc.numPages
+      });
       if (generation !== this.pdfGeneration) {
         await (pdfDoc as any).destroy();
-        return;
+        return 0;
       }
 
       const oldPdfDoc = this.pdfDoc;
@@ -406,6 +572,9 @@ export class PreviewFrame {
       this.pageDimensions = nextDimensions;
       // PDF.js transfers this buffer to its worker, detaching it after load.
       this.currentPdfBytes = pdfByteLength;
+      this.currentPdfBytesRead = transportStats.bytesRead;
+      this.currentPdfRangeRequests = transportStats.rangeRequests;
+      this.currentPdfTransport = transportStats.transport;
       this.mountedUrl = identity;
       this.mountedSessionKey = sessionKey;
       if (this.isFitToWidth) this.previewZoomPercent = this.computeFitToWidthPercent();
@@ -414,6 +583,13 @@ export class PreviewFrame {
       this.setupIframeInteractions();
       this.installPageObserver(iframe);
       this.restoreScrollPosition(previousScrollTop);
+      await this.onLoadStage?.("viewer installed", {
+        transport: transportStats.transport,
+        pdfBytes: pdfByteLength,
+        bytesRead: transportStats.bytesRead,
+        rangeRequests: transportStats.rangeRequests,
+        pageCount: pdfDoc.numPages
+      });
       if (restoringWorkspacePosition) this.pendingRestoredScrollTop = null;
       this.reportPageStatus(this.visiblePageNumber());
       void this.hydratePageDimensions(pdfDoc, generation).catch(error => {
@@ -427,7 +603,10 @@ export class PreviewFrame {
         milliseconds: performance.now() - startedAt,
         detail: {
           pageCount: pdfDoc.numPages,
-          pdfBytes: pdfByteLength
+          pdfBytes: pdfByteLength,
+          transport: transportStats.transport,
+          bytesRead: transportStats.bytesRead,
+          rangeRequests: transportStats.rangeRequests
         }
       });
       // The replacement is already installed. Release the previous PDF during
@@ -435,16 +614,20 @@ export class PreviewFrame {
       // pane drag or the first interaction with the new preview.
       this.schedulePdfResourceCleanup(oldPdfDoc, oldLoadingTask);
     } catch (error) {
-      if (generation !== this.pdfGeneration) return;
+      if (generation !== this.pdfGeneration) return 0;
       this.setError("PDF Loading Failed", String(error));
     } finally {
       if (this.pendingPdfLoadingTask === nextLoadingTask) this.pendingPdfLoadingTask = null;
       if (nextPdfDoc) {
         try { await nextPdfDoc.destroy(); } catch {}
-      } else if (nextLoadingTask) {
+      }
+      if (nextLoadingTask) {
         try { await nextLoadingTask.destroy(); } catch {}
+      } else if (orphanedRangeSourceCleanup) {
+        await orphanedRangeSourceCleanup();
       }
     }
+    return pdfByteLength;
   }
 
   private async pdfJs(): Promise<PdfJsModule> {
@@ -1461,6 +1644,9 @@ export class PreviewFrame {
     this.mountedUrl = "";
     this.mountedSessionKey = "";
     this.currentPdfBytes = 0;
+    this.currentPdfBytesRead = 0;
+    this.currentPdfRangeRequests = 0;
+    this.currentPdfTransport = "none";
     await this.disposePdfDocument();
     this.pdfWorker?.destroy();
     this.pdfWorker = null;
@@ -1662,6 +1848,9 @@ export class PreviewFrame {
     this.mountedUrl = "";
     this.mountedSessionKey = "";
     this.currentPdfBytes = 0;
+    this.currentPdfBytesRead = 0;
+    this.currentPdfRangeRequests = 0;
+    this.currentPdfTransport = "none";
     void this.disposePdfDocument();
     this.clearErrorOverlay();
     this.clearMessageHost();
@@ -1807,12 +1996,13 @@ function waitForUiIdle(): Promise<void> {
 
 async function cleanupPdfResources(
   pdfDoc: any,
-  loadingTask: { destroy(): Promise<void> } | null
+  loadingTask: PdfLoadingHandle | null
 ): Promise<void> {
   if (pdfDoc) {
     try { await pdfDoc.cleanup(false); } catch {}
     try { await pdfDoc.destroy(); } catch {}
-  } else if (loadingTask) {
+  }
+  if (loadingTask) {
     try { await loadingTask.destroy(); } catch {}
   }
 }
@@ -1834,6 +2024,24 @@ function viewportRectangle(viewport: any, rect: unknown): [number, number, numbe
   const second = viewport.convertToViewportPoint(x2, y2);
   if (!Array.isArray(first) || !Array.isArray(second)) return null;
   return [first[0], first[1], second[0], second[1]];
+}
+
+function pdfLoadingHandle(
+  loadingTask: PdfLoadingHandle,
+  closeRangeSource: (() => Promise<void>) | null
+): PdfLoadingHandle {
+  let destroyed = false;
+  return {
+    async destroy(): Promise<void> {
+      if (destroyed) return;
+      destroyed = true;
+      try {
+        await loadingTask.destroy();
+      } finally {
+        await closeRangeSource?.();
+      }
+    }
+  };
 }
 
 function replaceElementChildren(element: Element, ...children: Node[]): void {

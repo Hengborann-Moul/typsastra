@@ -184,6 +184,11 @@ const MAX_RECOMMENDED_UNIQUE_PREVIEW_IMAGES = 50;
 const AGGREGATE_IMAGE_CONTRIBUTOR_BYTES = 32 * 1024 * 1024;
 const MAX_RECOMMENDED_SINGLE_IMAGE_SOURCE_BYTES = 8 * 1024 * 1024;
 const MAX_AGGREGATE_IMAGE_OPTIMIZATION_SUGGESTIONS = 5;
+const PDF_TRANSPORT_MODE = (
+  import.meta as ImportMeta & { env?: Record<string, string | boolean | undefined> }
+).env?.VITE_PDF_TRANSPORT === "full"
+  ? "full-buffer"
+  : "range";
 
 class PreviewPreparationInterrupted extends Error {
   constructor() {
@@ -633,6 +638,8 @@ export class TypsastraWorkspaceController {
       this.previewScrollSaveTimer = null;
       void this.saveWorkspaceState();
     }, 750);
+  }, (stage, detail) => {
+    return this.logMemoryDiagnostics(`PDF ${stage}`, detail);
   });
   private readonly previewSyncController = new PreviewSyncController({
     getEditor: () => this.editorInstance,
@@ -4212,8 +4219,19 @@ export class TypsastraWorkspaceController {
       // Never let optional cursor-sync lifecycle work block PDF presentation.
       this.pdfPreviewSourceMapRootPath = previewPath;
       this.pdfPreviewSourceMapTaskId = sourceMapTaskId;
-      this.lastPdfPath = pdfPath;
-      await this.loadPdfPath(pdfPath, previewPath, this.previewSessionKey ?? previewPath);
+      const stagedPdfPath = await invoke<string>("stage_pdf_preview_generation", {
+        path: pdfPath,
+        generation
+      });
+      this.managedPreviewPdfPathKeys.add(filePathKey(stagedPdfPath));
+      this.lastPdfPath = stagedPdfPath;
+      await this.loadPdfPath(
+        stagedPdfPath,
+        previewPath,
+        this.previewSessionKey ?? previewPath,
+        "live",
+        true
+      );
       this.presentedPreviewContentMode = generationContentMode;
       this.draftImageAssets = generationContentMode === "draft"
         ? preparedPreview.draftAssets
@@ -4502,12 +4520,39 @@ export class TypsastraWorkspaceController {
     path: string,
     identity: string,
     sessionKey = identity,
-    surface: PreviewSurface = isTypstDocumentPath(identity) ? "live" : "pdf"
+    surface: PreviewSurface = isTypstDocumentPath(identity) ? "live" : "pdf",
+    deleteOnClose = false
   ): Promise<number> {
     const pathKey = filePathKey(path);
     if (this.blockedLargePdfPaths.has(pathKey)) return 0;
     const requestGeneration = ++this.pdfLoadRequestGeneration;
+    if (PDF_TRANSPORT_MODE === "range") {
+      const byteLength = await this.previewFrame.loadPdfPath(
+        path,
+        identity,
+        sessionKey,
+        surface,
+        deleteOnClose
+      );
+      if (
+        requestGeneration !== this.pdfLoadRequestGeneration
+        || this.blockedLargePdfPaths.has(pathKey)
+      ) return 0;
+      if (this.previewFrame.currentUrl === identity) {
+        this.lastPdfPath = path;
+        this.lastPdfIdentity = identity;
+        this.lastPdfSessionKey = sessionKey;
+        this.lastPdfSurface = surface;
+      }
+      return byteLength;
+    }
+    await this.logMemoryDiagnostics("PDF full-buffer before IPC read", {
+      transport: PDF_TRANSPORT_MODE
+    });
     const response = await invoke<ArrayBuffer | Uint8Array | number[]>("read_binary_file", { path });
+    await this.logMemoryDiagnostics("PDF full-buffer after IPC read", {
+      transport: PDF_TRANSPORT_MODE
+    });
     if (
       requestGeneration !== this.pdfLoadRequestGeneration
       || this.blockedLargePdfPaths.has(pathKey)
@@ -4519,6 +4564,9 @@ export class TypsastraWorkspaceController {
         : new Uint8Array(response);
     const byteLength = bytes.byteLength;
     await this.previewFrame.loadPdfBytes(bytes, identity, sessionKey, surface);
+    if (deleteOnClose) {
+      await invoke("remove_preview_generation_file", { path }).catch(() => {});
+    }
     if (this.previewFrame.currentUrl === identity) {
       this.lastPdfPath = path;
       this.lastPdfIdentity = identity;
@@ -7251,6 +7299,7 @@ export class TypsastraWorkspaceController {
         `jsHeap=${heap?.usedJSHeapSize === undefined ? "unavailable" : `${mib(heap.usedJSHeapSize)} MiB (${delta(heap.usedJSHeapSize, previous?.jsHeapBytes)})`}`,
         `jsHeapTotal=${heap?.totalJSHeapSize === undefined ? "unavailable" : `${mib(heap.totalJSHeapSize)} MiB`}`,
         `pdf=${mib(preview.pdfBytes)} MiB/${preview.pdfPages} pages/gen ${preview.pdfGeneration}`,
+        `pdfTransport=${preview.pdfTransport}; pdfRead=${mib(preview.pdfBytesRead)} MiB/${preview.pdfRangeRequests} range request(s)`,
         `finalCanvas=${preview.residentFinalCanvases}; mountedCanvas=${preview.residentCanvases} (${mib(preview.canvasPixels * 4)} MiB estimated RGBA)`,
         `fontFaces=${preview.fontFaces}`,
         `activeRenders=${preview.activeRenders}; pdfLoading=${preview.loading}`,
