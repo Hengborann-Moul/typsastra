@@ -24,7 +24,7 @@ export const baseEditorLayoutTheme = EditorView.theme({
       lineHeight: "var(--editor-line-height, 1.7) !important"
   },
   ".cm-foldGutter .cm-gutterElement": {
-      fontFamily: "var(--font-family-sans) !important",
+      fontFamily: "var(--font-family-sans) !important ",
       fontSize: "12px !important",
       fontWeight: "500 !important",
       width: "28px",

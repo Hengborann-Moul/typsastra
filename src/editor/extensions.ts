@@ -60,17 +60,6 @@ const selectionStateClass = EditorView.editorAttributes.compute(["selection"], s
   class: state.selection.ranges.some(range => !range.empty) ? "cm-has-selection" : ""
 }));
 
-const fullHeightSelectionMark = Decoration.mark({ class: "typsastra-text-selection" });
-const fullHeightSelectionDecorations = EditorView.decorations.compute(
-  ["doc", "selection"],
-  state => Decoration.set(
-    state.selection.ranges
-      .filter(range => !range.empty)
-      .map(range => fullHeightSelectionMark.range(range.from, range.to)),
-    true,
-  ),
-);
-
 export function visibleIndentationMarkers(): Extension {
   const inactive = "color-mix(in srgb, var(--ui-text) 38%, transparent)";
   const active = "color-mix(in srgb, var(--ui-accent-color) 58%, var(--ui-text))";
@@ -654,7 +643,7 @@ export function getEditorExtensions(
       markerDOM: typstFoldMarkerDOM
     }),
     activeLineCompartment.of([highlightActiveLineGutter(), highlightActiveLine()]),
-    drawSelection(), selectionStateClass, fullHeightSelectionDecorations, dropCursor(), history(),
+    drawSelection(), selectionStateClass, dropCursor(), history(),
     languageCompartment.of(typstLanguage),
     baseEditorLayoutTheme,
     wrappedLineIndentation,

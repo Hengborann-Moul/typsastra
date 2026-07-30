@@ -177,11 +177,19 @@ describe("theme-aware application accents", () => {
     );
     expect(editorExtensions).toContain('EditorView.editorAttributes.compute(["selection"]');
     expect(editorExtensions).toContain('"cm-has-selection"');
-    expect(editorExtensions).toContain('"typsastra-text-selection"');
-    expect(editorExtensions).toContain('EditorView.decorations.compute(');
+    expect(editorExtensions).not.toContain('"typsastra-text-selection"');
+    expect(editorThemes).toContain(
+      '"& .cm-selectionLayer .cm-selectionBackground"',
+    );
+    expect(editorThemes).toContain(
+      '"&.cm-focused .cm-selectionLayer .cm-selectionBackground"',
+    );
+    expect(editorThemes).toContain(
+      'backgroundColor: "var(--ui-word-selection-focus-background, rgba(3, 102, 214, 0.52)) !important"',
+    );
     expect(editorThemes).not.toContain(".cm-content ::selection");
     expect(editorThemes).not.toContain("ui-word-selection-outline");
-    expect(editorThemes).toContain('".typsastra-text-selection::before"');
+    expect(editorThemes).not.toContain('".typsastra-text-selection::before"');
     expect(brackets).toContain('backgroundColor: "transparent !important"');
     expect(brackets).toContain('boxShadow: "none !important"');
     expect(brackets).toContain('outline: "none !important"');
