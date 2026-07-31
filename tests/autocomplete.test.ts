@@ -284,6 +284,8 @@ describe("LSP autocomplete edits", () => {
   test("recognizes an empty manually typed function argument context", () => {
     expect(isEmptyTypstFunctionCallAt("#page()", 6)).toBe(true);
     expect(isEmptyTypstFunctionCallAt("Text #page() after", 11)).toBe(true);
+    expect(isEmptyTypstFunctionCallAt("#set align()", 11)).toBe(true);
+    expect(isEmptyTypstFunctionCallAt("#show heading()", 14)).toBe(true);
     expect(isEmptyTypstFunctionCallAt("#page()", 7)).toBe(false);
     expect(isEmptyTypstFunctionCallAt("#page(width: 10cm)", 6)).toBe(false);
   });
@@ -291,6 +293,8 @@ describe("LSP autocomplete edits", () => {
   test("activates named argument completion after accepting an empty function call", async () => {
     const source = await Bun.file(new URL("../src/editor/autocomplete.ts", import.meta.url)).text();
     expect(source).toContain("responseItems.filter(isNamedArgumentCompletion)");
+    expect(source).toContain("isEmptyFunctionCall");
+    expect(source).toContain("? null");
     expect(source).toContain("startCompletion(view)");
   });
 });

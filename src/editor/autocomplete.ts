@@ -82,7 +82,8 @@ export function isEmptyTypstFunctionCallAt(
   const boundedCursor = Math.max(0, Math.min(cursor, lineText.length));
   const before = lineText.slice(0, boundedCursor);
   const after = lineText.slice(boundedCursor);
-  return /#[\p{L}\p{M}\p{N}_.-]+\($/u.test(before) && after.startsWith(")");
+  return /#(?:(?:set|show)\s+)?[\p{L}\p{M}\p{N}_.-]+\($/u.test(before)
+    && after.startsWith(")");
 }
 
 export function normalizeCallableCompletionSnippet(
@@ -518,9 +519,18 @@ export function createTypstAutocomplete(
           }
         }
 
+        const activeLine = context.state.doc.lineAt(context.pos);
+        const isEmptyFunctionCall = isEmptyTypstFunctionCallAt(
+          activeLine.text,
+          context.pos - activeLine.from
+        );
+        const fallbackCompletions = () => isEmptyFunctionCall
+          ? null
+          : typstCompletions(context);
+
         const client = getClient();
         const uri = getUri();
-        if (!client || !uri) return typstCompletions(context);
+        if (!client || !uri) return fallbackCompletions();
         
         const doc = context.state.doc;
         const position = client.lspPositionFromEditorPosition(doc, context.pos);
@@ -538,16 +548,11 @@ export function createTypstAutocomplete(
             }
           });
           
-          if (!response) return typstCompletions(context);
+          if (!response) return fallbackCompletions();
           
           const responseItems = Array.isArray(response) ? response : response.items;
           const itemDefaults = Array.isArray(response) ? undefined : response.itemDefaults;
-          if (!responseItems || responseItems.length === 0) return typstCompletions(context);
-          const activeLine = context.state.doc.lineAt(context.pos);
-          const isEmptyFunctionCall = isEmptyTypstFunctionCallAt(
-            activeLine.text,
-            context.pos - activeLine.from
-          );
+          if (!responseItems || responseItems.length === 0) return fallbackCompletions();
           const items = isEmptyFunctionCall
             ? responseItems.filter(isNamedArgumentCompletion)
             : preferContextualArgumentCompletions(responseItems);
@@ -671,7 +676,7 @@ export function createTypstAutocomplete(
           
         } catch (e) {
           console.warn("LSP completion error", e);
-          return typstCompletions(context);
+          return fallbackCompletions();
         }
       }
     ]
