@@ -29,7 +29,13 @@ import { indentationMarkers } from '@replit/codemirror-indentation-markers';
 import * as uiwThemes from "@uiw/codemirror-themes-all";
 import { oneDark } from "@codemirror/theme-one-dark";
 import { createTypstAutocomplete, type ProviderCapabilities } from "./autocomplete";
-import { acceptCompletion, completionKeymap, closeBrackets, moveCompletionSelection } from "@codemirror/autocomplete";
+import {
+  acceptCompletion,
+  completionKeymap,
+  closeBrackets,
+  moveCompletionSelection,
+  startCompletion
+} from "@codemirror/autocomplete";
 import { bracketMatching } from "@codemirror/language";
 import { toggleLineComment } from "@codemirror/commands";
 import { bracketColorizer } from "./bracketColorizer";
@@ -78,7 +84,15 @@ export function visibleIndentationMarkers(): Extension {
 const completionNavigationHandler = Prec.highest(EditorView.domEventHandlers({
   keydown(event, view) {
     let handled = false;
-    if (event.key === "ArrowDown") {
+    if (event.ctrlKey && !event.altKey && !event.metaKey && event.code === "Space") {
+      // Escape can dismiss the menu while an asynchronous LSP query is still
+      // settling. Resetting the selection transaction aborts that stale query
+      // before explicitly starting a new one, so Ctrl+Space can reopen the
+      // same token without requiring another edit.
+      view.dispatch({ selection: view.state.selection });
+      queueMicrotask(() => startCompletion(view));
+      handled = true;
+    } else if (event.key === "ArrowDown") {
       handled = moveCompletionSelection(true)(view);
     } else if (event.key === "ArrowUp") {
       handled = moveCompletionSelection(false)(view);

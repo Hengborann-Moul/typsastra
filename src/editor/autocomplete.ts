@@ -1,4 +1,10 @@
-import { autocompletion, CompletionContext, snippetCompletion, Completion } from "@codemirror/autocomplete";
+import {
+  autocompletion,
+  CompletionContext,
+  snippetCompletion,
+  Completion,
+  startCompletion
+} from "@codemirror/autocomplete";
 import type { Text } from "@codemirror/state";
 import type { TinymistLspClient } from "../compiler/lsp";
 import type { LanguageProviderCapabilities } from "../languageSupport";
@@ -54,13 +60,82 @@ export function languageCompletionRange(
 
 export const languageCompletionValidFor = () => false;
 
+// Keep a Tinymist or fallback Typst completion result alive while the user
+// extends the same identifier. Without this, the asynchronous list opened by
+// `#` is discarded on the very next character instead of being filtered.
+export const typstCompletionValidFor = /^#?[\p{L}\p{M}\p{N}_.-]*$/u;
+
 function completionInsertion(item: LspCompletionItem): string {
   return item.textEdit?.newText ?? item.insertText ?? item.label;
 }
 
 function isNamedArgumentCompletion(item: LspCompletionItem): boolean {
-  return item.kind === 5
-    && /^\s*[\p{L}_][\p{L}\p{N}_-]*\s*:/u.test(completionInsertion(item));
+  // Tinymist has reported function parameters as both fields and properties
+  // across versions. The inserted `name:` syntax is the stable signal.
+  return /^\s*[\p{L}_][\p{L}\p{N}_-]*\s*:/u.test(completionInsertion(item));
+}
+
+export function isEmptyTypstFunctionCallAt(
+  lineText: string,
+  cursor: number
+): boolean {
+  const boundedCursor = Math.max(0, Math.min(cursor, lineText.length));
+  const before = lineText.slice(0, boundedCursor);
+  const after = lineText.slice(boundedCursor);
+  return /#[\p{L}\p{M}\p{N}_.-]+\($/u.test(before) && after.startsWith(")");
+}
+
+export function normalizeCallableCompletionSnippet(
+  insertion: string,
+  kind: number | undefined,
+  detail: string | undefined
+): { template: string; opensArguments: boolean } {
+  const callable = kind === 2
+    || kind === 3
+    || kind === 4
+    || /^\s*\([^)]*\)\s*=>/s.test(detail ?? "");
+  if (!callable) return { template: insertion, opensArguments: false };
+
+  // Tinymist's `page` completion is `page()${1:}`, which deliberately puts
+  // the cursor after the call. Move that empty stop into the parentheses.
+  const trailingStop = /\(\)\$\{\d+:\}(\s*)$/.exec(insertion);
+  if (trailingStop && trailingStop.index !== undefined) {
+    return {
+      template: `${insertion.slice(0, trailingStop.index)}(\${})${trailingStop[1]}`,
+      opensArguments: true
+    };
+  }
+
+  // Some callable entries, notably the primary `figure` item, contain only
+  // the function name. Give them the same editable call shape.
+  if (/^#?[\p{L}\p{M}\p{N}_.-]+$/u.test(insertion)) {
+    return { template: `${insertion}(\${})`, opensArguments: true };
+  }
+
+  // Preserve Tinymist's richer snippets, while recognizing an existing empty
+  // first argument such as `circle(${1:})`.
+  return {
+    template: insertion,
+    opensArguments: /\(\$\{\d*:\}\)/.test(insertion)
+      || /\(\$\{\}\)/.test(insertion)
+  };
+}
+
+export function completedEmptyCallCaret(
+  text: string,
+  completionLabel: string,
+  searchFrom = 0
+): number | null {
+  const name = completionLabel
+    .replace(/^#/, "")
+    .match(/^[\p{L}\p{M}\p{N}_-]+/u)?.[0];
+  if (!name) return null;
+  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const boundedFrom = Math.max(0, Math.min(searchFrom, text.length));
+  const match = new RegExp(`#?${escapedName}\\(\\)`, "u").exec(text.slice(boundedFrom));
+  return match && match.index !== undefined
+    ? boundedFrom + match.index + match[0].length - 1
+    : null;
 }
 
 /**
@@ -193,6 +268,33 @@ export function completionEditOffsets(
     ?? quotedCompletionEditOffsets(doc, cursorPosition, insertion);
 }
 
+export function contextualCompletionEditOffsets(
+  doc: Text,
+  cursorPosition: number,
+  insertion: string,
+  textEdit: LspTextEdit | undefined,
+  characterOffset: (text: string, character: number) => number,
+  localFrom: number,
+  localTo: number,
+  preferLocalTokenRange: boolean
+): { from: number; to: number } {
+  // CodeMirror already tracks the complete live identifier for both
+  // `#identifier` and rule targets such as `#set identifier`. Tinymist can
+  // return an insertion-only or stale partial edit after an asynchronous
+  // refresh, which would otherwise produce `#page()pag` or `#set page()ge`.
+  // Keep the server's inserted text, but replace the authoritative local
+  // token range. Quoted/font completions opt out because they intentionally
+  // replace a wider value range.
+  if (preferLocalTokenRange) return { from: localFrom, to: localTo };
+  return completionEditOffsets(
+    doc,
+    cursorPosition,
+    insertion,
+    textEdit,
+    characterOffset
+  ) ?? { from: localFrom, to: localTo };
+}
+
 export function displayLabelForHashPrefix(label: string, type: string, isHashPrefix: boolean | undefined): string {
   return isHashPrefix
     && !label.startsWith('#')
@@ -252,16 +354,21 @@ export const typstSnippets = [
 ];
 
 export function typstCompletions(context: CompletionContext) {
-  const word = context.matchBefore(/[\w#=]+/);
+  const word = context.matchBefore(/[\p{L}\p{M}\p{N}_#=.-]+/u);
   if (!word) {
     if (context.explicit) {
-      return { from: context.pos, options: typstSnippets };
+      return {
+        from: context.pos,
+        options: typstSnippets,
+        validFor: typstCompletionValidFor
+      };
     }
     return null;
   }
   return {
     from: word.from,
-    options: typstSnippets
+    options: typstSnippets,
+    validFor: typstCompletionValidFor
   };
 }
 
@@ -388,10 +495,13 @@ export function createTypstAutocomplete(
           const lineStr = context.state.doc.lineAt(context.pos).text;
           const col = context.pos - context.state.doc.lineAt(context.pos).from;
           const textBefore = lineStr.slice(0, col);
+          const isEmptyFunctionCall = isEmptyTypstFunctionCallAt(lineStr, col);
           
           // Only trigger autocomplete implicitly on word characters or specific trigger characters (#, ., @, -)
           const lastChar = textBefore.slice(-1);
-          if (!/[\w#\.@-]/.test(lastChar) && !(lastChar === " " && fontValueFrom !== null)) {
+          if (!/[\w#\.@-]/.test(lastChar)
+            && !(lastChar === " " && fontValueFrom !== null)
+            && !isEmptyFunctionCall) {
             return null;
           }
           
@@ -403,7 +513,7 @@ export function createTypstAutocomplete(
           const closeBraces = (docBefore.match(/\}/g) || []).length;
           const inCodeBlock = openBraces > closeBraces;
           
-          if (!isHashWord && !isSetShow && !inCodeBlock) {
+          if (!isHashWord && !isSetShow && !inCodeBlock && !isEmptyFunctionCall) {
             return null;
           }
         }
@@ -433,10 +543,20 @@ export function createTypstAutocomplete(
           const responseItems = Array.isArray(response) ? response : response.items;
           const itemDefaults = Array.isArray(response) ? undefined : response.itemDefaults;
           if (!responseItems || responseItems.length === 0) return typstCompletions(context);
-          const items = preferContextualArgumentCompletions(responseItems);
+          const activeLine = context.state.doc.lineAt(context.pos);
+          const isEmptyFunctionCall = isEmptyTypstFunctionCallAt(
+            activeLine.text,
+            context.pos - activeLine.from
+          );
+          const items = isEmptyFunctionCall
+            ? responseItems.filter(isNamedArgumentCompletion)
+            : preferContextualArgumentCompletions(responseItems);
+          if (items.length === 0) return null;
           
-          const word = context.matchBefore(/#?[\w-]*/);
+          const word = context.matchBefore(/#?[\p{L}\p{M}\p{N}_.-]*/u);
           const isHashPrefix = word?.text.startsWith('#');
+          const preferLocalTokenRange = fontValueFrom === null
+            && Boolean(word?.text);
           
           const options: Completion[] = items.map(item => {
             let label = item.label;
@@ -456,10 +576,20 @@ export function createTypstAutocomplete(
             let apply = textEdit?.newText ?? defaultApply;
             
             label = displayLabelForHashPrefix(label, type, isHashPrefix);
-            apply = applyTextForHashPrefix(apply, type, isHashPrefix, Boolean(textEdit));
+            apply = applyTextForHashPrefix(
+              apply,
+              type,
+              isHashPrefix,
+              Boolean(textEdit) && !isHashPrefix
+            );
             
-            if (insertTextFormat === 2) {
-              const completion = snippetCompletion(apply, {
+            const callableSnippet = normalizeCallableCompletionSnippet(
+              apply,
+              item.kind,
+              item.detail ?? item.labelDetails?.description
+            );
+            if (insertTextFormat === 2 || callableSnippet.opensArguments) {
+              const completion = snippetCompletion(callableSnippet.template, {
                 label,
                 detail,
                 info,
@@ -468,19 +598,41 @@ export function createTypstAutocomplete(
               });
               const snippetApply = completion.apply;
               if (typeof snippetApply !== "function") return completion;
-              return {
+              const wrappedCompletion: Completion = {
                 ...completion,
                 apply(view, selected, from, to) {
-                  const edit = completionEditOffsets(
+                  const edit = contextualCompletionEditOffsets(
                     view.state.doc,
                     to,
                     apply,
                     textEdit,
-                    (text, character) => client.stringOffsetFromLspCharacter(text, character)
+                    (text, character) => client.stringOffsetFromLspCharacter(text, character),
+                    from,
+                    to,
+                    preferLocalTokenRange
                   );
-                  snippetApply(view, selected, edit?.from ?? from, edit?.to ?? to);
+                  snippetApply(view, selected, edit.from, edit.to);
+                  if (callableSnippet.opensArguments) {
+                    const line = view.state.doc.lineAt(edit.from);
+                    const caretInLine = completedEmptyCallCaret(
+                      line.text,
+                      label,
+                      edit.from - line.from
+                    );
+                    if (caretInLine !== null) {
+                      const anchor = line.from + caretInLine;
+                      if (view.state.selection.main.anchor !== anchor) {
+                        view.dispatch({ selection: { anchor } });
+                      }
+                      window.setTimeout(() => {
+                        view.dispatch({ selection: view.state.selection });
+                        startCompletion(view);
+                      }, 50);
+                    }
+                  }
                 }
               };
+              return wrappedCompletion;
             }
 
             return {
@@ -490,14 +642,16 @@ export function createTypstAutocomplete(
               type,
               sortText: item.sortText,
               apply(view, _selected, from, to) {
-                const edit = completionEditOffsets(
+                const replacement = contextualCompletionEditOffsets(
                   view.state.doc,
                   to,
                   apply,
                   textEdit,
-                  (text, character) => client.stringOffsetFromLspCharacter(text, character)
+                  (text, character) => client.stringOffsetFromLspCharacter(text, character),
+                  from,
+                  to,
+                  preferLocalTokenRange
                 );
-                const replacement = edit ?? { from, to };
                 view.dispatch({
                   changes: { from: replacement.from, to: replacement.to, insert: apply },
                   selection: { anchor: replacement.from + apply.length },
@@ -510,7 +664,9 @@ export function createTypstAutocomplete(
           return {
             from: fontValueFrom ?? word?.from ?? context.pos,
             options,
-            ...(fontValueFrom !== null ? { validFor: /^[^"\r\n]*$/ } : {})
+            validFor: fontValueFrom !== null
+              ? /^[^"\r\n]*$/
+              : typstCompletionValidFor
           };
           
         } catch (e) {

@@ -252,6 +252,8 @@ type PdfUpdatePayload = {
 
 type PreviewContentMode = "normal" | "draft";
 
+type UndockedPreviewAction = "export-pdf" | "open-external";
+
 type DraftImageReference = {
   sourcePath: string;
   fromUtf16: number;
@@ -947,6 +949,7 @@ export class TypsastraWorkspaceController {
     await getCurrentWindow().show();
 
     const { listen, emit } = await import("@tauri-apps/api/event");
+    this.initializeUndockedPreviewOptions(action => emit("preview-window-action", action));
 
     document.getElementById("preview-content-mode-toggle")?.addEventListener("click", () => {
       const requestedMode = this.previewContentMode === "draft" ? "normal" : "draft";
@@ -989,7 +992,72 @@ export class TypsastraWorkspaceController {
       void this.previewFrame?.revealDocumentPosition(pos);
     });
 
-    emit("preview-window-ready");
+    void emit("preview-window-ready");
+  }
+
+  private initializeUndockedPreviewOptions(
+    requestMainWindowAction: (action: UndockedPreviewAction) => Promise<void>
+  ): void {
+    const button = document.getElementById("preview-menu-btn");
+    const menu = document.getElementById("context-menu");
+    if (!button || !menu) return;
+
+    const hide = () => {
+      menu.style.display = "none";
+      delete menu.dataset.menuKind;
+    };
+    const show = () => {
+      menu.innerHTML = `
+        <div class="dropdown-item" data-preview-action="zoom-out">Zoom Out</div>
+        <div class="dropdown-item" data-preview-action="zoom-fit">Fit to Width</div>
+        <div class="dropdown-item" data-preview-action="zoom-in">Zoom In</div>
+        <div class="dropdown-separator"></div>
+        <div class="dropdown-item" data-preview-action="export-pdf">Export PDF</div>
+        <div class="dropdown-item" data-preview-action="open-external">Open in External Viewer</div>
+        <div class="dropdown-separator"></div>
+        <div class="dropdown-item" data-preview-action="dock">Dock Preview</div>`;
+      menu.dataset.menuKind = "preview";
+      menu.style.display = "block";
+      const buttonRect = button.getBoundingClientRect();
+      const menuRect = menu.getBoundingClientRect();
+      menu.style.left = `${Math.max(0, Math.min(
+        buttonRect.right - menuRect.width,
+        window.innerWidth - menuRect.width
+      ))}px`;
+      menu.style.top = `${Math.max(0, Math.min(
+        buttonRect.bottom + 4,
+        window.innerHeight - menuRect.height
+      ))}px`;
+    };
+
+    button.addEventListener("click", event => {
+      event.stopPropagation();
+      if (menu.style.display === "block" && menu.dataset.menuKind === "preview") {
+        hide();
+      } else {
+        show();
+      }
+    });
+    menu.addEventListener("click", event => {
+      const action = (event.target as HTMLElement)
+        .closest<HTMLElement>("[data-preview-action]")
+        ?.dataset.previewAction;
+      if (!action) return;
+      hide();
+      if (action === "zoom-out") this.zoomOut();
+      else if (action === "zoom-fit") this.zoomToFit();
+      else if (action === "zoom-in") this.zoomIn();
+      else if (action === "dock") document.getElementById("undock-preview-btn")?.click();
+      else if (action === "export-pdf" || action === "open-external") {
+        void requestMainWindowAction(action);
+      }
+    });
+    document.addEventListener("click", hide);
+    window.addEventListener("blur", hide);
+    window.addEventListener("message", event => {
+      const type = (event.data as { type?: unknown } | null)?.type;
+      if (type === "HIDE_CONTEXT_MENU" || type === "SHOW_PREVIEW_CONTEXT_MENU") hide();
+    });
   }
 
   private updateWorkspaceViewportVisibility() {
@@ -8762,6 +8830,13 @@ export class TypsastraWorkspaceController {
       });
       listen<PreviewContentMode>("preview-content-mode-request", event => {
         void this.setPreviewContentMode(event.payload);
+      });
+      listen<UndockedPreviewAction>("preview-window-action", event => {
+        if (event.payload === "export-pdf") {
+          document.getElementById("action-export-pdf")?.click();
+        } else if (event.payload === "open-external" && this.lastPdfPath) {
+          void this.openFileExternally(this.lastPdfPath);
+        }
       });
       listen<PreviewClickPoint>("pdf-click", (event) => {
         const point = event.payload;

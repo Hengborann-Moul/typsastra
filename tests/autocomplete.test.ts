@@ -4,13 +4,18 @@ import {
   applyTextForHashPrefix,
   allowsLanguageWordCompletionOnLine,
   completionEditOffsets,
+  completedEmptyCallCaret,
+  contextualCompletionEditOffsets,
   displayLabelForHashPrefix,
   fontCompletionValueStart,
+  isEmptyTypstFunctionCallAt,
   languageCompletionRange,
   languageCompletionValidFor,
   lspCompletionEditOffsets,
+  normalizeCallableCompletionSnippet,
   preferContextualArgumentCompletions,
-  quotedCompletionEditOffsets
+  quotedCompletionEditOffsets,
+  typstCompletionValidFor
 } from "../src/editor/autocomplete";
 
 describe("language word completion context", () => {
@@ -37,6 +42,30 @@ describe("language word completion context", () => {
 });
 
 describe("LSP autocomplete edits", () => {
+  test("keeps hash-triggered completion active while typing an identifier", () => {
+    expect(typstCompletionValidFor.test("#")).toBe(true);
+    expect(typstCompletionValidFor.test("#i")).toBe(true);
+    expect(typstCompletionValidFor.test("#image")).toBe(true);
+    expect(typstCompletionValidFor.test("#my-function")).toBe(true);
+    expect(typstCompletionValidFor.test("#module.member")).toBe(true);
+    expect(typstCompletionValidFor.test("#រូបភាព")).toBe(true);
+    expect(typstCompletionValidFor.test("#image(")).toBe(false);
+    expect(typstCompletionValidFor.test("#image ")).toBe(false);
+  });
+
+  test("attaches the Typst validity range to LSP and fallback results", async () => {
+    const source = await Bun.file(new URL("../src/editor/autocomplete.ts", import.meta.url)).text();
+    expect(source).toContain("validFor: typstCompletionValidFor");
+    expect(source).toContain(": typstCompletionValidFor");
+  });
+
+  test("restarts an explicitly dismissed completion at the same token", async () => {
+    const source = await Bun.file(new URL("../src/editor/extensions.ts", import.meta.url)).text();
+    expect(source).toContain('event.ctrlKey && !event.altKey && !event.metaKey && event.code === "Space"');
+    expect(source).toContain("view.dispatch({ selection: view.state.selection })");
+    expect(source).toContain("queueMicrotask(() => startCompletion(view))");
+  });
+
   test("keeps only Tinymist's contextual function arguments after a global fallback", () => {
     const items = [
       { label: "align", kind: 3, sortText: "008", insertText: "align" },
@@ -79,7 +108,9 @@ describe("LSP autocomplete edits", () => {
 
   test("preserves Tinymist ranking metadata on snippet completions", async () => {
     const source = await Bun.file(new URL("../src/editor/autocomplete.ts", import.meta.url)).text();
-    expect(source).toMatch(/snippetCompletion\(apply,\s*\{[\s\S]*?sortText:\s*item\.sortText[\s\S]*?\}\)/);
+    expect(source).toMatch(
+      /snippetCompletion\(callableSnippet\.template,\s*\{[\s\S]*?sortText:\s*item\.sortText[\s\S]*?\}\)/
+    );
   });
 
   test("keeps a font completion range active across spaces", () => {
@@ -181,6 +212,86 @@ describe("LSP autocomplete edits", () => {
     expect(displayLabelForHashPrefix("set", "keyword", true)).toBe("#set");
     expect(applyTextForHashPrefix("set", "keyword", true, false)).toBe("#set");
     expect(applyTextForHashPrefix("set", "keyword", true, true)).toBe("set");
+  });
+
+  test("replaces the complete local hash token instead of appending to it", () => {
+    const doc = Text.of(["#pag"]);
+    const replacement = contextualCompletionEditOffsets(
+      doc,
+      4,
+      "#page()",
+      {
+        newText: "#page()",
+        range: {
+          start: { line: 0, character: 0 },
+          end: { line: 0, character: 0 }
+        }
+      },
+      (_text, character) => character,
+      0,
+      4,
+      true
+    );
+
+    expect(replacement).toEqual({ from: 0, to: 4 });
+    expect(
+      doc.sliceString(0, replacement.from)
+      + "#page()"
+      + doc.sliceString(replacement.to)
+    ).toBe("#page()");
+  });
+
+  test("replaces the complete set-rule target instead of retaining a stale suffix", () => {
+    const doc = Text.of(["#set page"]);
+    const replacement = contextualCompletionEditOffsets(
+      doc,
+      9,
+      "page()",
+      {
+        newText: "page()",
+        range: {
+          start: { line: 0, character: 5 },
+          end: { line: 0, character: 7 }
+        }
+      },
+      (_text, character) => character,
+      5,
+      9,
+      true
+    );
+
+    expect(replacement).toEqual({ from: 5, to: 9 });
+    expect(
+      doc.sliceString(0, replacement.from)
+      + "page()"
+      + doc.sliceString(replacement.to)
+    ).toBe("#set page()");
+  });
+
+  test("places the caret inside an accepted empty function call", () => {
+    expect(normalizeCallableCompletionSnippet("#page()${1:}", 3, undefined))
+      .toEqual({ template: "#page(${})", opensArguments: true });
+    expect(normalizeCallableCompletionSnippet("#figure", 3, undefined))
+      .toEqual({ template: "#figure(${})", opensArguments: true });
+    expect(normalizeCallableCompletionSnippet("#circle(${1:})", 3, undefined))
+      .toEqual({ template: "#circle(${1:})", opensArguments: true });
+    expect(normalizeCallableCompletionSnippet("#page(width: 10cm)", 3, undefined))
+      .toEqual({ template: "#page(width: 10cm)", opensArguments: false });
+    expect(completedEmptyCallCaret("#page()", "#page")).toBe(6);
+    expect(completedEmptyCallCaret("before #align() after", "#align")).toBe(14);
+  });
+
+  test("recognizes an empty manually typed function argument context", () => {
+    expect(isEmptyTypstFunctionCallAt("#page()", 6)).toBe(true);
+    expect(isEmptyTypstFunctionCallAt("Text #page() after", 11)).toBe(true);
+    expect(isEmptyTypstFunctionCallAt("#page()", 7)).toBe(false);
+    expect(isEmptyTypstFunctionCallAt("#page(width: 10cm)", 6)).toBe(false);
+  });
+
+  test("activates named argument completion after accepting an empty function call", async () => {
+    const source = await Bun.file(new URL("../src/editor/autocomplete.ts", import.meta.url)).text();
+    expect(source).toContain("responseItems.filter(isNamedArgumentCompletion)");
+    expect(source).toContain("startCompletion(view)");
   });
 });
 

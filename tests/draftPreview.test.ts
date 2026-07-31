@@ -145,6 +145,17 @@ describe("Draft Preview", () => {
     );
   });
 
+  test("initializes preview options inside the undocked window", () => {
+    expect(controller).toContain(
+      'this.initializeUndockedPreviewOptions(action => emit("preview-window-action", action))'
+    );
+    expect(controller).toContain('data-preview-action="zoom-fit"');
+    expect(controller).toContain('data-preview-action="export-pdf"');
+    expect(controller).toContain('data-preview-action="open-external"');
+    expect(controller).toContain('data-preview-action="dock"');
+    expect(controller).toContain('listen<UndockedPreviewAction>("preview-window-action"');
+  });
+
   test("starts one fixed native thumbnail queue after Draft presentation", () => {
     expect(controller).toContain('invoke<DraftThumbnailQueueSummary>("start_draft_thumbnail_generation"');
     expect(controller).toContain("displayedPageAssetIds");
