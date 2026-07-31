@@ -31,6 +31,7 @@ type LspCompletionItem = {
   textEdit?: LspTextEdit;
   insertTextFormat?: number;
   sortText?: string;
+  additionalTextEdits?: LspTextEdit[];
 };
 
 type LspCompletionResponse = LspCompletionItem[] | {
@@ -63,16 +64,34 @@ export const languageCompletionValidFor = () => false;
 // Keep a Tinymist or fallback Typst completion result alive while the user
 // extends the same identifier. Without this, the asynchronous list opened by
 // `#` is discarded on the very next character instead of being filtered.
-export const typstCompletionValidFor = /^#?[\p{L}\p{M}\p{N}_.-]*$/u;
+// A dot changes the semantic completion context from a global Typst token to
+// member access. Do not let the pre-dot result survive that transition, or
+// CodeMirror will keep filtering the old global list (for example `#int`) for
+// `#it.` instead of asking Tinymist for `it`'s fields.
+export const typstCompletionValidFor = /^#?[\p{L}\p{M}\p{N}_-]*$/u;
+export const typstMemberCompletionValidFor = /^[\p{L}\p{M}\p{N}_-]*$/u;
 
 function completionInsertion(item: LspCompletionItem): string {
   return item.textEdit?.newText ?? item.insertText ?? item.label;
 }
 
-function isNamedArgumentCompletion(item: LspCompletionItem): boolean {
+export function isNamedArgumentCompletion(item: LspCompletionItem): boolean {
   // Tinymist has reported function parameters as both fields and properties
-  // across versions. The inserted `name:` syntax is the stable signal.
-  return /^\s*[\p{L}_][\p{L}\p{N}_-]*\s*:/u.test(completionInsertion(item));
+  // across versions. Require both that semantic kind and inserted `name:`
+  // syntax: global snippets such as `show: ...` also contain a colon, but are
+  // not arguments of the function surrounding the caret.
+  return (item.kind === 5 || item.kind === 10)
+    && /^\s*[\p{L}_][\p{L}\p{N}_-]*\s*:/u.test(completionInsertion(item));
+}
+
+export function isDirectMemberCompletion(item: LspCompletionItem): boolean {
+  // Tinymist also returns expression transformations in member completion,
+  // such as wrapping a content value with `text`, `block`, or `align`. Those
+  // are useful code actions, but they are not members of the receiver. Real
+  // methods, element fields, dictionary keys, and module definitions edit
+  // only the identifier after the dot.
+  return item.kind !== 15
+    && (!item.additionalTextEdits || item.additionalTextEdits.length === 0);
 }
 
 export function isEmptyTypstFunctionCallAt(
@@ -84,6 +103,46 @@ export function isEmptyTypstFunctionCallAt(
   const after = lineText.slice(boundedCursor);
   return /#(?:(?:set|show)\s+)?[\p{L}\p{M}\p{N}_.-]+\($/u.test(before)
     && after.startsWith(")");
+}
+
+export function isTypstRuleTargetAt(
+  lineText: string,
+  cursor: number
+): boolean {
+  const boundedCursor = Math.max(0, Math.min(cursor, lineText.length));
+  return /#(?:set|show)\s+[\p{L}\p{M}\p{N}_.-]*$/u.test(
+    lineText.slice(0, boundedCursor)
+  );
+}
+
+export function isTypstMemberAccessAt(
+  lineText: string,
+  cursor: number
+): boolean {
+  const boundedCursor = Math.max(0, Math.min(cursor, lineText.length));
+  const before = lineText.slice(0, boundedCursor);
+  const memberSuffix = /(?:\.[\p{L}\p{M}\p{N}_-]*)+$/u.exec(before);
+  if (!memberSuffix || memberSuffix.index === undefined) return false;
+
+  const hash = before.lastIndexOf("#", memberSuffix.index);
+  if (hash < 0) return false;
+  const receiver = before.slice(hash + 1, memberSuffix.index);
+
+  // Keep ordinary markup such as `See example.com` out of implicit Typst
+  // completion. These forms are expressions that can own fields or methods.
+  return /^(?:"(?:\\.|[^"\\])*"|\d+(?:\.\d+)?|[\p{L}_][\p{L}\p{M}\p{N}_-]*|\([^()\r\n]*\)|\[[^\]\r\n]*\])(?:\([^()\r\n]*\))?(?:\.[\p{L}_][\p{L}\p{M}\p{N}_-]*(?:\([^()\r\n]*\))?)*$/u.test(receiver);
+}
+
+export function liveTypstMemberCompletionEditOffsets(
+  doc: Text,
+  cursorPosition: number
+): { from: number; to: number } | null {
+  const line = doc.lineAt(cursorPosition);
+  const cursor = cursorPosition - line.from;
+  if (!isTypstMemberAccessAt(line.text, cursor)) return null;
+  const suffix = /[\p{L}\p{M}\p{N}_-]*$/u.exec(line.text.slice(0, cursor));
+  if (!suffix || suffix.index === undefined) return null;
+  return { from: line.from + suffix.index, to: cursorPosition };
 }
 
 export function normalizeCallableCompletionSnippet(
@@ -434,6 +493,7 @@ export function createTypstAutocomplete(
   getLanguageCompletionProvider?: (providers: ProviderCapabilities[]) => CompletionProviderSelection | null,
   getLanguageCompletionGeneration?: () => number,
   onLanguageCompletionPerformance?: (milliseconds: number) => void,
+  onTypstCompletionTrace?: (message: string) => void,
 ) {
   return autocompletion({
     override: [
@@ -454,8 +514,11 @@ export function createTypstAutocomplete(
           const match = provider ? matches.find(candidate => candidate.provider.id === provider.id) : null;
           if (selected && provider && match) {
             const line = context.state.doc.lineAt(context.pos);
-            if (!allowsLanguageWordCompletionOnLine(line.text, match.word.from - line.from)) return null;
-            try {
+            // A script provider can match a Typst identifier such as the `p`
+            // in `#set p`. In that case, skip only language-word completion
+            // and continue below to Tinymist's syntax completion source.
+            if (allowsLanguageWordCompletionOnLine(line.text, match.word.from - line.from)) {
+              try {
               const documentIdentity = context.state.doc;
               const inputGeneration = selected.generation;
               const completion = await invoke<LanguageCompletionResponse | null>("complete_language_word", {
@@ -485,16 +548,31 @@ export function createTypstAutocomplete(
                   validFor: languageCompletionValidFor
                 };
               }
-            } catch (e) {
-              console.warn(`${provider.id} autocomplete error`, e);
+              } catch (e) {
+                console.warn(`${provider.id} autocomplete error`, e);
+              }
             }
           }
         }
 
+        const activeCompletionLine = context.state.doc.lineAt(context.pos);
+        const completionColumn = context.pos - activeCompletionLine.from;
+        const isMemberAccess = isTypstMemberAccessAt(
+          activeCompletionLine.text,
+          completionColumn
+        );
         const fontValueFrom = fontCompletionValueStart(context.state.doc, context.pos);
+        const traceRelevant = context.explicit
+          || context.state.doc.lineAt(context.pos).text.includes("#");
+        if (traceRelevant) {
+          const line = context.state.doc.lineAt(context.pos);
+          onTypstCompletionTrace?.(
+            `Completion source entered: explicit=${context.explicit}; line=${line.number}; column=${context.pos - line.from}; text=${JSON.stringify(line.text)}.`
+          );
+        }
         if (!context.explicit) {
-          const lineStr = context.state.doc.lineAt(context.pos).text;
-          const col = context.pos - context.state.doc.lineAt(context.pos).from;
+          const lineStr = activeCompletionLine.text;
+          const col = completionColumn;
           const textBefore = lineStr.slice(0, col);
           const isEmptyFunctionCall = isEmptyTypstFunctionCallAt(lineStr, col);
           
@@ -514,17 +592,26 @@ export function createTypstAutocomplete(
           const closeBraces = (docBefore.match(/\}/g) || []).length;
           const inCodeBlock = openBraces > closeBraces;
           
-          if (!isHashWord && !isSetShow && !inCodeBlock && !isEmptyFunctionCall) {
+          if (!isHashWord && !isSetShow && !isMemberAccess && !inCodeBlock && !isEmptyFunctionCall) {
+            if (traceRelevant) {
+              onTypstCompletionTrace?.(
+                `Implicit completion rejected by syntax gate: hashWord=${isHashWord}; rule=${isSetShow}; member=${isMemberAccess}; codeBlock=${inCodeBlock}; emptyCall=${isEmptyFunctionCall}.`
+              );
+            }
             return null;
           }
         }
 
-        const activeLine = context.state.doc.lineAt(context.pos);
+        const activeLine = activeCompletionLine;
         const isEmptyFunctionCall = isEmptyTypstFunctionCallAt(
           activeLine.text,
           context.pos - activeLine.from
         );
-        const fallbackCompletions = () => isEmptyFunctionCall
+        const isRuleTarget = isTypstRuleTargetAt(
+          activeLine.text,
+          context.pos - activeLine.from
+        );
+        const fallbackCompletions = () => isEmptyFunctionCall || isMemberAccess
           ? null
           : typstCompletions(context);
 
@@ -539,6 +626,11 @@ export function createTypstAutocomplete(
           // Force flush any pending LSP document changes so the server completes
           // against the same text CodeMirror is showing.
           await flushLspSync();
+          if (traceRelevant) {
+            onTypstCompletionTrace?.(
+              `Requesting Tinymist completion: uri=${uri}; line=${position.line}; character=${position.character ?? 0}; aborted=${context.aborted}.`
+            );
+          }
 
           const response = await client.request<LspCompletionResponse>("textDocument/completion", {
             textDocument: { uri },
@@ -552,13 +644,28 @@ export function createTypstAutocomplete(
           
           const responseItems = Array.isArray(response) ? response : response.items;
           const itemDefaults = Array.isArray(response) ? undefined : response.itemDefaults;
+          if (traceRelevant) {
+            onTypstCompletionTrace?.(
+              `Tinymist completion returned: count=${responseItems?.length ?? 0}; aborted=${context.aborted}; labels=${JSON.stringify(responseItems?.slice(0, 8).map(item => item.label) ?? [])}.`
+            );
+          }
           if (!responseItems || responseItems.length === 0) return fallbackCompletions();
+          const memberItems = isMemberAccess
+            ? responseItems.filter(isDirectMemberCompletion)
+            : responseItems;
           const items = isEmptyFunctionCall
-            ? responseItems.filter(isNamedArgumentCompletion)
-            : preferContextualArgumentCompletions(responseItems);
+            ? memberItems.filter(isNamedArgumentCompletion)
+            : isRuleTarget
+              ? memberItems
+              : preferContextualArgumentCompletions(memberItems);
           if (items.length === 0) return null;
           
-          const word = context.matchBefore(/#?[\p{L}\p{M}\p{N}_.-]*/u);
+          // A member completion replaces only the identifier after the final
+          // dot. Including the dot makes CodeMirror filter `len` against
+          // `.le`, hiding every otherwise valid Tinymist result.
+          const word = isMemberAccess
+            ? context.matchBefore(/[\p{L}\p{M}\p{N}_-]*/u)
+            : context.matchBefore(/#?[\p{L}\p{M}\p{N}_.-]*/u);
           const isHashPrefix = word?.text.startsWith('#');
           const preferLocalTokenRange = fontValueFrom === null
             && Boolean(word?.text);
@@ -606,7 +713,12 @@ export function createTypstAutocomplete(
               const wrappedCompletion: Completion = {
                 ...completion,
                 apply(view, selected, from, to) {
-                  const edit = contextualCompletionEditOffsets(
+                  const edit = (isMemberAccess
+                    ? liveTypstMemberCompletionEditOffsets(
+                      view.state.doc,
+                      view.state.selection.main.head
+                    )
+                    : null) ?? contextualCompletionEditOffsets(
                     view.state.doc,
                     to,
                     apply,
@@ -647,7 +759,12 @@ export function createTypstAutocomplete(
               type,
               sortText: item.sortText,
               apply(view, _selected, from, to) {
-                const replacement = contextualCompletionEditOffsets(
+                const replacement = (isMemberAccess
+                  ? liveTypstMemberCompletionEditOffsets(
+                    view.state.doc,
+                    view.state.selection.main.head
+                  )
+                  : null) ?? contextualCompletionEditOffsets(
                   view.state.doc,
                   to,
                   apply,
@@ -666,16 +783,25 @@ export function createTypstAutocomplete(
             };
           });
           
-          return {
+          const result = {
             from: fontValueFrom ?? word?.from ?? context.pos,
             options,
             validFor: fontValueFrom !== null
               ? /^[^"\r\n]*$/
-              : typstCompletionValidFor
+              : isMemberAccess
+                ? typstMemberCompletionValidFor
+                : typstCompletionValidFor
           };
+          if (traceRelevant) {
+            onTypstCompletionTrace?.(
+              `Installing completion result: from=${result.from}; cursor=${context.pos}; options=${options.length}; aborted=${context.aborted}.`
+            );
+          }
+          return result;
           
         } catch (e) {
           console.warn("LSP completion error", e);
+          if (traceRelevant) onTypstCompletionTrace?.(`Tinymist completion failed: ${String(e)}.`);
           return fallbackCompletions();
         }
       }

@@ -9,12 +9,18 @@ import {
   displayLabelForHashPrefix,
   fontCompletionValueStart,
   isEmptyTypstFunctionCallAt,
+  isDirectMemberCompletion,
+  isNamedArgumentCompletion,
+  isTypstMemberAccessAt,
+  isTypstRuleTargetAt,
   languageCompletionRange,
   languageCompletionValidFor,
+  liveTypstMemberCompletionEditOffsets,
   lspCompletionEditOffsets,
   normalizeCallableCompletionSnippet,
   preferContextualArgumentCompletions,
   quotedCompletionEditOffsets,
+  typstMemberCompletionValidFor,
   typstCompletionValidFor
 } from "../src/editor/autocomplete";
 
@@ -37,7 +43,19 @@ describe("language word completion context", () => {
     expect(allowsLanguageWordCompletionOnLine('#include "stories/rabbit', 19)).toBe(false);
     expect(allowsLanguageWordCompletionOnLine('#import "templates/chapt', 19)).toBe(false);
     expect(allowsLanguageWordCompletionOnLine('#set text(font: "Fira', 18)).toBe(false);
+    expect(allowsLanguageWordCompletionOnLine("#set p", 5)).toBe(false);
+    expect(allowsLanguageWordCompletionOnLine("#show h", 6)).toBe(false);
     expect(allowsLanguageWordCompletionOnLine("#let previewRoot = tr", 5)).toBe(false);
+  });
+
+  test("continues to Typst LSP completion when syntax rejects a language word", async () => {
+    const source = await Bun.file(new URL("../src/editor/autocomplete.ts", import.meta.url)).text();
+    expect(source).not.toContain(
+      "if (!allowsLanguageWordCompletionOnLine(line.text, match.word.from - line.from)) return null;"
+    );
+    expect(source).toContain(
+      "if (allowsLanguageWordCompletionOnLine(line.text, match.word.from - line.from)) {"
+    );
   });
 });
 
@@ -47,7 +65,8 @@ describe("LSP autocomplete edits", () => {
     expect(typstCompletionValidFor.test("#i")).toBe(true);
     expect(typstCompletionValidFor.test("#image")).toBe(true);
     expect(typstCompletionValidFor.test("#my-function")).toBe(true);
-    expect(typstCompletionValidFor.test("#module.member")).toBe(true);
+    expect(typstCompletionValidFor.test("#module")).toBe(true);
+    expect(typstCompletionValidFor.test("#module.member")).toBe(false);
     expect(typstCompletionValidFor.test("#រូបភាព")).toBe(true);
     expect(typstCompletionValidFor.test("#image(")).toBe(false);
     expect(typstCompletionValidFor.test("#image ")).toBe(false);
@@ -95,6 +114,30 @@ describe("LSP autocomplete edits", () => {
 
     expect(preferContextualArgumentCompletions(items).map(item => item.label))
       .toEqual(["alt", "fit", "width"]);
+  });
+
+  test("does not treat colon-bearing global snippets as function arguments", () => {
+    const items = [
+      {
+        label: "show rule (everything)",
+        kind: 15,
+        textEdit: { newText: "show: ${1:}", range: undefined }
+      },
+      {
+        label: "fill",
+        kind: 5,
+        textEdit: { newText: "fill: ${1:}", range: undefined }
+      },
+      {
+        label: "width",
+        kind: 10,
+        textEdit: { newText: "width: ${1:}", range: undefined }
+      }
+    ];
+
+    expect(preferContextualArgumentCompletions(items)).toEqual(items);
+    const source = items.filter(isNamedArgumentCompletion);
+    expect(source.map(item => item.label)).toEqual(["fill", "width"]);
   });
 
   test("does not suppress a normal completion list on an unrelated sort restart", () => {
@@ -290,9 +333,61 @@ describe("LSP autocomplete edits", () => {
     expect(isEmptyTypstFunctionCallAt("#page(width: 10cm)", 6)).toBe(false);
   });
 
+  test("keeps set and show target completion separate from argument filtering", () => {
+    expect(isTypstRuleTargetAt("#set ", 5)).toBe(true);
+    expect(isTypstRuleTargetAt("#set p", 6)).toBe(true);
+    expect(isTypstRuleTargetAt("#set page", 9)).toBe(true);
+    expect(isTypstRuleTargetAt("#show h", 7)).toBe(true);
+    expect(isTypstRuleTargetAt("#set page(", 10)).toBe(false);
+    expect(isTypstRuleTargetAt("#show heading:", 14)).toBe(false);
+  });
+
+  test("recognizes member completion on hash expressions", () => {
+    expect(isTypstMemberAccessAt('#"hello".le', 11)).toBe(true);
+    expect(isTypstMemberAccessAt("#value.fi", 9)).toBe(true);
+    expect(isTypstMemberAccessAt("#items.at(0).fi", 15)).toBe(true);
+    expect(isTypstMemberAccessAt("#(1 + 2).fi", 11)).toBe(true);
+    expect(isTypstMemberAccessAt("example.fi", 10)).toBe(false);
+    expect(isTypstMemberAccessAt("See #tag and example.fi", 23)).toBe(false);
+    expect(typstMemberCompletionValidFor.test("")).toBe(true);
+    expect(typstMemberCompletionValidFor.test("le")).toBe(true);
+    expect(typstMemberCompletionValidFor.test(".le")).toBe(false);
+  });
+
+  test("keeps direct members and removes Tinymist expression transformations", () => {
+    expect(isDirectMemberCompletion({ label: "fields", kind: 3 })).toBe(true);
+    expect(isDirectMemberCompletion({ label: "depth", kind: 6 })).toBe(true);
+    expect(isDirectMemberCompletion({ label: "project-key", kind: 10 })).toBe(true);
+    expect(isDirectMemberCompletion({
+      label: "align",
+      kind: 15,
+      additionalTextEdits: [{ newText: "align(" }]
+    })).toBe(false);
+    expect(isDirectMemberCompletion({
+      label: "block",
+      kind: 3,
+      additionalTextEdits: [{ newText: "block(" }]
+    })).toBe(false);
+  });
+
+  test("replaces the live member suffix after completion opened on the dot", () => {
+    const doc = Text.of(['#"hello".le']);
+    const replacement = liveTypstMemberCompletionEditOffsets(doc, doc.length);
+    expect(replacement).toEqual({ from: 9, to: 11 });
+    expect(
+      doc.sliceString(0, replacement!.from)
+      + "len()"
+      + doc.sliceString(replacement!.to)
+    ).toBe('#"hello".len()');
+
+    const bareDot = Text.of(['#"hello".']);
+    expect(liveTypstMemberCompletionEditOffsets(bareDot, bareDot.length))
+      .toEqual({ from: 9, to: 9 });
+  });
+
   test("activates named argument completion after accepting an empty function call", async () => {
     const source = await Bun.file(new URL("../src/editor/autocomplete.ts", import.meta.url)).text();
-    expect(source).toContain("responseItems.filter(isNamedArgumentCompletion)");
+    expect(source).toContain("memberItems.filter(isNamedArgumentCompletion)");
     expect(source).toContain("isEmptyFunctionCall");
     expect(source).toContain("? null");
     expect(source).toContain("startCompletion(view)");

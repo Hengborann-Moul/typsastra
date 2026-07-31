@@ -1258,6 +1258,7 @@ export class TypsastraWorkspaceController {
         providers => this.documentLanguageService.completionProvider(providers),
         () => this.documentLanguageService.currentGeneration(),
         milliseconds => this.performanceDiagnostics.record({ name: "language.completion", milliseconds }),
+        message => this.appendDeveloperLog({ kind: "info", source: "lsp autocomplete", message }),
       ))
     ];
   }
@@ -1277,6 +1278,7 @@ export class TypsastraWorkspaceController {
         providers => this.documentLanguageService.completionProvider(providers),
         () => this.documentLanguageService.currentGeneration(),
         milliseconds => this.performanceDiagnostics.record({ name: "language.completion", milliseconds }),
+        message => this.appendDeveloperLog({ kind: "info", source: "lsp autocomplete", message }),
       ))
     });
   }
