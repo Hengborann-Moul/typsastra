@@ -639,6 +639,11 @@ export class TypsastraWorkspaceController {
       void this.saveWorkspaceState();
     }, 750);
   }, (stage, detail) => {
+    // The undocked preview deliberately skips CodeMirror and the rest of the
+    // workspace bootstrap. Its PDF lifecycle is already represented by the
+    // main window, so do not run workspace memory diagnostics from this
+    // preview-only controller.
+    if (isPreviewOnlyWindow()) return;
     return this.logMemoryDiagnostics(`PDF ${stage}`, detail);
   });
   private readonly previewSyncController = new PreviewSyncController({
@@ -4281,7 +4286,10 @@ export class TypsastraWorkspaceController {
       }
       import("@tauri-apps/api/event").then(({ emit }) => {
         emit("pdf-update", {
-          path: pdfPath,
+          // Tinymist's stable output has already been renamed to an immutable
+          // generation. The undocked viewer must open the same generation as
+          // the docked viewer rather than the now-vacant export destination.
+          path: stagedPdfPath,
           identity: previewPath,
           sessionKey: this.previewSessionKey ?? previewPath,
           surface: "live",
@@ -7284,6 +7292,9 @@ export class TypsastraWorkspaceController {
       .map(process => `${process.name}[${process.pid}]=${mib(process.workingSetBytes)} MiB`)
       .join(", ");
     const openDocumentChars = this.openTabs.reduce((total, tab) => total + tab.content.length, 0);
+    const editorUndoDepth = this.editorInstance?.state
+      ? undoDepth(this.editorInstance.state)
+      : 0;
     const detailSummary = Object.entries(detail)
       .map(([key, value]) => `${key}=${value}`)
       .join(", ");
@@ -7304,7 +7315,7 @@ export class TypsastraWorkspaceController {
         `fontFaces=${preview.fontFaces}`,
         `activeRenders=${preview.activeRenders}; pdfLoading=${preview.loading}`,
         `lastPdfPath=${this.lastPdfPath || "none"}`,
-        `openTabs=${this.openTabs.length}; openDocumentUtf16=${openDocumentChars}; undoDepth=${undoDepth(this.editorInstance.state)}`,
+        `openTabs=${this.openTabs.length}; openDocumentUtf16=${openDocumentChars}; undoDepth=${editorUndoDepth}`,
         detailSummary ? `detail: ${detailSummary}` : "",
         `processes: ${processSummary || "unavailable"}`
       ].filter(Boolean).join("; ")

@@ -27,6 +27,44 @@ describe("compiled PDF transport", () => {
     expect(source).toContain("excludeManagedWorkspacePaths(");
   });
 
+  test("shares the staged PDF generation with the undocked preview", async () => {
+    const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
+    const staging = source.indexOf('const stagedPdfPath = await invoke<string>("stage_pdf_preview_generation"');
+    const update = source.indexOf('emit("pdf-update"', staging);
+    const updateEnd = source.indexOf("satisfies PdfUpdatePayload", update);
+    const payload = source.slice(update, updateEnd);
+
+    expect(staging).toBeGreaterThan(-1);
+    expect(update).toBeGreaterThan(staging);
+    expect(payload).toContain("path: stagedPdfPath");
+    expect(payload).not.toContain("path: pdfPath");
+  });
+
+  test("does not run workspace memory diagnostics from the preview-only window", async () => {
+    const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
+    const previewFrame = source.indexOf("private readonly previewFrame = new PreviewFrame");
+    const diagnostics = source.indexOf(
+      'return this.logMemoryDiagnostics(`PDF ${stage}`, detail);',
+      previewFrame
+    );
+    const callback = source.slice(Math.max(previewFrame, diagnostics - 220), diagnostics);
+
+    expect(previewFrame).toBeGreaterThan(-1);
+    expect(diagnostics).toBeGreaterThan(previewFrame);
+    expect(callback).toContain("if (isPreviewOnlyWindow()) return;");
+  });
+
+  test("keeps memory diagnostics safe before CodeMirror is initialized", async () => {
+    const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
+    const diagnostics = source.indexOf("private async logMemoryDiagnostics(");
+    const diagnosticsEnd = source.indexOf("private async reloadOpenFilesFromDisk", diagnostics);
+    const body = source.slice(diagnostics, diagnosticsEnd);
+
+    expect(diagnostics).toBeGreaterThan(-1);
+    expect(body).toContain("this.editorInstance?.state");
+    expect(body).not.toContain("undoDepth(this.editorInstance.state)}`");
+  });
+
   test("uses the private render mirror for on-save and on-type previews", async () => {
     const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
     expect(source).toContain("Every live preview compiles from Typsastra's private render mirror.");
