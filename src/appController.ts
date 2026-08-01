@@ -1656,7 +1656,8 @@ export class TypsastraWorkspaceController {
       (path: string, options?: { temporary?: boolean; focusEditor?: boolean }) => {
         void this.loadFile(path, options);
       },
-      (path: string) => this.isPinnedMainFile(path)
+      (path: string) => this.isPinnedMainFile(path),
+      document.getElementById("workspace-explorer-title")!
     );
   }
 
@@ -8141,6 +8142,7 @@ export class TypsastraWorkspaceController {
       this.mainDocumentScripts = [];
       this.openTabs = [];
       this.explorer.setActiveFile(null);
+      this.explorer.clearWorkspace();
       this.renderEditorTabs();
       await message(String(error), { title: "Unable to Open Project", kind: "error" });
       return;
@@ -8798,7 +8800,7 @@ export class TypsastraWorkspaceController {
     if (this.activeMode === "WYSIWYM") this.mapMarkupToWysiwym("");
     
     // Clear workspace navigation
-    document.getElementById("workspace-explorer-tree")!.innerHTML = "";
+    this.explorer.clearWorkspace();
     this.documentOutlineController.clear();
     this.previewFrame.clear();
     this.renderEditorTabs();

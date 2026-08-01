@@ -101,6 +101,8 @@ pub fn mirror_project_cancellable(
     let project_root = &options.project_root;
     let cache_root = &options.cache_root;
 
+    validate_workspace_dependency_boundary(project_root, &options.entry_file)?;
+
     let setup_started_at = Instant::now();
     ensure_render_cache_owner(project_root, cache_root).map_err(|error| error.to_string())?;
     let render_dir = cache_root.join("render");
@@ -255,6 +257,101 @@ pub fn mirror_project_cancellable(
 
 fn canonical_or_original(path: &Path) -> PathBuf {
     dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn normalized_dependency_path(path: &Path) -> PathBuf {
+    if let Ok(canonical) = dunce::canonicalize(path) {
+        return canonical;
+    }
+
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                if !normalized.pop() {
+                    normalized.push(component.as_os_str());
+                }
+            }
+            _ => normalized.push(component.as_os_str()),
+        }
+    }
+    normalized
+}
+
+fn outside_workspace_dependency_error(
+    project_root: &Path,
+    source_path: &Path,
+    dependency_path: &Path,
+) -> String {
+    let source = source_path
+        .strip_prefix(project_root)
+        .unwrap_or(source_path)
+        .display();
+    format!(
+        "A Typst dependency is outside the current workspace.\n\n\
+Source: {source}\n\
+Referenced file: {}\n\n\
+Typsastra keeps project files inside one workspace for reliable preview, synchronization, and export. \
+Open the nearest common parent folder as the workspace, then set the main file again.",
+        dependency_path.display()
+    )
+}
+
+fn validate_source_dependency_boundary(
+    project_root: &Path,
+    source_path: &Path,
+    source: &str,
+) -> Result<Vec<PathBuf>, String> {
+    let project_root = normalized_dependency_path(project_root);
+    let parent = source_path.parent().unwrap_or(project_root.as_path());
+    let dependencies = crate::local_typst_dependencies(source, parent);
+    let mut normalized_dependencies = Vec::with_capacity(dependencies.len());
+    for dependency in dependencies {
+        let dependency = normalized_dependency_path(&dependency);
+        if !dependency.starts_with(&project_root) {
+            return Err(outside_workspace_dependency_error(
+                &project_root,
+                source_path,
+                &dependency,
+            ));
+        }
+        normalized_dependencies.push(dependency);
+    }
+    Ok(normalized_dependencies)
+}
+
+fn validate_workspace_dependency_boundary(
+    project_root: &Path,
+    entry_file: &Path,
+) -> Result<(), String> {
+    let project_root = normalized_dependency_path(project_root);
+    let entry_file = normalized_dependency_path(entry_file);
+    let mut visited = HashSet::new();
+    let mut pending = VecDeque::from([entry_file]);
+
+    while let Some(source_path) = pending.pop_front() {
+        if !source_path.starts_with(&project_root) {
+            return Err(outside_workspace_dependency_error(
+                &project_root,
+                &source_path,
+                &source_path,
+            ));
+        }
+        if !visited.insert(source_path.clone()) {
+            continue;
+        }
+        let Ok(source) = fs::read_to_string(&source_path) else {
+            continue;
+        };
+        pending.extend(validate_source_dependency_boundary(
+            &project_root,
+            &source_path,
+            &source,
+        )?);
+    }
+
+    Ok(())
 }
 
 fn collect_reachable_typst_files(project_root: &Path, entry_file: &Path) -> HashSet<PathBuf> {
@@ -452,6 +549,8 @@ pub fn prepare_single_in_memory_file(
 ) -> Result<PreparedInMemoryFile, String> {
     let project_root = &options.project_root;
     let cache_root = &options.cache_root;
+
+    validate_source_dependency_boundary(project_root, file_path, source_code)?;
 
     ensure_render_cache_owner(project_root, cache_root).map_err(|error| error.to_string())?;
     let render_dir = cache_root.join("render");
@@ -997,6 +1096,100 @@ fn merge_draft_assets(target: &mut Vec<DraftImageAsset>, assets: Vec<DraftImageA
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rejects_reachable_typst_dependencies_outside_the_workspace() {
+        let parent = tempfile::tempdir().unwrap();
+        let workspace = parent.path().join("typst");
+        let external = parent.path().join("Author/Folder/SubFolder 1/file1.typ");
+        let main = workspace.join("main_file.typ");
+        fs::create_dir_all(external.parent().unwrap()).unwrap();
+        fs::create_dir_all(&workspace).unwrap();
+        fs::write(&external, "= External chapter").unwrap();
+        fs::write(
+            &main,
+            "#let filelocation = \"../Author/Folder/SubFolder 1/file1.typ\"\n#include filelocation",
+        )
+        .unwrap();
+        let options = RenderPrepareOptions {
+            enable_khmer_zws: false,
+            project_root: workspace.clone(),
+            entry_file: main,
+            cache_root: workspace.join(".typsastra/cache"),
+            generate_source_map: true,
+            preview_content_mode: PreviewContentMode::Normal,
+        };
+
+        let error = mirror_project_cancellable(&options, None, || false).unwrap_err();
+
+        assert!(error.contains("outside the current workspace"));
+        assert!(error.contains("main_file.typ"));
+        assert!(error.contains("file1.typ"));
+        assert!(error.contains("Open the nearest common parent folder"));
+        assert!(!options.cache_root.exists());
+    }
+
+    #[test]
+    fn preserves_parent_relative_includes_inside_a_common_workspace() {
+        let workspace = tempfile::tempdir().unwrap();
+        let main = workspace.path().join("typst/main_file.typ");
+        let chapter = workspace.path().join("Author/Folder/SubFolder 1/file1.typ");
+        let cache_root = workspace.path().join(".typsastra/cache");
+        fs::create_dir_all(main.parent().unwrap()).unwrap();
+        fs::create_dir_all(chapter.parent().unwrap()).unwrap();
+        fs::write(&chapter, "= Chapter").unwrap();
+        fs::write(&main, "#include \"../Author/Folder/SubFolder 1/file1.typ\"").unwrap();
+        let options = RenderPrepareOptions {
+            enable_khmer_zws: false,
+            project_root: workspace.path().to_path_buf(),
+            entry_file: main,
+            cache_root: cache_root.clone(),
+            generate_source_map: true,
+            preview_content_mode: PreviewContentMode::Normal,
+        };
+
+        let prepared = mirror_project_cancellable(&options, None, || false).unwrap();
+
+        assert_eq!(
+            prepared.generated_entry_file,
+            cache_root.join("render/typst/main_file.typ")
+        );
+        assert!(cache_root
+            .join("render/Author/Folder/SubFolder 1/file1.typ")
+            .is_file());
+    }
+
+    #[test]
+    fn rejects_unsaved_outside_workspace_dependencies_before_writing_the_mirror() {
+        let parent = tempfile::tempdir().unwrap();
+        let workspace = parent.path().join("typst");
+        let external = parent.path().join("Author/file1.typ");
+        let main = workspace.join("main.typ");
+        let cache_root = workspace.join(".typsastra/cache");
+        fs::create_dir_all(&workspace).unwrap();
+        fs::create_dir_all(external.parent().unwrap()).unwrap();
+        fs::write(&main, "= Main").unwrap();
+        fs::write(&external, "= External").unwrap();
+        let options = RenderPrepareOptions {
+            enable_khmer_zws: false,
+            project_root: workspace,
+            entry_file: main.clone(),
+            cache_root: cache_root.clone(),
+            generate_source_map: true,
+            preview_content_mode: PreviewContentMode::Normal,
+        };
+
+        let error = prepare_single_in_memory_file(
+            &options,
+            None,
+            &main,
+            "#include \"../Author/file1.typ\"",
+        )
+        .unwrap_err();
+
+        assert!(error.contains("outside the current workspace"));
+        assert!(!cache_root.exists());
+    }
 
     #[test]
     fn materializes_pdf_assets_as_regular_cache_files() {

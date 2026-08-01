@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { join } from "@tauri-apps/api/path";
 import { createAppIcon, type AppIconName } from "../ui/icons";
-import { filePathKey, relativeFilePath } from "../platform/paths";
+import { fileNameFromPath, filePathKey, relativeFilePath } from "../platform/paths";
 
 export interface FileNode { name: string; path: string; isDirectory: boolean; children?: FileNode[]; }
 
@@ -70,7 +70,8 @@ export class WorkspaceExplorer {
   constructor(
     private container: HTMLElement,
     private onFileSelected: (filePath: string, options?: { temporary?: boolean; focusEditor?: boolean }) => void,
-    private isPinnedMainFile?: (filePath: string) => boolean
+    private isPinnedMainFile?: (filePath: string) => boolean,
+    private titleElement?: HTMLElement
   ) {
     this.container.tabIndex = 0;
     this.container.setAttribute("role", "tree");
@@ -168,6 +169,11 @@ export class WorkspaceExplorer {
 
   public async loadWorkspace(rootPath: string, initialExpandedPaths: readonly string[] = []) {
     this.workspaceRootPath = rootPath;
+    if (this.titleElement) {
+      const projectName = fileNameFromPath(rootPath) || rootPath;
+      this.titleElement.textContent = `EXPLORER: ${projectName}`;
+      this.titleElement.title = rootPath;
+    }
     const generation = ++this.loadGeneration;
     const viewState = this.captureViewState();
     initialExpandedPaths.forEach(path => viewState.expandedPaths.add(path));
@@ -234,6 +240,17 @@ export class WorkspaceExplorer {
       node.children = await this.readDirectory(node.path);
       await this.hydrateExpandedDirectories(node.children, expandedPaths);
     }));
+  }
+
+  public clearWorkspace(): void {
+    this.loadGeneration += 1;
+    this.workspaceRootPath = null;
+    this.activeFilePath = null;
+    this.container.replaceChildren();
+    if (this.titleElement) {
+      this.titleElement.textContent = "EXPLORER";
+      this.titleElement.removeAttribute("title");
+    }
   }
 
   private async readDirectory(dirPath: string): Promise<FileNode[]> {

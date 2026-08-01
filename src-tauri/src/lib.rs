@@ -1597,6 +1597,55 @@ fn local_typst_dependencies(contents: &str, parent: &std::path::Path) -> Vec<std
             index += 1;
         }
     }
+    // Typst also permits a path stored in a simple string binding, such as
+    // `#let chapter = "chapters/one.typ"` followed by `#include chapter`.
+    // Keep resolving direct literals above, then supplement them with these
+    // statically knowable bindings. Arbitrary computed expressions remain the
+    // compiler's responsibility.
+    use std::collections::HashMap;
+    use typst_syntax::ast::{
+        AstNode, Expr, LetBinding, LetBindingKind, ModuleImport, ModuleInclude, Pattern,
+    };
+
+    fn collect_bound_dependencies(
+        node: &typst_syntax::SyntaxNode,
+        parent: &std::path::Path,
+        bindings: &mut HashMap<String, String>,
+        dependencies: &mut Vec<std::path::PathBuf>,
+    ) {
+        if let Some(binding) = LetBinding::from_untyped(node) {
+            if let (
+                LetBindingKind::Normal(Pattern::Normal(Expr::Ident(name))),
+                Some(Expr::Str(value)),
+            ) = (binding.kind(), binding.init())
+            {
+                bindings.insert(name.as_str().to_string(), value.get().to_string());
+            }
+        }
+
+        let source = ModuleInclude::from_untyped(node)
+            .map(ModuleInclude::source)
+            .or_else(|| ModuleImport::from_untyped(node).map(ModuleImport::source));
+        if let Some(Expr::Ident(identifier)) = source {
+            if let Some(raw) = bindings.get(identifier.as_str()) {
+                if !raw.starts_with('@') && !raw.contains("://") {
+                    let candidate = normalized_existing_path(&parent.join(raw));
+                    if candidate.extension().and_then(|value| value.to_str()) == Some("typ")
+                        && !dependencies.contains(&candidate)
+                    {
+                        dependencies.push(candidate);
+                    }
+                }
+            }
+        }
+
+        for child in node.children() {
+            collect_bound_dependencies(child, parent, bindings, dependencies);
+        }
+    }
+
+    let syntax = typst_syntax::parse(contents);
+    collect_bound_dependencies(&syntax, parent, &mut HashMap::new(), &mut dependencies);
     dependencies
 }
 
