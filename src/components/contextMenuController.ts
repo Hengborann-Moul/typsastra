@@ -3,7 +3,8 @@ import { basename, dirname, join } from "@tauri-apps/api/path";
 import { confirm, message } from "@tauri-apps/plugin-dialog";
 import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { open } from "@tauri-apps/plugin-shell";
-import type { EditorView } from "@codemirror/view";
+import { closeCompletion } from "@codemirror/autocomplete";
+import { closeHoverTooltips, type EditorView } from "@codemirror/view";
 import { selectAll, toggleLineComment } from "@codemirror/commands";
 import type { WorkspaceExplorer } from "./explorer";
 import type { SpellingIssue } from "../editor/spellcheck";
@@ -30,6 +31,8 @@ export type ContextMenuDependencies = {
   isPinnedMainFile: (path: string) => boolean;
   setPinnedMainFile: (path: string | null) => void | Promise<void>;
   getPinnedMainFile: () => string | null;
+  canRevealCursorInPreview: () => boolean;
+  revealCursorInPreview: () => void;
 };
 
 export function explorerKeyboardAction(event: Pick<KeyboardEvent, "key" | "ctrlKey" | "metaKey" | "altKey" | "shiftKey">): "copy" | "paste" | "delete" | "rename" | null {
@@ -172,6 +175,11 @@ export class ContextMenuController {
       case "ctx-editor-toggle-comment": toggleLineComment(this.dependencies.getEditor()); return;
       case "ctx-editor-select-all": selectAll(this.dependencies.getEditor()); return;
       case "ctx-editor-format": await this.dependencies.save(); return;
+      case "ctx-editor-forward-sync":
+        if (this.dependencies.canRevealCursorInPreview()) {
+          this.dependencies.revealCursorInPreview();
+        }
+        return;
       case "ctx-spelling-add":
         if (this.spellingIssue) this.dependencies.addSpellingToDictionary(this.spellingIssue);
         return;
@@ -478,6 +486,9 @@ export class ContextMenuController {
       return;
     }
     if (target.closest(".cm-editor") || target.closest("#code-render-pane")) {
+      const editor = this.dependencies.getEditor();
+      closeCompletion(editor);
+      editor.dispatch({ effects: closeHoverTooltips });
       this.spellingIssue = this.dependencies.getSpellingIssue(event.clientX, event.clientY, target);
       this.spellingSuggestions = this.spellingIssue
         ? await this.dependencies.getSpellingSuggestions(this.spellingIssue)
@@ -563,7 +574,12 @@ export class ContextMenuController {
     const spelling = this.spellingIssue
       ? `${this.spellingSuggestions.map((suggestion, index) => `<div class="dropdown-item spelling-suggestion" id="ctx-spelling-${index}">${this.escapeHtml(suggestion)}</div>`).join("")}<div class="dropdown-item" id="ctx-spelling-add-global">Add to global terminology</div><div class="dropdown-item" id="ctx-spelling-add-project">Add to project terminology</div>${this.spellingIssue.languageFamily ? `<div class="dropdown-item" id="ctx-spelling-add-language">Add to ${this.escapeHtml(this.spellingIssue.languageFamily)} dictionary</div>` : ""}<div class="dropdown-item" id="ctx-spelling-ignore">${this.spellingIssue.ignored ? "Stop ignoring" : this.spellingIssue.languageFamily ? `Ignore in ${this.escapeHtml(this.spellingIssue.languageFamily)}` : "Ignore globally"} “${this.escapeHtml(this.spellingIssue.sourceText)}”</div><div class="dropdown-separator"></div>`
       : "";
-    return `${spelling}<div class="dropdown-item" id="ctx-copy-text">Copy <span class="hotkey">Ctrl+C</span></div><div class="dropdown-item" id="ctx-paste-text">Paste <span class="hotkey">Ctrl+V</span></div><div class="dropdown-item" id="ctx-cut-text">Cut <span class="hotkey">Ctrl+X</span></div><div class="dropdown-separator"></div><div class="dropdown-item" id="ctx-editor-toggle-comment">Toggle Line Comment</div><div class="dropdown-item" id="ctx-editor-format">Format Document</div><div class="dropdown-separator"></div><div class="dropdown-item" id="ctx-undo">Undo</div><div class="dropdown-item" id="ctx-redo">Redo</div><div class="dropdown-separator"></div><div class="dropdown-item" id="ctx-editor-select-all">Select All</div>`;
+    const forwardSyncAvailable = this.dependencies.canRevealCursorInPreview();
+    const forwardSyncShortcut = navigator.userAgent.toLowerCase().includes("mac")
+      ? "Option+Enter"
+      : "Alt+Enter";
+    const forwardSync = `<div class="dropdown-item${forwardSyncAvailable ? "" : " dropdown-item-disabled"}" id="ctx-editor-forward-sync" aria-disabled="${String(!forwardSyncAvailable)}"${forwardSyncAvailable ? "" : ' title="Available only for textual Typst content when the compiled preview is ready"'}>Reveal Cursor in Preview <span class="hotkey">${forwardSyncShortcut}</span></div><div class="dropdown-separator"></div>`;
+    return `${spelling}${forwardSync}<div class="dropdown-item" id="ctx-copy-text">Copy <span class="hotkey">Ctrl+C</span></div><div class="dropdown-item" id="ctx-paste-text">Paste <span class="hotkey">Ctrl+V</span></div><div class="dropdown-item" id="ctx-cut-text">Cut <span class="hotkey">Ctrl+X</span></div><div class="dropdown-separator"></div><div class="dropdown-item" id="ctx-editor-toggle-comment">Toggle Line Comment</div><div class="dropdown-item" id="ctx-editor-format">Format Document</div><div class="dropdown-separator"></div><div class="dropdown-item" id="ctx-undo">Undo</div><div class="dropdown-item" id="ctx-redo">Redo</div><div class="dropdown-separator"></div><div class="dropdown-item" id="ctx-editor-select-all">Select All</div>`;
   }
 
   private escapeHtml(value: string): string {
