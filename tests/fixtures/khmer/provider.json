@@ -1,15 +1,15 @@
 {
   "fixtureVersion": 1,
-  "upstreamCommit": "9da32875a76a27b142c58e2b13d4ff8938e9feeb",
+  "upstreamCommit": "b68a2efac7b4e6df5779597b435afd812006a97f",
   "segmentation": [
     {
       "name": "formal sentence",
       "input": "ក្រុមហ៊ុនទទួលបានប្រាក់ចំណូល",
       "tokens": [
         { "normalized": "ក្រុមហ៊ុន", "source": "ក្រុមហ៊ុន", "from": 0, "to": 9, "known": true },
-        { "normalized": "ទទួល", "source": "ទទួល", "from": 9, "to": 13, "known": true },
-        { "normalized": "បាន", "source": "បាន", "from": 13, "to": 16, "known": true },
-        { "normalized": "ប្រាក់ចំណូល", "source": "ប្រាក់ចំណូល", "from": 16, "to": 27, "known": true }
+        { "normalized": "ទទួលបាន", "source": "ទទួលបាន", "from": 9, "to": 16, "known": true },
+        { "normalized": "ប្រាក់", "source": "ប្រាក់", "from": 16, "to": 22, "known": true },
+        { "normalized": "ចំណូល", "source": "ចំណូល", "from": 22, "to": 27, "known": true }
       ]
     },
     {
@@ -23,7 +23,7 @@
       "name": "unknown but completable prefix",
       "input": "ខ្មេ",
       "tokens": [
-        { "normalized": "ខ្មេ", "source": "ខ្មេ", "from": 0, "to": 4, "known": false, "knownPrefix": true }
+        { "normalized": "ខ្មេ", "source": "ខ្មេ", "from": 0, "to": 4, "known": false, "knownPrefix": false }
       ]
     }
   ],

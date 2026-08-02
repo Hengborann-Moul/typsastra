@@ -6,11 +6,11 @@ use super::provider::{
 };
 use crate::render_prepare::scanner::{scan_typst_content, ScanState};
 use icu_segmenter::{options::WordBreakInvariantOptions, WordSegmenter, WordSegmenterBorrowed};
-use khmer_segmenter::kdict::{KDict, KHypDict};
-use khmer_segmenter::{KhmerSegmenter, SegmenterConfig};
+use khmer_segmenter::kdict::KHypDict;
+use khmer_segmenter::{KhmerSegmenter, SegmenterConfig, SpellcheckProfile};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -18,12 +18,9 @@ use std::sync::RwLock;
 use tauri::Manager;
 
 const KHMER_DICTIONARY: &[u8] =
-    include_bytes!("../../../third_party/khmer_segmenter/port/common/khmer_dictionary.kdict");
-const KHMER_WORDS: &str = include_str!(
-    "../../../third_party/khmer_segmenter/khmer_segmenter/dictionary_data/khmer_dictionary_words.txt"
-);
+    include_bytes!("../../resources/language-providers/khmer/khmer_dictionary.kdict");
 const KHMER_HYPHENATION: &[u8] =
-    include_bytes!("../../../third_party/khmer_segmenter/port/common/khmer_hyphenation.kdict");
+    include_bytes!("../../resources/language-providers/khmer/khmer_hyphenation.kdict");
 const EN_US_AFF: &str = include_str!("../../resources/dictionaries/hunspell/en_US/en_US.aff");
 const EN_US_DIC: &str = include_str!("../../resources/dictionaries/hunspell/en_US/en_US.dic");
 const LIBREOFFICE_RAW_BASE: &str =
@@ -372,165 +369,23 @@ const HUNSPELL_CATALOG: &[HunspellCatalogSpec] = &[
     },
 ];
 
-fn khmer_clusters(text: &str) -> Vec<String> {
-    let mut clusters = Vec::new();
-    let mut current = String::new();
-    let mut prev_is_coeng = false;
-    for c in text.chars() {
-        let is_base = ('\u{1780}'..='\u{17b3}').contains(&c);
-        if is_base && !current.is_empty() && !prev_is_coeng {
-            clusters.push(current);
-            current = String::new();
-        }
-        current.push(c);
-        prev_is_coeng = c == '\u{17d2}';
-    }
-    if !current.is_empty() {
-        clusters.push(current);
-    }
-    clusters
-}
-
-fn cluster_edit_distance(left: &[String], right: &[String]) -> usize {
-    let mut previous: Vec<usize> = (0..=right.len()).collect();
-    for (left_index, left_cluster) in left.iter().enumerate() {
-        let mut current = vec![left_index + 1];
-        for (right_index, right_cluster) in right.iter().enumerate() {
-            current.push(
-                (previous[right_index + 1] + 1)
-                    .min(current[right_index] + 1)
-                    .min(previous[right_index] + usize::from(left_cluster != right_cluster)),
-            );
-        }
-        previous = current;
-    }
-    previous[right.len()]
-}
-
-#[derive(Clone, Debug)]
-pub struct IndexedWord {
-    pub word: String,
-    pub clusters: Vec<String>,
-    pub cost: f32,
-}
-
 struct KhmerProvider {
     segmenter: KhmerSegmenter,
-    lookup_words: Vec<String>,
-    known: HashSet<String>,
-    completion_costs: HashMap<String, f32>,
     hyphenation: KHypDict,
-    suggestion_index: HashMap<char, Vec<IndexedWord>>,
-    top_frequent_words: Vec<IndexedWord>,
 }
-
-const MAX_INTERACTIVE_COMPLETION_CANDIDATES: usize = 1024;
-const MAX_INTERACTIVE_SUGGESTION_CANDIDATES: usize = 1000;
 
 impl KhmerProvider {
     fn new() -> Result<Self, String> {
         let segmenter =
             KhmerSegmenter::from_bytes(KHMER_DICTIONARY.to_vec(), SegmenterConfig::default())
                 .map_err(|error| format!("Failed to load Khmer dictionary: {error}"))?;
-        let mut words: Vec<String> = KHMER_WORDS
-            .lines()
-            .map(str::trim)
-            .filter(|word| !word.is_empty())
-            .filter(|word| {
-                !word.chars().any(|c| {
-                    c.is_ascii_punctuation()
-                        || c.is_whitespace()
-                        || c.is_ascii_digit()
-                        || c == '\u{17d4}' // ។
-                        || c == '\u{17d5}' // ៕
-                        || ('\u{17e0}'..='\u{17e9}').contains(&c) // Khmer digits
-                })
-            })
-            .map(str::to_owned)
-            .collect();
-        words.sort();
-        words.dedup();
         let hyphenation = KHypDict::from_bytes(KHMER_HYPHENATION.to_vec())
             .map_err(|error| format!("Failed to load Khmer hyphenation dictionary: {error}"))?;
-        let completion_dictionary = KDict::from_bytes(KHMER_DICTIONARY.to_vec())
-            .map_err(|error| format!("Failed to load Khmer completion dictionary: {error}"))?;
-        let mut completion_costs = HashMap::<String, f32>::new();
-        for word in &words {
-            let key = modern_khmer_key(word);
-            let cost = completion_dictionary.cost(word).unwrap_or(f32::MAX);
-            completion_costs
-                .entry(key)
-                .and_modify(|current| *current = current.min(cost))
-                .or_insert(cost);
-        }
-        let mut lookup_words: Vec<String> = completion_costs.keys().cloned().collect();
-        lookup_words.sort();
-        let known = lookup_words.iter().cloned().collect();
-
-        // Build Suggestion Index
-        let mut suggestion_index = HashMap::<char, Vec<IndexedWord>>::new();
-        let mut all_indexed_words = Vec::<IndexedWord>::new();
-        for word in &lookup_words {
-            let key = modern_khmer_key(word);
-            let cost = completion_costs.get(&key).copied().unwrap_or(f32::MAX);
-            let clusters = khmer_clusters(&key);
-            if let Some(first_char) = key.chars().next() {
-                let indexed = IndexedWord {
-                    word: key.clone(),
-                    clusters,
-                    cost,
-                };
-                suggestion_index
-                    .entry(first_char)
-                    .or_default()
-                    .push(indexed.clone());
-                all_indexed_words.push(indexed);
-            }
-        }
-
-        // Sort all indexed words by cost to get the top frequent words for fallback
-        all_indexed_words.sort_by(|a, b| {
-            a.cost
-                .partial_cmp(&b.cost)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-        let top_frequent_words = all_indexed_words.iter().take(1000).cloned().collect();
-
         Ok(Self {
             segmenter,
-            lookup_words,
-            known,
-            completion_costs,
             hyphenation,
-            suggestion_index,
-            top_frequent_words,
         })
     }
-
-    fn has_prefix(&self, prefix: &str) -> bool {
-        let prefix = modern_khmer_key(prefix);
-        let index = self
-            .lookup_words
-            .partition_point(|candidate| candidate.as_str() < prefix.as_str());
-        self.lookup_words
-            .get(index)
-            .is_some_and(|candidate| candidate.starts_with(&prefix))
-    }
-}
-
-/// Modern Khmer renders COENG+DA and COENG+TA identically. Use COENG+TA as
-/// the provider's comparison key while retaining the original source text.
-fn modern_khmer_key(text: &str) -> String {
-    let mut output = String::with_capacity(text.len());
-    let mut characters = text.chars().peekable();
-    while let Some(character) = characters.next() {
-        output.push(character);
-        if character == '\u{17d2}' && characters.peek() == Some(&'\u{178a}') {
-            characters.next();
-            output.push('\u{178f}');
-        }
-    }
-    output
 }
 
 impl LanguageSegmenter for KhmerProvider {
@@ -563,7 +418,7 @@ impl LanguageSegmenter for KhmerProvider {
     }
 
     fn version(&self) -> &'static str {
-        "0.3.0"
+        "0.2.0-rc.1"
     }
 
     fn license(&self) -> &'static str {
@@ -583,9 +438,7 @@ impl LanguageSegmenter for KhmerProvider {
     }
 
     fn supports_corrections(&self) -> bool {
-        // TODO: Re-enable when Khmer analysis can return reliable intended-word
-        // spans instead of unknown fragments inside an unspaced run.
-        false
+        true
     }
 
     fn supports_completion(&self) -> bool {
@@ -614,6 +467,10 @@ impl LanguageSegmenter for KhmerProvider {
             .segmenter
             .segment_detailed(text)
             .map_err(|error| error.to_string())?;
+        let diagnostics = self
+            .segmenter
+            .check_text(text, SpellcheckProfile::Typing)
+            .map_err(|error| error.to_string())?;
         let normalized = result.normalized();
         let clean_text: String = text
             .chars()
@@ -627,29 +484,65 @@ impl LanguageSegmenter for KhmerProvider {
             utf16_offset += character.len_utf16();
         }
         byte_to_utf16[text.len()] = utf16_offset;
-        let is_spelling_char = |character: char| ('\u{1780}'..='\u{17d3}').contains(&character);
-        let tokens = result
-            .mapped_segments()
-            .iter()
-            .map(|segment| {
-                let token = &normalized[segment.normalized_range.clone()];
-                let lookup_key = modern_khmer_key(token);
-                let known =
-                    !token.chars().any(is_spelling_char) || self.known.contains(&lookup_key);
-                let hyphenated = self
-                    .hyphenation
-                    .lookup(token)
-                    .map(|value| value.replace('\u{200b}', "\u{00ad}"));
-                SegmentToken {
-                    text: token.to_owned(),
-                    from: byte_to_utf16[segment.source_range.start],
-                    to: byte_to_utf16[segment.source_range.end],
-                    known,
-                    known_prefix: known || self.has_prefix(token),
-                    hyphenated,
-                }
-            })
-            .collect();
+        let segments = result.mapped_segments();
+        let mut consumed = vec![false; segments.len()];
+        let mut tokens = Vec::with_capacity(segments.len());
+
+        // Diagnostics may span multiple segmentation tokens. Preserve that
+        // intended-word span so correction requests reach the new API with
+        // the same text that it diagnosed.
+        for diagnostic in diagnostics {
+            let overlapping: Vec<usize> = segments
+                .iter()
+                .enumerate()
+                .filter_map(|(index, segment)| {
+                    (segment.normalized_range.start < diagnostic.range.end
+                        && diagnostic.range.start < segment.normalized_range.end)
+                        .then_some(index)
+                })
+                .collect();
+            let (Some(first), Some(last)) = (overlapping.first(), overlapping.last()) else {
+                continue;
+            };
+            for index in &overlapping {
+                consumed[*index] = true;
+            }
+            let source_start = segments[*first].source_range.start;
+            let source_end = segments[*last].source_range.end;
+            tokens.push(SegmentToken {
+                text: diagnostic.text,
+                from: byte_to_utf16[source_start],
+                to: byte_to_utf16[source_end],
+                known: false,
+                known_prefix: false,
+                hyphenated: None,
+            });
+        }
+
+        for (index, segment) in segments.iter().enumerate() {
+            if consumed[index] {
+                continue;
+            }
+            let token = &normalized[segment.normalized_range.clone()];
+            let known = !token
+                .chars()
+                .any(|character| ('\u{1780}'..='\u{17d3}').contains(&character))
+                || self.segmenter.is_known_word(token);
+            let known_prefix = known || !self.segmenter.complete_word(token, 1).is_empty();
+            let hyphenated = self
+                .hyphenation
+                .lookup(token)
+                .map(|value| value.replace('\u{200b}', "\u{00ad}"));
+            tokens.push(SegmentToken {
+                text: token.to_owned(),
+                from: byte_to_utf16[segment.source_range.start],
+                to: byte_to_utf16[segment.source_range.end],
+                known,
+                known_prefix,
+                hyphenated,
+            });
+        }
+        tokens.sort_by_key(|token| (token.from, token.to));
         Ok(TextAnalysis {
             provider: self.id(),
             normalized_changed,
@@ -661,155 +554,27 @@ impl LanguageSegmenter for KhmerProvider {
         if word.is_empty() || limit == 0 {
             return Vec::new();
         }
-        let word = modern_khmer_key(word);
-        let word_clusters = khmer_clusters(&word);
-        if word_clusters.is_empty() {
-            return Vec::new();
-        }
-
-        // 1. Prefix matches first (same as original code, but fast)
-        let prefix_index = self
-            .lookup_words
-            .partition_point(|candidate| candidate.as_str() < word.as_str());
-        let mut suggestions: Vec<String> = self
-            .lookup_words
-            .iter()
-            .skip(prefix_index)
-            .take_while(|candidate| candidate.starts_with(&word))
-            .filter(|candidate| candidate.as_str() != word.as_str())
-            .take(limit)
-            .cloned()
-            .collect();
-
-        if suggestions.len() == limit {
-            return suggestions;
-        }
-
-        // 2. Fetch candidates from the first char bucket
-        let mut candidates = Vec::new();
-        if let Some(first_char) = word.chars().next() {
-            if let Some(bucket) = self.suggestion_index.get(&first_char) {
-                let length = word_clusters.len();
-                candidates = bucket
-                    .iter()
-                    .filter(|candidate| candidate.clusters.len().abs_diff(length) <= 2)
-                    .cloned()
-                    .collect();
-            }
-        }
-
-        // If candidates are empty, try fallback to top frequent words
-        if candidates.is_empty() {
-            let length = word_clusters.len();
-            candidates = self
-                .top_frequent_words
-                .iter()
-                .filter(|candidate| candidate.clusters.len().abs_diff(length) <= 2)
-                .cloned()
-                .collect();
-        }
-
-        // Bound candidate count before edit distance calculation
-        if candidates.len() > MAX_INTERACTIVE_SUGGESTION_CANDIDATES {
-            let length = word_clusters.len();
-            candidates.sort_by(|a, b| {
-                let a_diff = a.clusters.len().abs_diff(length);
-                let b_diff = b.clusters.len().abs_diff(length);
-                a_diff.cmp(&b_diff).then_with(|| {
-                    a.cost
-                        .partial_cmp(&b.cost)
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                })
-            });
-            candidates.truncate(MAX_INTERACTIVE_SUGGESTION_CANDIDATES);
-        }
-
-        // Compute edit distance and rank
-        let mut ranked: Vec<(usize, f32, &IndexedWord)> = candidates
-            .iter()
-            .map(|candidate| {
-                let distance = cluster_edit_distance(&word_clusters, &candidate.clusters);
-                (distance, candidate.cost, candidate)
-            })
-            .filter(|(distance, _, _)| *distance <= 3)
-            .collect();
-
-        // Sort by distance, then cost, then length difference, then lexical
-        ranked.sort_by(|a, b| {
-            a.0.cmp(&b.0)
-                .then_with(|| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
-                .then_with(|| {
-                    let a_len_diff = a.2.clusters.len().abs_diff(word_clusters.len());
-                    let b_len_diff = b.2.clusters.len().abs_diff(word_clusters.len());
-                    a_len_diff.cmp(&b_len_diff)
-                })
-                .then_with(|| a.2.word.cmp(&b.2.word))
-        });
-
-        for (_, _, candidate) in ranked {
-            if suggestions.contains(&candidate.word) {
-                continue;
-            }
-            suggestions.push(candidate.word.clone());
-            if suggestions.len() == limit {
-                break;
-            }
-        }
-
-        suggestions
+        let config = SpellcheckProfile::Typing.config();
+        self.segmenter
+            .suggest_spelling(word, config.max_edit_cost, limit)
+            .into_iter()
+            .map(|suggestion| suggestion.text)
+            .collect()
     }
 
     fn autocomplete(&self, prefix: &str, limit: usize) -> Vec<String> {
-        if prefix.is_empty() {
+        if prefix.is_empty() || limit == 0 {
             return Vec::new();
         }
-        let prefix = modern_khmer_key(prefix);
-        let index = self
-            .lookup_words
-            .partition_point(|candidate| candidate.as_str() < prefix.as_str());
-        let mut candidates: Vec<_> = self
-            .lookup_words
-            .iter()
-            .skip(index)
-            .take_while(|candidate| candidate.starts_with(&prefix))
-            .filter(|candidate| {
-                candidate.as_str() != prefix.as_str()
-                    && !candidate.chars().any(|c| {
-                        c.is_ascii_punctuation()
-                            || c.is_whitespace()
-                            || c.is_ascii_digit()
-                            || c == '\u{17d4}'
-                            || c == '\u{17d5}'
-                            || ('\u{17e0}'..='\u{17e9}').contains(&c)
-                    })
-            })
-            .take(MAX_INTERACTIVE_COMPLETION_CANDIDATES)
-            .map(|candidate| {
-                (
-                    self.completion_costs
-                        .get(candidate)
-                        .copied()
-                        .unwrap_or(f32::MAX),
-                    candidate.chars().count(),
-                    candidate,
-                )
-            })
-            .collect();
-        candidates.sort_by(|left, right| {
-            left.0
-                .total_cmp(&right.0)
-                .then_with(|| left.1.cmp(&right.1))
-                .then_with(|| left.2.cmp(right.2))
-        });
-        candidates
+        self.segmenter
+            .complete_word(prefix, limit)
             .into_iter()
-            .take(limit)
-            .map(|(_, _, candidate)| candidate.clone())
+            .map(|suggestion| suggestion.text)
             .collect()
     }
 
     fn is_known_word(&self, word: &str) -> bool {
-        self.known.contains(&modern_khmer_key(word))
+        self.segmenter.is_known_word(word)
     }
 }
 
@@ -1595,15 +1360,15 @@ fn khmer_provider_capabilities() -> ProviderCapabilities {
         stability: "experimental".to_string(),
         boundary_mode: "custom-segmenter".to_string(),
         boundary_quality: "dedicated".to_string(),
-        correction_quality: "none".to_string(),
+        correction_quality: "intended-word".to_string(),
         supports_spellcheck: true,
-        supports_corrections: false,
+        supports_corrections: true,
         supports_completion: true,
         supports_segmentation: true,
         supports_custom_dictionary: true,
         has_editing_policy: true,
         provider_type: "deep".to_string(),
-        version: "0.3.0".to_string(),
+        version: "0.2.0-rc.1".to_string(),
         license: "MIT; lexical data retains upstream source terms".to_string(),
     }
 }
@@ -2745,7 +2510,7 @@ mod tests {
 
     #[test]
     fn khmer_reference_provider_fixtures_are_locked() {
-        const PINNED_UPSTREAM: &str = "9da32875a76a27b142c58e2b13d4ff8938e9feeb";
+        const PINNED_UPSTREAM: &str = "b68a2efac7b4e6df5779597b435afd812006a97f";
         let fixture: KhmerReferenceFixture =
             serde_json::from_str(include_str!("../../../tests/fixtures/khmer/provider.json"))
                 .expect("Khmer provider reference fixture");
@@ -2849,6 +2614,27 @@ mod tests {
     }
 
     #[test]
+    fn khmer_spellcheck_uses_upstream_diagnostics_and_corrections() {
+        let provider = KhmerProvider::new().expect("Khmer provider");
+        let typed = "រយះពេល";
+        let intended = "រយៈពេល";
+
+        let analysis = provider.analyze(typed).expect("Khmer analysis");
+        let diagnostic = analysis
+            .tokens
+            .iter()
+            .find(|token| !token.known)
+            .expect("upstream spelling diagnostic");
+        assert_eq!(diagnostic.text, typed);
+        assert_eq!(diagnostic.from, 0);
+        assert_eq!(diagnostic.to, typed.encode_utf16().count());
+        assert_eq!(
+            provider.suggestions(typed, 5).first().map(String::as_str),
+            Some(intended)
+        );
+    }
+
+    #[test]
     fn refreshes_and_ranks_school_completion_for_each_prefix() {
         let provider = KhmerProvider::new().unwrap();
         for prefix in ["ស", "សា", "សាល", "សាលា", "សាលារ"] {
@@ -2898,13 +2684,6 @@ mod tests {
             continued.options.first().map(String::as_str),
             Some("សាលារៀន")
         );
-    }
-
-    #[test]
-    fn bounds_khmer_interactive_completion_candidates() {
-        let provider = KhmerProvider::new().expect("Khmer provider");
-        let results = provider.autocomplete("ក", usize::MAX);
-        assert!(results.len() <= MAX_INTERACTIVE_COMPLETION_CANDIDATES);
     }
 
     #[test]
@@ -2978,82 +2757,6 @@ mod tests {
                 .iter()
                 .any(|token| token.from == 2 && token.to == 5));
         }
-    }
-
-    #[test]
-    fn treats_modern_coeng_ta_and_legacy_coeng_da_as_equivalent() {
-        let provider = KhmerProvider::new().expect("Khmer provider");
-        let legacy = "គ្របដណ\u{17d2}\u{178a}ប់";
-        let modern = "គ្របដណ\u{17d2}\u{178f}ប់";
-        assert_eq!(modern_khmer_key(legacy), modern);
-        for spelling in [legacy, modern] {
-            let analysis = provider.analyze(spelling).expect("analysis");
-            assert!(analysis.tokens.iter().all(|token| token.known));
-            assert_eq!(analysis.tokens.first().unwrap().from, 0);
-            assert_eq!(
-                analysis.tokens.last().unwrap().to,
-                spelling.encode_utf16().count()
-            );
-        }
-    }
-
-    #[test]
-    fn completes_the_last_segment_in_an_unspaced_run() {
-        let provider = KhmerProvider::new().expect("Khmer provider");
-        let prefix = provider
-            .lookup_words
-            .iter()
-            .find_map(|word| {
-                let prefix: String = word.chars().take(1).collect();
-                (!prefix.is_empty() && !provider.known.contains(&prefix)).then_some(prefix)
-            })
-            .expect("completion prefix");
-        let response = provider.lookup_words.iter().take(200).find_map(|first| {
-            let text = format!("{first}{prefix}");
-            let request = CompletionRequest {
-                provider: "khmer-segmenter".to_string(),
-                cursor_utf16: text.encode_utf16().count(),
-                text,
-                limit: 10,
-            };
-            complete_with_provider(&provider, &request)
-                .expect("completion")
-                .filter(|response| response.from == first.encode_utf16().count())
-                .map(|response| (first, response))
-        });
-        let (first, _) =
-            response.expect("no dictionary pair produced a segmented suffix completion");
-        let punctuated = format!("{first}\u{17d4}{prefix}");
-        let response = complete_with_provider(
-            &provider,
-            &CompletionRequest {
-                provider: "khmer-segmenter".to_string(),
-                cursor_utf16: punctuated.encode_utf16().count(),
-                text: punctuated,
-                limit: 10,
-            },
-        )
-        .expect("punctuated completion")
-        .expect("completion after punctuation");
-        assert_eq!(response.from, first.encode_utf16().count() + 1);
-        assert!(!response.options.is_empty());
-    }
-
-    #[test]
-    fn suggests_completions_for_an_unknown_dictionary_prefix() {
-        let provider = KhmerProvider::new().expect("Khmer provider");
-        let (prefix, full_word) = provider
-            .lookup_words
-            .iter()
-            .find_map(|word| {
-                let prefix: String = word.chars().take(1).collect();
-                (!prefix.is_empty() && !provider.known.contains(&prefix))
-                    .then(|| (prefix, word.clone()))
-            })
-            .expect("dictionary word with an unknown short prefix");
-        assert!(provider
-            .suggestions(&prefix, 10)
-            .contains(&modern_khmer_key(&full_word)));
     }
 
     struct MockProvider;
@@ -3527,7 +3230,7 @@ mod tests {
         assert!(khmer.supports_spellcheck);
         assert!(khmer.supports_completion);
         assert!(khmer.has_editing_policy);
-        assert!(!khmer.supports_corrections);
+        assert!(khmer.supports_corrections);
         let serialized = serde_json::to_value(khmer).expect("serialized capabilities");
         assert_eq!(
             serialized["schemaVersion"],

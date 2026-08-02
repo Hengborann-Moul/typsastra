@@ -1,6 +1,6 @@
 # Khmer Spellcheck and Word Completion
 
-Typsastra provides local Khmer spellcheck and optional word completion through the Rust language-provider registry. The correction implementation remains in the provider but is not currently advertised because segmented unknown fragments do not provide reliable intended-word spans. The editor and IPC contracts remain provider-neutral; Khmer-specific segmentation and comparison rules stay in `src-tauri/src/segmentation/registry.rs` and the pinned `third_party/khmer_segmenter` submodule.
+Typsastra provides local Khmer segmentation, spellcheck, corrections, and optional word completion through the Rust language-provider registry. The pinned `khmer_segmenter` implementation now owns word boundaries, known-word checks, intended-word diagnostics, correction ranking, and completion ranking. Typsastra retains only the provider-neutral editor contract and the conversion from normalized byte ranges to CodeMirror UTF-16 source ranges.
 
 ## Reference implementation identity
 
@@ -13,10 +13,10 @@ ISO 15924 script:  Khmr
 Support:           Deep · Experimental
 Policy contract:   1
 Capability schema: 1
-Upstream commit:   9da32875a76a27b142c58e2b13d4ff8938e9feeb
+Upstream commit:   b68a2efac7b4e6df5779597b435afd812006a97f
 ```
 
-The gitlink at `third_party/khmer_segmenter` pins the code, runtime dictionary artifacts, and normalization behavior. `tests/fixtures/khmer/provider.json` records the same commit and exact expected output. Source corpora used to prepare those artifacts are intentionally not redistributed in the submodule; they must be obtained from their credited original sources and kept in its ignored `dataset/` directory. Runtime artifacts retain the usage and attribution requirements of their upstream data sources. Changing the submodule, dictionary, normalization, or post-processing requires an intentional fixture update and an explanation in the change review.
+The gitlink at `third_party/khmer_segmenter` pins the code, curated language data, and normalization behavior. Typsastra rebuilds the KDIC and hyphenation binaries from that revision and stores only those compiled runtime artifacts under `src-tauri/resources/language-providers/khmer/`. `tests/fixtures/khmer/provider.json` records the same commit and exact expected output. Runtime artifacts retain the usage and attribution requirements documented upstream. Changing the submodule, dictionary, normalization, or post-processing requires an intentional fixture update and an explanation in the change review.
 
 Typsastra does not add semantic or LLM-generated boundary repairs after the segmenter. The pinned deterministic output is the lexical baseline even when another compound convention could also be linguistically defensible.
 
@@ -39,14 +39,14 @@ CodeMirror transaction
           +-- provider-neutral Tauri IPC
                 analyze_language_ranges
                 complete_language_word
-                language_suggestions (capability currently disabled)
+                language_suggestions
                   |
                   +-- Khmer provider (Rust)
                         src-tauri/src/segmentation/registry.rs
                         - mapped normalization and segmentation
                         - byte-to-UTF-16 source ranges
-                        - dictionary known/prefix checks
-                        - bounded completion and retained correction index
+                        - upstream intended-word diagnostic mapping
+                        - upstream known-word, correction, and completion APIs
                           |
                           +-- pinned khmer_segmenter submodule
 ```
@@ -76,11 +76,10 @@ The editing policy never performs dictionary lookup or IPC. The Rust provider ne
 | Normalization and source spans | pinned segmenter | Return normalized ranges mapped to original byte ranges |
 | Editor offsets | Khmer provider | Convert original byte boundaries to CodeMirror UTF-16 once |
 | Lexical segmentation | pinned segmenter and dictionary | Deterministic dictionary/frequency output |
-| Known words and prefixes | Khmer provider | Use filtered dictionary keys and modern Khmer comparison keys |
-| COENG+DA/COENG+TA comparison | `modern_khmer_key` | Treat the modern visually equivalent sequences as lookup-equivalent without rewriting source |
+| Known words and prefixes | pinned segmenter | Use the curated spellcheck vocabulary and completion index |
 | Completion | `complete_language_word` | Return provider ID, explicit UTF-16 replacement range, and bounded ranked options |
 | Current known word | Khmer provider | Put the exact current known word first before longer completions |
-| Corrections | capability contract | Disabled until intended-word spans are reliable |
+| Corrections | pinned segmenter and capability contract | Return ranked corrections for upstream intended-word spans |
 | Hyphenation metadata | pinned hyphenation dictionary | Retained in token metadata; not used to insert SHY into editor source |
 
 ### Settings and user state
@@ -100,14 +99,14 @@ The editing policy never performs dictionary lookup or IPC. The Rust provider ne
 - `get_provider_capabilities` advertises Khmer's actual capability record.
 - `analyze_language_ranges` returns normalization-preserving tokens and structured provider failures.
 - `complete_language_word` performs segmented prefix completion with an explicit replacement range.
-- `language_suggestions` routes by provider ID but returns no Khmer replacements while correction capability is disabled.
+- `language_suggestions` routes correction requests to the pinned segmenter's spelling API.
 - `finish_startup_initialization` reloads providers and returns the same versioned capabilities.
 
 ## User controls
 
 Script-aware Khmer editing is applied independently from these two user controls:
 
-- **Spellcheck** marks unknown words. Right-click an underlined word to add it to the personal dictionary or ignore it; Khmer replacement suggestions remain disabled until intended-word spans are reliable.
+- **Spellcheck** marks upstream intended-word diagnostics. Right-click an underlined word to apply a ranked correction, add it to the personal dictionary, or ignore it.
 - **Typing word suggestions** shows dictionary completions while typing. It can be disabled without disabling spellcheck or Typst/Tinymist code completion.
 
 Personal dictionary entries are normalized, deduplicated, and stored in the `editor.userDictionary` array in Typsastra's platform-specific `settings.json`. Adding a word triggers fresh analysis immediately. Personal entries affect spellcheck only; they do not modify the bundled Khmer dictionary or completion ranking.
@@ -129,39 +128,11 @@ For source `😀កំា`, CodeMirror counts the emoji as two UTF-16 units. The
 
 For completion source `😀សាលារ`, the cursor is at UTF-16 offset `7`. The response replaces `[2, 7)` and can return `សាលារៀន`; the emoji and adjacent source remain untouched.
 
-## Modern COENG+DA and COENG+TA equivalence
-
-In modern Khmer, COENG+DA (`U+17D2 U+178A`) and COENG+TA (`U+17D2 U+178F`) render identically. Typsastra therefore converts COENG+DA to COENG+TA only in the provider's internal comparison key.
-
-Consequences:
-
-- A dictionary entry containing COENG+DA matches source typed with COENG+TA, and vice versa.
-- Correction distance, prefix detection, and word completion use the same modern comparison key.
-- Returned modern suggestions use COENG+TA.
-- Typsastra does not silently rewrite the document. Source code points and source ranges remain unchanged.
-- Historical or Middle Khmer distinctions are not modeled by the current modern-Khmer provider. A future historical provider should use a strict comparison policy instead of this equivalence.
-
-This policy follows the modern encoding model described by [Unicode Technical Note #61](https://www.unicode.org/notes/tn61/tn61-1.html). The note is implementation guidance rather than a Unicode normalization form, so this mapping must not be added to generic NFC/NFD normalization.
-
 ## Correction suggestions
 
-Khmer correction suggestions are currently disabled through the provider capability contract. Deterministic segmentation can expose only an unknown fragment inside the user's intended unspaced word, so replacing that fragment would be unsafe.
+Khmer correction suggestions are enabled through the provider capability contract. Typsastra calls the segmenter's stable `SpellcheckProfile::Typing` API, which can return a diagnostic spanning more than one lexical segment. Typsastra maps every diagnostic back to one original UTF-16 editor range and sends that same text to `suggest_spelling` when the user opens the correction menu.
 
-The retained implementation first looks for dictionary prefix matches, then uses a pre-compiled base-consonant cluster-aware suggestion index (`suggestion_index`) to query candidate words of matching length and leading glyphs. It runs a weighted edit-distance evaluation over bounded candidates without performing a sequential full-dictionary scan. It may be re-enabled only after analysis can return a reliable intended-word source span.
-
-### Correction enablement gate
-
-Do not change `supports_corrections()` to `true` until all of these conditions are met:
-
-- the provider returns a distinct intended-word source span rather than only a segmented unknown fragment;
-- repeated identical words retain independently addressable source ranges;
-- canonical, reordered, composed, ZWSP, ZWNJ, ZWJ, and non-BMP mapping fixtures pass;
-- right-clicking any part of the intended word selects only that occurrence;
-- replacement still verifies document key, revision, document identity, range, and source text;
-- correction candidate lookup remains bounded;
-- the new behavior is added to the locked provider fixture and reviewed as a capability change.
-
-The dictionary word source (`khmer_dictionary_words.txt`) is filtered during the backend initialization stage to exclude noisy sentences, translation fragments, or entries containing spaces, digits, or punctuation marks (e.g., "?"), preserving only clean vocabulary tokens.
+The segmenter owns normalization equivalence, reviewed typo rules, candidate bounds, confidence filtering, and ranking. Typsastra does not maintain a second word list or edit-distance index. This keeps segmentation, spellcheck, completion, command-line integrations, and other consumers consistent.
 
 ## Word completion
 
@@ -178,9 +149,8 @@ Word completion remains controlled by the **Typing word suggestions** setting. D
 - The segmenter is a deterministic lexical engine, not a semantic parser. Names, new terminology, slang, and domain-specific words may be returned as unknown.
 - Dictionary compounds follow the pinned dictionary and frequency artifacts. Another valid lexical convention may prefer different boundaries.
 - Typsastra does not use an LLM or heuristic sentence reconstruction to override deterministic token output.
-- Correction replacement is disabled because an unknown segment is not necessarily the user's complete intended word.
+- Corrections remain lexical and confidence-filtered; they do not infer sentence meaning.
 - Completion ranking is dictionary/frequency based and does not model sentence meaning.
-- Modern COENG+DA/COENG+TA lookup equivalence is not suitable for historical or Middle Khmer distinctions.
 - The editing policy owns the main Khmer block `[U+1780, U+1800)`; it does not claim unrelated scripts or generic invisible characters.
 - Experimental Khmer render preparation is a separate preview/export transformation and must not be interpreted as spellcheck segmentation.
 - A normalization mapping changes lookup text only. Typsastra never silently normalizes or rewrites saved source.

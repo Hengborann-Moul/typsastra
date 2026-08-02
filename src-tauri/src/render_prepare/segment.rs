@@ -3,9 +3,9 @@ use khmer_segmenter::kdict::KHypDict;
 use khmer_segmenter::{KhmerSegmenter, SegmentationLength, SegmenterConfig};
 
 const KHMER_DICTIONARY: &[u8] =
-    include_bytes!("../../../third_party/khmer_segmenter/port/common/khmer_dictionary.kdict");
+    include_bytes!("../../resources/language-providers/khmer/khmer_dictionary.kdict");
 const KHMER_HYPHENATION: &[u8] =
-    include_bytes!("../../../third_party/khmer_segmenter/port/common/khmer_hyphenation.kdict");
+    include_bytes!("../../resources/language-providers/khmer/khmer_hyphenation.kdict");
 pub struct KhmerTextSegmenter {
     pub segmenter: KhmerSegmenter,
     pub hyphenation: KHypDict,

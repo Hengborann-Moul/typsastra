@@ -11,7 +11,7 @@ The frontend remains provider-neutral:
 - CodeMirror asks Rust for provider capabilities.
 - Incremental editor ranges are sent to `analyze_language_ranges`.
 - Right-click correction menus call `language_suggestions` with the provider ID stored on the issue. Corrections never open automatically while typing.
-- Providers advertise whether correction menus are reliable. Khmer corrections are currently disabled because deterministic segmentation can expose only an unknown fragment inside the intended word; the implementation remains available for a future reliable word-span strategy.
+- Providers advertise whether correction menus are reliable. Khmer uses the pinned segmenter's intended-word diagnostics and ranked spelling suggestions, mapped back to the original editor range by Typsastra.
 - Visible unknown-word issues are published to the log console with exact editor offsets. The Spellcheck tab shows their live count, and selecting an entry centers the corresponding source range. The All, LSP, Spellcheck, and Dev tabs keep language issues separate from compiler and developer output.
 - Typing suggestions call `complete_language_word` with the active provider ID.
 - Replacements are still guarded by document key, revision, document identity, and source text.

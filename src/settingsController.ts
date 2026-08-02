@@ -23,6 +23,7 @@ import {
   type LanguageCatalogCapabilities,
   type LanguageProviderCapabilities
 } from "./languageSupport";
+import { isAltGraphKeyboardEvent } from "./ui/keyboardModifiers";
 
 type SettingsPayload = { path: string; settings: unknown | null };
 type SystemFontCatalog = { all: string[]; monospace: string[] };
@@ -275,6 +276,7 @@ export class SettingsController {
       if (this.filePath) void invoke("reveal_in_explorer", { path: this.filePath });
     });
     document.addEventListener("keydown", event => {
+      if (isAltGraphKeyboardEvent(event)) return;
       const isMac = navigator.userAgent.toLowerCase().includes("mac");
       if ((isMac ? event.metaKey : event.ctrlKey) && event.code === "Comma") {
         event.preventDefault();

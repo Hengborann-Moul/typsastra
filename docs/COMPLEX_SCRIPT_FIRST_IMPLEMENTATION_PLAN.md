@@ -455,7 +455,7 @@ Tracked by `P7.1`, `P7.2`, `P7.9`, and `P7.10`.
   - forward and backward deletion;
   - selection and multiple cursors;
   - mixed Khmer, Latin, punctuation, emoji, ZWSP, and ZWNJ.
-- Keep correction suggestions disabled until the provider can return a reliable intended-word span.
+- Route correction suggestions through the provider only when it returns a reliable intended-word span.
 - Document known segmentation limitations rather than applying heuristic repairs that cannot be reproduced.
 - Add a reference diagram showing which behavior belongs to the frontend policy and which belongs to the Rust provider.
 
@@ -466,7 +466,7 @@ Tracked by `P7.1`, `P7.2`, `P7.9`, and `P7.10`.
 - [x] **P3.3 — Consolidate provider fixtures.** Add canonical, non-canonical, mixed-script, emoji, ZWSP, ZWNJ, known-word, unknown-word, and completion range cases.
 - [x] **P3.4 — Lock reproducible segmentation.** Record the pinned upstream commit and expected token output for reference fixtures; reject undocumented heuristic post-processing.
 - [x] **P3.5 — Verify normalization mapping.** Assert exact source byte and UTF-16 ranges for reordered or combined Khmer sequences and non-BMP text before Khmer.
-- [x] **P3.6 — Document correction limitations.** Keep correction capability disabled and add a tracked condition for enabling it only after reliable intended-word spans exist.
+- [x] **P3.6 — Enable reliable corrections.** The Khmer provider now returns intended-word spans and ranked corrections through its spellcheck API; Typsastra maps those spans back to CodeMirror UTF-16 offsets.
 - [x] **P3.7 — Publish the reference architecture.** Add the frontend-policy versus Rust-provider diagram and an end-to-end request example to the Khmer documentation.
 - [x] **P3.8 — Add a permanent regression suite.** Run the locked Khmer fixtures whenever a policy, provider, completion controller, or Unicode utility changes.
 

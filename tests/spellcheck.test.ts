@@ -45,8 +45,8 @@ mock.module("@tauri-apps/api/core", () => ({
           stability: "experimental",
           boundaryMode: "custom-segmenter",
           boundaryQuality: "dedicated",
-          correctionQuality: "none",
-          supportsCorrections: false,
+          correctionQuality: "intended-word",
+          supportsCorrections: true,
           supportsSegmentation: true,
           hasEditingPolicy: true
         }),
@@ -298,14 +298,18 @@ describe("spellcheck request safety", () => {
     expect(await suggestions).toEqual([]);
   });
 
-  test("keeps Khmer corrections disabled until reliable word spans are available", async () => {
+  test("requests Khmer corrections for reliable intended-word spans", async () => {
     const fixture = await controllerFor("ខុស");
     const analyzeRequest = await startAnalysis(fixture.controller);
     analyzeRequest.resolve(analysis("ខុស"));
     await wait(20);
 
-    expect(await fixture.controller.suggestions(fixture.controller.issues[0])).toEqual([]);
-    expect(invocations).toEqual([]);
+    const suggestions = fixture.controller.suggestions(fixture.controller.issues[0]);
+    const suggestionRequest = invocations.shift();
+    if (!suggestionRequest) throw new Error("Khmer suggestion request was not started");
+    expect(suggestionRequest.command).toBe("language_suggestions");
+    suggestionRequest.resolve({ suggestions: ["ត្រូវ"] });
+    expect(await suggestions).toEqual(["ត្រូវ"]);
   });
 
   test("shows a known-prefix squiggle after the cursor moves away", async () => {

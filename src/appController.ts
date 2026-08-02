@@ -48,6 +48,7 @@ import { TabStripController } from "./editor/tabStripController";
 import { createAppIcon, updateMaximizeIcon } from "./ui/icons";
 import { installModalFocusTrap } from "./ui/modalFocus";
 import { AppDialogController } from "./ui/appDialog";
+import { isAltGraphKeyboardEvent } from "./ui/keyboardModifiers";
 import {
   TYPSASTRA_GREEN,
   TYPSASTRA_GREEN_RIPPLE_FILL,
@@ -8869,6 +8870,11 @@ export class TypsastraWorkspaceController {
     });
 
     document.addEventListener("keydown", (e) => {
+      // Windows exposes AltGr as Ctrl+Alt. Let the WebView and CodeMirror
+      // receive the event as text input before evaluating application or
+      // browser-shortcut suppression rules.
+      if (isAltGraphKeyboardEvent(e)) return;
+
       const isMac = navigator.userAgent.toLowerCase().includes("mac");
       const cmdOrCtrl = isMac ? e.metaKey : e.ctrlKey;
       const keyCode = e.code;
