@@ -18,6 +18,8 @@ describe("application settings", () => {
     expect(settings.editor.userDictionary).toEqual([]);
     expect(settings.editor.ignoredWords).toEqual([]);
     expect(settings.editor.formatOnSave).toBe(false);
+    expect(settings.editor.autoSave).toBe(true);
+    expect(settings.editor.autoSaveIntervalSeconds).toBe(30);
     expect(settings.preview.renderMode).toBe("on-save");
     expect(settings.preview.syncDebounceMs).toBe(defaultAppSettings.preview.syncDebounceMs);
     expect(settings.preview.forwardSyncTimeoutMs).toBe(5000);
@@ -49,6 +51,7 @@ describe("application settings", () => {
     expect(settings.editor.codeFont).toBe("Fira Mono");
     expect(settings.editor.unicodeFont).toBe("unknown-font");
     expect(settings.editor.formatOnSave).toBe(false);
+    expect(settings.editor.autoSaveIntervalSeconds).toBe(30);
     expect(settings.preview.syncDebounceMs).toBe(50);
     expect(settings.preview.forwardSyncTimeoutMs).toBe(30000);
     expect(settings.preview.highlightDurationMs).toBe(10000);
@@ -62,6 +65,11 @@ describe("application settings", () => {
 
   test("migrates the former Typst version selection", () => {
     expect(normalizeAppSettings({ toolchain: { typstVersion: "0.14.2" } }).toolchain.tinymistVersion).toBe("0.14.2");
+  });
+
+  test("clamps the auto-save interval", () => {
+    expect(normalizeAppSettings({ editor: { autoSaveIntervalSeconds: 1 } }).editor.autoSaveIntervalSeconds).toBe(5);
+    expect(normalizeAppSettings({ editor: { autoSaveIntervalSeconds: 900 } }).editor.autoSaveIntervalSeconds).toBe(300);
   });
 
   test("keeps Typsastra green light and dark theme selections", () => {

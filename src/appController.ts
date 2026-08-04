@@ -235,6 +235,8 @@ type EditorTab = {
   undoHistory?: EditorUndoHistory;
 };
 
+type SaveIntent = "manual" | "automatic";
+
 type PreviewSessionState = Pick<
   EditorTab,
   "previewRootPath" | "previewMainPath" | "previewTaskId" | "previewSessionKey" | "previewImported" | "previewStandalone" | "previewDisabled"
@@ -494,6 +496,8 @@ export class TypsastraWorkspaceController {
   private workspaceChangeDrainRunning = false;
   private projectImportQueue: Promise<void> = Promise.resolve();
   private saveInProgress: Promise<void> | null = null;
+  private saveInProgressIntent: SaveIntent | null = null;
+  private autoSaveTimer: number | null = null;
   private pdfPreviewGeneration = 0;
   private pdfLoadRequestGeneration = 0;
   private readonly blockedLargePdfPaths = new Set<string>();
@@ -1183,6 +1187,7 @@ export class TypsastraWorkspaceController {
       `${appearance.editorFontSize * appearance.editorLineHeight}px`,
     );
     this.forwardSyncDebounceMs = preview.syncDebounceMs;
+    this.configureAutoSave(editor.autoSave, editor.autoSaveIntervalSeconds);
     this.editorFontManager.configure(editor.codeFont, editor.unicodeFont, editor.unicodeFonts);
     this.spellcheckController.setEnabled(editor.spellcheck);
     this.spellcheckController.setUserDictionary(editor.userDictionary);
@@ -3261,15 +3266,92 @@ export class TypsastraWorkspaceController {
     }
   }
 
-  private async saveActiveFile() {
-    if (this.saveInProgress) return await this.saveInProgress;
+  private async saveActiveFile(intent: SaveIntent = "manual") {
+    if (this.saveInProgress) {
+      const inProgressIntent = this.saveInProgressIntent;
+      await this.saveInProgress;
+      if (intent === "manual" && inProgressIntent === "automatic") {
+        await this.saveActiveFile("manual");
+      }
+      return;
+    }
     this.flushEditorContentMutation();
-    const operation = this.performSaveActiveFile();
+    const operation = this.performSaveActiveFile(intent);
     this.saveInProgress = operation;
+    this.saveInProgressIntent = intent;
     try {
       await operation;
     } finally {
-      if (this.saveInProgress === operation) this.saveInProgress = null;
+      if (this.saveInProgress === operation) {
+        this.saveInProgress = null;
+        this.saveInProgressIntent = null;
+      }
+    }
+  }
+
+  private configureAutoSave(enabled: boolean, intervalSeconds: number): void {
+    if (this.autoSaveTimer !== null) window.clearTimeout(this.autoSaveTimer);
+    this.autoSaveTimer = null;
+    if (!enabled) return;
+    this.autoSaveTimer = window.setTimeout(() => {
+      this.autoSaveTimer = null;
+      void this.runAutoSaveCycle().finally(() => {
+        const { autoSave, autoSaveIntervalSeconds } = this.settingsController.value.editor;
+        this.configureAutoSave(autoSave, autoSaveIntervalSeconds);
+      });
+    }, intervalSeconds * 1000);
+  }
+
+  private async runAutoSaveCycle(): Promise<void> {
+    if (this.saveInProgress || !this.workspaceRootPath) return;
+    this.flushEditorContentMutation();
+    const dirtyTabs = this.openTabs.filter(tab =>
+      tab.contentLoaded
+      && tab.isDirty
+      && this.isInternallySupportedPath(tab.path)
+      && !isBinaryImagePath(tab.path)
+      && fileExtension(tab.path) !== "pdf"
+    );
+    if (dirtyTabs.length === 0) return;
+
+    const operation = this.performAutoSave(dirtyTabs);
+    this.saveInProgress = operation;
+    this.saveInProgressIntent = "automatic";
+    try {
+      await operation;
+    } finally {
+      if (this.saveInProgress === operation) {
+        this.saveInProgress = null;
+        this.saveInProgressIntent = null;
+      }
+    }
+  }
+
+  private async performAutoSave(tabs: EditorTab[]): Promise<void> {
+    let savedCount = 0;
+    try {
+      for (const tab of tabs) {
+        const content = tab.content;
+        await invoke("save_workspace_file", { path: tab.path, contents: content });
+        if (tab.content !== content) continue;
+        tab.savedContent = content;
+        tab.isDirty = false;
+        this.externalConflictPaths.delete(filePathKey(tab.path));
+        savedCount += 1;
+      }
+    } catch (error) {
+      const message = `Auto-save failed: ${String(error)}`;
+      console.error(message);
+      this.setLspStatus({ kind: "error", message });
+    } finally {
+      if (savedCount > 0) {
+        this.renderEditorTabs();
+        this.appendDeveloperLog({
+          kind: "info",
+          source: "workspace",
+          message: `Auto-saved ${savedCount} file${savedCount === 1 ? "" : "s"} without requesting preview compilation.`
+        });
+      }
     }
   }
 
@@ -3383,7 +3465,7 @@ export class TypsastraWorkspaceController {
     this.refreshEditorLayout("resize completed");
   }
 
-  private async performSaveActiveFile(): Promise<void> {
+  private async performSaveActiveFile(intent: SaveIntent): Promise<void> {
     if (!this.activeFilePath || !this.isInternallySupportedPath(this.activeFilePath) || isBinaryImagePath(this.activeFilePath) || fileExtension(this.activeFilePath) === "pdf") {
       return;
     }
@@ -3391,7 +3473,7 @@ export class TypsastraWorkspaceController {
     try {
       const saveDiagnosticId = ++this.saveMemoryDiagnosticGeneration;
       await this.logMemoryDiagnostics(`save ${saveDiagnosticId}: before write`);
-      if (this.activeMode === "CODE" && this.settingsController.value.editor.formatOnSave) {
+      if (intent === "manual" && this.activeMode === "CODE" && this.settingsController.value.editor.formatOnSave) {
         await this.formatActiveDocument({ silent: true });
         this.removeTrailingSpaces();
       }
@@ -3406,7 +3488,7 @@ export class TypsastraWorkspaceController {
       });
       await this.logMemoryDiagnostics(`save ${saveDiagnosticId}: after workspace write`);
 
-      if (this.lspReady && this.lspClient) {
+      if (intent === "manual" && this.lspReady && this.lspClient) {
         await this.flushPendingLspSync();
         const lspRes = await this.getLspUriAndContent(this.activeFilePath, content);
         if (lspRes) {
@@ -3417,9 +3499,6 @@ export class TypsastraWorkspaceController {
       await this.logMemoryDiagnostics(`save ${saveDiagnosticId}: after LSP save notification`);
 
       const activeTab = this.getActiveTab();
-      const savedChangedRevision = activeTab
-        ? content !== activeTab.savedContent
-        : false;
       if (activeTab) {
         activeTab.content = content;
         activeTab.savedContent = content;
@@ -3429,7 +3508,7 @@ export class TypsastraWorkspaceController {
       }
       this.setLspStatus({ kind: "preview-ready", message: "File saved" });
       if (
-        savedChangedRevision
+        intent === "manual"
         && participatesInPreviewCompilation(this.activeFilePath, this.pinnedMainFilePath, this.previewImported)
         && !this.previewDisabled
       ) {

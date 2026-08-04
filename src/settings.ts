@@ -56,6 +56,8 @@ export type AppSettings = {
     languageTerminology: LanguageTerminologyEntry[];
     scopedIgnoredWords: ScopedIgnoredWord[];
     formatOnSave: boolean;
+    autoSave: boolean;
+    autoSaveIntervalSeconds: number;
   };
   preview: {
     renderMode: PreviewRenderMode;
@@ -112,7 +114,9 @@ export const defaultAppSettings: AppSettings = {
     globalTerminology: [],
     languageTerminology: [],
     scopedIgnoredWords: [],
-    formatOnSave: false
+    formatOnSave: false,
+    autoSave: true,
+    autoSaveIntervalSeconds: 30
   },
   preview: {
     renderMode: "on-save",
@@ -277,7 +281,14 @@ export function normalizeAppSettings(value: unknown): AppSettings {
       globalTerminology: terminologyEntries(editor.globalTerminology),
       languageTerminology: languageTerminologyEntries(editor.languageTerminology),
       scopedIgnoredWords: scopedIgnoredEntries(editor.scopedIgnoredWords),
-      formatOnSave: booleanValue(editor.formatOnSave, defaultAppSettings.editor.formatOnSave)
+      formatOnSave: booleanValue(editor.formatOnSave, defaultAppSettings.editor.formatOnSave),
+      autoSave: booleanValue(editor.autoSave, defaultAppSettings.editor.autoSave),
+      autoSaveIntervalSeconds: Math.round(boundedNumber(
+        editor.autoSaveIntervalSeconds,
+        defaultAppSettings.editor.autoSaveIntervalSeconds,
+        5,
+        300
+      ))
     },
     preview: {
       renderMode: previewRenderMode(preview.renderMode),

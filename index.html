@@ -2551,6 +2551,29 @@
                                 ></span
                                 ></label
                             >
+                            <label class="settings-toggle"
+                                ><input
+                                    id="settings-auto-save"
+                                    type="checkbox"
+                                /><span
+                                    ><strong>Auto save</strong
+                                    ><small
+                                        >Write changed files automatically without triggering an On save preview compilation.</small
+                                    ></span
+                                ></label
+                            >
+                            <div class="settings-field">
+                                <label for="settings-auto-save-interval">Auto-save interval</label>
+                                <input
+                                    id="settings-auto-save-interval"
+                                    type="number"
+                                    min="5"
+                                    max="300"
+                                    step="5"
+                                    inputmode="numeric"
+                                />
+                                <small>Seconds between automatic save checks (5–300). Manual Save still recompiles an On save preview.</small>
+                            </div>
                         </div>
 
                         <div

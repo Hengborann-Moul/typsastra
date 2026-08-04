@@ -22,7 +22,9 @@ Open Settings from **File → Settings**, the status bar, or `Ctrl + ,`. Changes
     "highlightActiveLine": true,
     "autoCloseBrackets": true,
     "indentationGuides": true,
-    "formatOnSave": false
+    "formatOnSave": false,
+    "autoSave": true,
+    "autoSaveIntervalSeconds": 30
   },
   "preview": {
     "renderMode": "on-save",
@@ -42,6 +44,18 @@ Open Settings from **File → Settings**, the status bar, or `Ctrl + ,`. Changes
 ```
 
 Invalid or missing fields fall back to bounded defaults. Existing theme and word-wrap values from older releases are migrated from `localStorage` the first time the settings file is created.
+
+## Saving
+
+**Auto save** writes dirty open files at the configured interval, which accepts
+5–300 seconds and defaults to 30 seconds. Automatic saves persist the current
+editor contents without running Format on save, sending a Tinymist save
+notification, or requesting an **On save** preview compilation.
+
+**Save** and `Ctrl+S` remain explicit author actions. They run Format on save
+when enabled, notify Tinymist, and request preview compilation for the active
+preview document. This remains true when auto-save has already written the
+latest revision and the tab is no longer marked dirty.
 
 ## Project-local workspace state
 

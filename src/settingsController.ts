@@ -221,6 +221,8 @@ export class SettingsController {
     onChange("settings-word-completion", (settings, control) => { settings.editor.wordCompletion = (control as HTMLInputElement).checked; });
     onChange("settings-show-zws", (settings, control) => { settings.editor.showZws = (control as HTMLInputElement).checked; });
     onChange("settings-format-on-save", (settings, control) => { settings.editor.formatOnSave = (control as HTMLInputElement).checked; });
+    onChange("settings-auto-save", (settings, control) => { settings.editor.autoSave = (control as HTMLInputElement).checked; });
+    onChange("settings-auto-save-interval", (settings, control) => { settings.editor.autoSaveIntervalSeconds = Number(control.value); });
     document.getElementById("settings-add-private-font-directory")?.addEventListener("click", () => {
       void this.addPrivateFontDirectory();
     });
@@ -341,6 +343,7 @@ export class SettingsController {
     setValue("settings-sync-debounce", String(preview.syncDebounceMs));
     setValue("settings-forward-sync-timeout", String(preview.forwardSyncTimeoutMs));
     setValue("settings-highlight-duration", String(preview.highlightDurationMs));
+    setValue("settings-auto-save-interval", String(editor.autoSaveIntervalSeconds));
     setChecked("settings-word-wrap", editor.wordWrap);
     setChecked("settings-line-numbers", editor.lineNumbers);
     setChecked("settings-active-line", editor.highlightActiveLine);
@@ -350,6 +353,14 @@ export class SettingsController {
     setChecked("settings-word-completion", editor.wordCompletion);
     setChecked("settings-show-zws", editor.showZws);
     setChecked("settings-format-on-save", editor.formatOnSave);
+    setChecked("settings-auto-save", editor.autoSave);
+    const autoSaveInterval = document.getElementById("settings-auto-save-interval") as HTMLInputElement | null;
+    if (autoSaveInterval) {
+      autoSaveInterval.disabled = !editor.autoSave;
+      autoSaveInterval.title = editor.autoSave
+        ? "Automatically save dirty files at this interval."
+        : "Enable Auto save to configure its interval.";
+    }
     this.populatePrivateFontDirectories();
     setChecked("settings-cursor-sync", preview.cursorSync);
     const cursorSync = document.getElementById("settings-cursor-sync") as HTMLInputElement | null;
