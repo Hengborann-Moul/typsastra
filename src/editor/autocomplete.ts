@@ -417,6 +417,25 @@ export function liveTypstMemberCompletionEditOffsets(
   return { from: line.from + suffix.index, to: cursorPosition };
 }
 
+export function liveTypstCompletionEditOffsets(
+  doc: Text,
+  cursorPosition: number
+): { from: number; to: number } | null {
+  const line = doc.lineAt(cursorPosition);
+  const cursor = cursorPosition - line.from;
+  const identifier = /[\p{L}\p{M}\p{N}_-]/u;
+  let from = cursor;
+  let to = cursor;
+
+  while (from > 0 && identifier.test(line.text[from - 1])) from--;
+  if (from > 0 && line.text[from - 1] === "#") from--;
+  while (to < line.text.length && identifier.test(line.text[to])) to++;
+
+  return from < to
+    ? { from: line.from + from, to: line.from + to }
+    : null;
+}
+
 export function normalizeCallableCompletionSnippet(
   insertion: string,
   kind: number | undefined,
@@ -1044,6 +1063,12 @@ export function createTypstAutocomplete(
               const wrappedCompletion: Completion = {
                 ...completion,
                 apply(view, selected, from, to) {
+                  const liveTokenEdit = fontValueFrom === null && !isMemberAccess
+                    ? liveTypstCompletionEditOffsets(
+                      view.state.doc,
+                      view.state.selection.main.head
+                    )
+                    : null;
                   const edit = (isMemberAccess
                     ? liveTypstMemberCompletionEditOffsets(
                       view.state.doc,
@@ -1055,9 +1080,9 @@ export function createTypstAutocomplete(
                     apply,
                     textEdit,
                     (text, character) => client.stringOffsetFromLspCharacter(text, character),
-                    from,
-                    to,
-                    preferLocalTokenRange
+                    liveTokenEdit?.from ?? from,
+                    liveTokenEdit?.to ?? to,
+                    Boolean(liveTokenEdit) || preferLocalTokenRange
                   );
                   snippetApply(view, selected, edit.from, edit.to);
                   if (allowsAdaptivePreference) {
@@ -1098,6 +1123,12 @@ export function createTypstAutocomplete(
                 completionPreferences
               ),
               apply(view, _selected, from, to) {
+                const liveTokenEdit = fontValueFrom === null && !isMemberAccess
+                  ? liveTypstCompletionEditOffsets(
+                    view.state.doc,
+                    view.state.selection.main.head
+                  )
+                  : null;
                 const replacement = (isMemberAccess
                   ? liveTypstMemberCompletionEditOffsets(
                     view.state.doc,
@@ -1109,9 +1140,9 @@ export function createTypstAutocomplete(
                   apply,
                   textEdit,
                   (text, character) => client.stringOffsetFromLspCharacter(text, character),
-                  from,
-                  to,
-                  preferLocalTokenRange
+                  liveTokenEdit?.from ?? from,
+                  liveTokenEdit?.to ?? to,
+                  Boolean(liveTokenEdit) || preferLocalTokenRange
                 );
                 view.dispatch({
                   changes: { from: replacement.from, to: replacement.to, insert: apply },

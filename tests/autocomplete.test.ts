@@ -19,6 +19,7 @@ import {
   isTypstRuleTargetAt,
   languageCompletionRange,
   languageCompletionValidFor,
+  liveTypstCompletionEditOffsets,
   liveTypstMemberCompletionEditOffsets,
   lspCompletionEditOffsets,
   normalizeCallableCompletionSnippet,
@@ -446,6 +447,31 @@ describe("LSP autocomplete edits", () => {
       + "page()"
       + doc.sliceString(replacement.to)
     ).toBe("#set page()");
+  });
+
+  test("replaces a complete live function token when the caret is before its suffix", () => {
+    const doc = Text.of(["#figure"]);
+    const replacement = liveTypstCompletionEditOffsets(doc, 4);
+
+    expect(replacement).toEqual({ from: 0, to: 7 });
+    expect(
+      doc.sliceString(0, replacement!.from)
+      + "#figure()"
+      + doc.sliceString(replacement!.to)
+    ).toBe("#figure()");
+  });
+
+  test("replaces a partial named field instead of retaining its typed prefix", () => {
+    const doc = Text.of(["#figure(", "  ti", ")"]);
+    const cursor = doc.line(2).to;
+    const replacement = liveTypstCompletionEditOffsets(doc, cursor);
+
+    expect(replacement).toEqual({ from: doc.line(2).from + 2, to: cursor });
+    expect(
+      doc.sliceString(0, replacement!.from)
+      + "title: "
+      + doc.sliceString(replacement!.to)
+    ).toBe("#figure(\n  title: \n)");
   });
 
   test("places the caret inside an accepted empty function call", () => {
