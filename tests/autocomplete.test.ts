@@ -30,8 +30,10 @@ import {
   readTypstCompletionPreferences,
   recordTypstCompletionPreference,
   typstCompletionPreferenceBoost,
+  typstCompletionRequestPosition,
   typstCompletionSyntax,
   typstCompletionVariantsByFamily,
+  typstArgumentCompletionValidFor,
   typstMemberCompletionValidFor,
   typstCompletionValidFor
 } from "../src/editor/autocomplete";
@@ -511,6 +513,53 @@ describe("LSP autocomplete edits", () => {
     expect(isTypstFunctionArgumentContextAt(tuple, tuple.line(2).to, true)).toBe(false);
   });
 
+  test("treats a function comma as the start of the next argument", async () => {
+    const sameLine = Text.of(["#figure(caption: [Example],"]);
+    expect(isTypstFunctionArgumentContextAt(sameLine, sameLine.length)).toBe(true);
+
+    const multiline = Text.of(["#figure(", "  caption: [Example],", ")"]);
+    expect(isTypstFunctionArgumentContextAt(multiline, multiline.line(2).to)).toBe(true);
+
+    const tuple = Text.of(["#let values = (1,"]);
+    expect(isTypstFunctionArgumentContextAt(tuple, tuple.length)).toBe(false);
+
+    const source = await Bun.file(new URL("../src/editor/autocomplete.ts", import.meta.url)).text();
+    expect(source).toContain(
+      'const isFunctionArgumentTrigger = (lastChar === "," || lastChar === " ")'
+    );
+    expect(source).toContain("&& !isFunctionArgumentTrigger");
+  });
+
+  test("keeps argument completion open across spaces after a comma", () => {
+    const afterSpace = Text.of(['#image(fit: "contain", )']);
+    expect(isTypstFunctionArgumentContextAt(afterSpace, afterSpace.length - 1)).toBe(true);
+    expect(typstArgumentCompletionValidFor.test("")).toBe(true);
+    expect(typstArgumentCompletionValidFor.test("  ")).toBe(true);
+    expect(typstArgumentCompletionValidFor.test("  ti")).toBe(true);
+    expect(typstArgumentCompletionValidFor.test("title:")).toBe(false);
+    expect(typstArgumentCompletionValidFor.test(", ")).toBe(false);
+  });
+
+  test("explicitly starts completion when typing into a fresh argument slot", async () => {
+    const source = await Bun.file(new URL("../src/editor/extensions.ts", import.meta.url)).text();
+    expect(source).toContain("const functionArgumentCompletionTrigger = EditorView.updateListener.of");
+    expect(source).toContain("if (/[,\\s]$/u.test(inserted.toString())) enteredArgumentSlot = true");
+    expect(source).toContain("if (completionStatus(update.view.state) === null) startCompletion(update.view)");
+    expect(source).toContain("functionArgumentCompletionTrigger,");
+  });
+
+  test("queries before trailing whitespace when an argument slot touches the closing parenthesis", () => {
+    const adjacent = Text.of(['#image(fit: "contain", )']);
+    const cursor = adjacent.length - 1;
+    expect(typstCompletionRequestPosition(adjacent, cursor, true)).toBe(cursor - 1);
+
+    const trailingSpace = Text.of(['#image(fit: "contain",  )']);
+    expect(typstCompletionRequestPosition(trailingSpace, cursor, true)).toBe(cursor);
+
+    const outsideFunction = Text.of(["Text )"]);
+    expect(typstCompletionRequestPosition(outsideFunction, 5, false)).toBe(5);
+  });
+
   test("recognizes function argument value slots", () => {
     const emptyValue = Text.of(["#image(fit: )"]);
     expect(isTypstFunctionArgumentValueContextAt(emptyValue, 12)).toBe(true);
@@ -522,12 +571,21 @@ describe("LSP autocomplete edits", () => {
     expect(isTypstFunctionArgumentValueContextAt(argumentName, 10)).toBe(false);
   });
 
+  test("places the caret after accepted non-callable argument values", async () => {
+    const source = await Bun.file(new URL("../src/editor/autocomplete.ts", import.meta.url)).text();
+    expect(source).toContain(
+      "if (isFunctionArgumentValue && !callableSnippet.opensArguments)"
+    );
+    expect(source).toContain("const documentLengthBeforeApply = view.state.doc.length");
+    expect(source).toContain("const anchor = edit.from + insertedLength");
+  });
+
   test("uses Tab and Enter to accept completions and Ctrl+Enter for argument newlines", async () => {
     const source = await Bun.file(new URL("../src/editor/extensions.ts", import.meta.url)).text();
     expect(source).toContain('event.key === "Tab" && completionActive');
     expect(source).toContain("handled = acceptCompletion(view)");
-    expect(source).toContain("handled && namedArgumentSelected");
-    expect(source).toContain("queueMicrotask(() => closeCompletion(view))");
+    expect(source).not.toContain("namedArgumentSelected");
+    expect(source).not.toContain("closeCompletion(view)");
     expect(source).toContain('event.key === "Enter" && event.ctrlKey && insideFunctionArguments');
     expect(source).not.toContain('event.key === "Enter" && namedArgumentSelected');
     expect(source).toContain('else if (event.key === "Enter")');
@@ -603,6 +661,16 @@ describe("LSP autocomplete edits", () => {
     expect(source).toContain("isEmptyFunctionCall");
     expect(source).toContain("? null");
     expect(source).toContain("startCompletion(view)");
+  });
+
+  test("opens value completion after accepting a named argument field", async () => {
+    const source = await Bun.file(new URL("../src/editor/autocomplete.ts", import.meta.url)).text();
+    expect(source).toContain("const opensArgumentValueCompletion = isFunctionArgumentStart");
+    expect(source).toContain("&& isNamedArgumentCompletion(item)");
+    expect(source).toContain("if (opensArgumentValueCompletion)");
+    expect(source).toMatch(
+      /if \(opensArgumentValueCompletion\) \{[\s\S]*?startCompletion\(view\);[\s\S]*?\}/
+    );
   });
 });
 

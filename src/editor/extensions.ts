@@ -37,12 +37,10 @@ import {
 } from "./autocomplete";
 import {
   acceptCompletion,
-  closeCompletion,
   completionKeymap,
   completionStatus,
   closeBrackets,
   moveCompletionSelection,
-  selectedCompletion,
   startCompletion
 } from "@codemirror/autocomplete";
 import { bracketMatching } from "@codemirror/language";
@@ -94,18 +92,6 @@ const completionNavigationHandler = Prec.highest(EditorView.domEventHandlers({
   keydown(event, view) {
     let handled = false;
     const completionActive = completionStatus(view.state) === "active";
-    const completion = completionActive
-      ? selectedCompletion(view.state)
-      : null;
-    const namedArgumentSelected = Boolean(
-      completion
-      && /(?:^|\s)(?:field|property)(?:\s|$)/.test(completion.type ?? "")
-      && isTypstFunctionArgumentContextAt(
-        view.state.doc,
-        view.state.selection.main.head,
-        true
-      )
-    );
     const insideFunctionArguments = isInsideTypstFunctionArgumentsAt(
       view.state.doc,
       view.state.selection.main.head
@@ -131,9 +117,6 @@ const completionNavigationHandler = Prec.highest(EditorView.domEventHandlers({
       if (handled) queueMicrotask(() => startCompletion(view));
     } else if (event.key === "Tab" && completionActive) {
       handled = acceptCompletion(view);
-      if (handled && namedArgumentSelected) {
-        queueMicrotask(() => closeCompletion(view));
-      }
     } else if (event.key === "Enter") {
       handled = acceptCompletion(view);
     }
@@ -142,6 +125,24 @@ const completionNavigationHandler = Prec.highest(EditorView.domEventHandlers({
     return true;
   }
 }));
+
+const functionArgumentCompletionTrigger = EditorView.updateListener.of(update => {
+  if (!update.docChanged) return;
+  let enteredArgumentSlot = false;
+  update.changes.iterChanges((_fromA, _toA, _fromB, _toB, inserted) => {
+    if (/[,\s]$/u.test(inserted.toString())) enteredArgumentSlot = true;
+  });
+  if (!enteredArgumentSlot) return;
+
+  const head = update.state.selection.main.head;
+  if (!isTypstFunctionArgumentContextAt(update.state.doc, head)) return;
+  window.setTimeout(() => {
+    if (!update.view.dom.isConnected) return;
+    const currentHead = update.view.state.selection.main.head;
+    if (!isTypstFunctionArgumentContextAt(update.view.state.doc, currentHead)) return;
+    if (completionStatus(update.view.state) === null) startCompletion(update.view);
+  }, 0);
+});
 
 type SearchRange = { from: number; to: number };
 
@@ -716,6 +717,7 @@ export function getEditorExtensions(
     bracketColorizer,
     createHoverTooltip(getClient, getUri),
     completionCompartment.of(createTypstAutocomplete(getClient, getUri, flushLspSync, true, getProviders)),
+    functionArgumentCompletionTrigger,
     completionNavigationHandler,
     themeCompartment.of(getThemeExtension("default")),
     editorFontCompartment.of(editorFontTheme()),

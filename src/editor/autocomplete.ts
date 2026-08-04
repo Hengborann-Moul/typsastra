@@ -266,6 +266,7 @@ export const languageCompletionValidFor = () => false;
 // `#it.` instead of asking Tinymist for `it`'s fields.
 export const typstCompletionValidFor = /^#?[\p{L}\p{M}\p{N}_-]*$/u;
 export const typstMemberCompletionValidFor = /^[\p{L}\p{M}\p{N}_-]*$/u;
+export const typstArgumentCompletionValidFor = /^\s*[\p{L}\p{M}\p{N}_-]*$/u;
 
 function completionInsertion(item: LspCompletionItem): string {
   return item.textEdit?.newText ?? item.insertText ?? item.label;
@@ -375,6 +376,23 @@ export function isTypstFunctionArgumentValueContextAt(
   const segment = doc.sliceString(argumentStart + 1, cursorPosition);
   const currentSlot = segment.slice(Math.max(segment.lastIndexOf(","), segment.lastIndexOf("\n")) + 1);
   return /^\s*[\p{L}_][\p{L}\p{M}\p{N}_-]*\s*:\s*[^,]*$/u.test(currentSlot);
+}
+
+export function typstCompletionRequestPosition(
+  doc: Text,
+  cursorPosition: number,
+  isFunctionArgumentStart: boolean
+): number {
+  if (!isFunctionArgumentStart || cursorPosition <= 0) return cursorPosition;
+  const after = doc.sliceString(cursorPosition, cursorPosition + 1);
+  const before = doc.sliceString(cursorPosition - 1, cursorPosition);
+  // Tinymist may return no fields for an empty argument slot when the query
+  // sits directly before `)`. Query immediately before the final whitespace
+  // instead, which presents the same slot with recoverable trailing space.
+  // Completion edits still use CodeMirror's real caret range.
+  return after === ")" && /\s/u.test(before)
+    ? cursorPosition - 1
+    : cursorPosition;
 }
 
 export function isTypstRuleTargetAt(
@@ -885,10 +903,18 @@ export function createTypstAutocomplete(
           const textBefore = lineStr.slice(0, col);
           const isEmptyFunctionCall = isEmptyTypstFunctionCallAt(lineStr, col);
           
-          // Only trigger autocomplete implicitly on word characters or specific trigger characters (#, ., @, -)
+          // Only trigger autocomplete implicitly on word characters or
+          // context-specific trigger characters. A comma opens the next
+          // named-argument slot only when it belongs to a Typst function.
           const lastChar = textBefore.slice(-1);
+          const isFunctionArgumentTrigger = (lastChar === "," || lastChar === " ")
+            && isTypstFunctionArgumentContextAt(
+              context.state.doc,
+              context.pos
+            );
           if (!/[\w#\.@-]/.test(lastChar)
             && !(lastChar === " " && fontValueFrom !== null)
+            && !isFunctionArgumentTrigger
             && !isEmptyFunctionCall) {
             return null;
           }
@@ -901,7 +927,12 @@ export function createTypstAutocomplete(
           const closeBraces = (docBefore.match(/\}/g) || []).length;
           const inCodeBlock = openBraces > closeBraces;
           
-          if (!isHashWord && !isSetShow && !isMemberAccess && !inCodeBlock && !isEmptyFunctionCall) {
+          if (!isHashWord
+            && !isSetShow
+            && !isMemberAccess
+            && !inCodeBlock
+            && !isEmptyFunctionCall
+            && !isFunctionArgumentTrigger) {
             if (traceRelevant) {
               onTypstCompletionTrace?.(
                 `Implicit completion rejected by syntax gate: hashWord=${isHashWord}; rule=${isSetShow}; member=${isMemberAccess}; codeBlock=${inCodeBlock}; emptyCall=${isEmptyFunctionCall}.`
@@ -941,7 +972,12 @@ export function createTypstAutocomplete(
         if (!client || !uri) return fallbackCompletions();
         
         const doc = context.state.doc;
-        const position = client.lspPositionFromEditorPosition(doc, context.pos);
+        const requestPosition = typstCompletionRequestPosition(
+          doc,
+          context.pos,
+          isFunctionArgumentStart
+        );
+        const position = client.lspPositionFromEditorPosition(doc, requestPosition);
         
         try {
           // Force flush any pending LSP document changes so the server completes
@@ -995,7 +1031,7 @@ export function createTypstAutocomplete(
             : context.matchBefore(/#?[\p{L}\p{M}\p{N}_.-]*/u);
           const isHashPrefix = word?.text.startsWith('#');
           const preferLocalTokenRange = fontValueFrom === null
-            && Boolean(word?.text);
+            && (Boolean(word?.text) || isFunctionArgumentStart);
           const variantsByFamily = new Map<string, Set<TypstCompletionSyntaxVariant>>();
           for (const item of items) {
             const syntax = effectiveTypstCompletionSyntax(item, rawVariantsByFamily);
@@ -1045,6 +1081,8 @@ export function createTypstAutocomplete(
               item.kind,
               item.detail ?? item.labelDetails?.description
             );
+            const opensArgumentValueCompletion = isFunctionArgumentStart
+              && isNamedArgumentCompletion(item);
             if (insertTextFormat === 2 || callableSnippet.opensArguments) {
               const completion = snippetCompletion(callableSnippet.template, {
                 label,
@@ -1084,9 +1122,24 @@ export function createTypstAutocomplete(
                     liveTokenEdit?.to ?? to,
                     Boolean(liveTokenEdit) || preferLocalTokenRange
                   );
+                  const documentLengthBeforeApply = view.state.doc.length;
                   snippetApply(view, selected, edit.from, edit.to);
+                  if (isFunctionArgumentValue && !callableSnippet.opensArguments) {
+                    const insertedLength = view.state.doc.length
+                      - (documentLengthBeforeApply - (edit.to - edit.from));
+                    const anchor = edit.from + insertedLength;
+                    if (view.state.selection.main.anchor !== anchor) {
+                      view.dispatch({ selection: { anchor } });
+                    }
+                  }
                   if (allowsAdaptivePreference) {
                     recordTypstCompletionPreference(preferenceLabel);
+                  }
+                  if (opensArgumentValueCompletion) {
+                    window.setTimeout(() => {
+                      view.dispatch({ selection: view.state.selection });
+                      startCompletion(view);
+                    }, 50);
                   }
                   if (callableSnippet.opensArguments) {
                     const line = view.state.doc.lineAt(edit.from);
@@ -1152,6 +1205,12 @@ export function createTypstAutocomplete(
                 if (allowsAdaptivePreference) {
                   recordTypstCompletionPreference(preferenceLabel);
                 }
+                if (opensArgumentValueCompletion) {
+                  window.setTimeout(() => {
+                    view.dispatch({ selection: view.state.selection });
+                    startCompletion(view);
+                  }, 50);
+                }
               }
             };
           });
@@ -1163,7 +1222,9 @@ export function createTypstAutocomplete(
               ? /^[^"\r\n]*$/
               : isMemberAccess
                 ? typstMemberCompletionValidFor
-                : typstCompletionValidFor
+                : isFunctionArgumentStart
+                  ? typstArgumentCompletionValidFor
+                  : typstCompletionValidFor
           };
           if (traceRelevant) {
             onTypstCompletionTrace?.(
