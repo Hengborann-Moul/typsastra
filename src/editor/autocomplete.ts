@@ -42,6 +42,193 @@ type LspCompletionResponse = LspCompletionItem[] | {
   };
 } | null;
 
+export type TypstCompletionSyntaxVariant = "bare" | "paren" | "bracket";
+
+export type TypstCompletionPreferenceScores = Record<
+  string,
+  Partial<Record<TypstCompletionSyntaxVariant, number>>
+>;
+
+type CompletionPreferenceStorage = Pick<Storage, "getItem" | "setItem">;
+
+const completionPreferenceStorageKey = "typsastra-completion-preferences-v1";
+const completionPreferenceDecay = 0.8;
+
+export function typstCompletionSyntax(label: string): {
+  family: string;
+  variant: TypstCompletionSyntaxVariant;
+  displayLabel: string;
+} {
+  const match = /^(#?[\p{L}\p{M}\p{N}_-]+)(?:\.(paren|bracket)|(\(\)|\[\]))$/u.exec(label);
+  if (!match) {
+    return {
+      family: label.replace(/^#/, ""),
+      variant: "bare",
+      displayLabel: label
+    };
+  }
+  const variant: Exclude<TypstCompletionSyntaxVariant, "bare"> =
+    match[2] === "paren" || match[3] === "()" ? "paren" : "bracket";
+  return {
+    family: match[1].replace(/^#/, ""),
+    variant,
+    displayLabel: `${match[1]}${variant === "paren" ? "()" : "[]"}`
+  };
+}
+
+type CompletionSyntaxItem = {
+  label: string;
+  kind?: number;
+  detail?: string;
+  labelDetails?: { description?: string };
+};
+
+function isCallableCompletionItem(item: CompletionSyntaxItem): boolean {
+  return item.kind === 2
+    || item.kind === 3
+    || item.kind === 4
+    || /^\s*\([^)]*\)\s*=>/s.test(item.detail ?? item.labelDetails?.description ?? "");
+}
+
+export function effectiveTypstCompletionSyntax(
+  item: CompletionSyntaxItem,
+  rawVariantsByFamily: ReadonlyMap<string, ReadonlySet<TypstCompletionSyntaxVariant>>
+): ReturnType<typeof typstCompletionSyntax> {
+  const syntax = typstCompletionSyntax(item.label);
+  const alternatives = rawVariantsByFamily.get(syntax.family);
+  if (syntax.variant !== "bare"
+    || !isCallableCompletionItem(item)
+    || !alternatives
+    || alternatives.size < 2) return syntax;
+  return {
+    family: syntax.family,
+    variant: "paren",
+    displayLabel: `${item.label.startsWith("#") ? "#" : ""}${syntax.family}()`
+  };
+}
+
+export function deduplicateTypstCompletionVariants<T extends CompletionSyntaxItem>(
+  items: readonly T[]
+): T[] {
+  const rawVariantsByFamily = typstCompletionVariantsByFamily(
+    items.map(item => item.label)
+  );
+  const result: T[] = [];
+  const indexes = new Map<string, number>();
+  for (const item of items) {
+    const syntax = effectiveTypstCompletionSyntax(item, rawVariantsByFamily);
+    const key = `${syntax.family}:${syntax.variant}`;
+    const existingIndex = indexes.get(key);
+    if (existingIndex === undefined) {
+      indexes.set(key, result.length);
+      result.push(item);
+      continue;
+    }
+    // Tinymist's semantic `.paren` and `.bracket` entries carry the
+    // authoritative snippets. Prefer them over an equivalent visible-label
+    // alias such as `figure()` when both are returned.
+    const primaryCallable = typstCompletionSyntax(item.label).variant === "bare"
+      && isCallableCompletionItem(item);
+    const existingPrimaryCallable = typstCompletionSyntax(result[existingIndex].label).variant === "bare"
+      && isCallableCompletionItem(result[existingIndex]);
+    const explicitVariant = /\.(?:paren|bracket)$/u.test(item.label);
+    const existingExplicitVariant = /\.(?:paren|bracket)$/u.test(
+      result[existingIndex].label
+    );
+    if ((primaryCallable && !existingPrimaryCallable)
+      || (!existingPrimaryCallable && explicitVariant && !existingExplicitVariant)) {
+      result[existingIndex] = item;
+    }
+  }
+  return result;
+}
+
+function completionPreferenceStorage(): CompletionPreferenceStorage | null {
+  try {
+    return typeof localStorage === "undefined" ? null : localStorage;
+  } catch {
+    return null;
+  }
+}
+
+export function readTypstCompletionPreferences(
+  storage: CompletionPreferenceStorage | null = completionPreferenceStorage()
+): TypstCompletionPreferenceScores {
+  if (!storage) return {};
+  try {
+    const parsed: unknown = JSON.parse(storage.getItem(completionPreferenceStorageKey) ?? "{}");
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const result: TypstCompletionPreferenceScores = {};
+    for (const [family, value] of Object.entries(parsed)) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+      const scores: Partial<Record<TypstCompletionSyntaxVariant, number>> = {};
+      for (const variant of ["bare", "paren", "bracket"] as const) {
+        const score = (value as Record<string, unknown>)[variant];
+        if (typeof score === "number" && Number.isFinite(score) && score > 0) {
+          scores[variant] = score;
+        }
+      }
+      if (Object.keys(scores).length > 0) result[family] = scores;
+    }
+    return result;
+  } catch {
+    return {};
+  }
+}
+
+export function recordTypstCompletionPreference(
+  label: string,
+  storage: CompletionPreferenceStorage | null = completionPreferenceStorage()
+): void {
+  if (!storage) return;
+  const { family, variant } = typstCompletionSyntax(label);
+  const preferences = readTypstCompletionPreferences(storage);
+  const previous = preferences[family] ?? {};
+  const next: Partial<Record<TypstCompletionSyntaxVariant, number>> = {};
+  for (const candidate of ["bare", "paren", "bracket"] as const) {
+    const decayed = (previous[candidate] ?? 0) * completionPreferenceDecay;
+    const score = decayed + (candidate === variant ? 1 : 0);
+    if (score >= 0.001) next[candidate] = Number(score.toFixed(4));
+  }
+  preferences[family] = next;
+  try {
+    storage.setItem(completionPreferenceStorageKey, JSON.stringify(preferences));
+  } catch {
+    // Completion remains functional when WebView storage is unavailable.
+  }
+}
+
+export function typstCompletionPreferenceBoost(
+  label: string,
+  variantsByFamily: ReadonlyMap<string, ReadonlySet<TypstCompletionSyntaxVariant>>,
+  preferences: TypstCompletionPreferenceScores
+): number | undefined {
+  const { family, variant } = typstCompletionSyntax(label);
+  const variants = variantsByFamily.get(family);
+  if (!variants || variants.size < 2) return undefined;
+  const scores = preferences[family];
+  const score = scores?.[variant] ?? 0;
+  if (score <= 0) return undefined;
+  const maximum = Math.max(
+    0,
+    ...[...variants].map(candidate => scores?.[candidate] ?? 0)
+  );
+  return maximum > 0 ? Math.max(1, Math.min(99, Math.round((score / maximum) * 99))) : undefined;
+}
+
+export function typstCompletionVariantsByFamily(
+  labels: readonly string[]
+): Map<string, Set<TypstCompletionSyntaxVariant>> {
+  const result = new Map<string, Set<TypstCompletionSyntaxVariant>>();
+  for (const label of labels) {
+    const { family, variant } = typstCompletionSyntax(label);
+    const variants = result.get(family) ?? new Set<TypstCompletionSyntaxVariant>();
+    variants.add(variant);
+    result.set(family, variants);
+  }
+  return result;
+}
+
 export type LanguageCompletionResponse = {
   provider: string;
   from: number;
@@ -653,11 +840,15 @@ export function createTypstAutocomplete(
           const memberItems = isMemberAccess
             ? responseItems.filter(isDirectMemberCompletion)
             : responseItems;
-          const items = isEmptyFunctionCall
+          const contextualItems = isEmptyFunctionCall
             ? memberItems.filter(isNamedArgumentCompletion)
             : isRuleTarget
               ? memberItems
               : preferContextualArgumentCompletions(memberItems);
+          const rawVariantsByFamily = typstCompletionVariantsByFamily(
+            contextualItems.map(item => item.label)
+          );
+          const items = deduplicateTypstCompletionVariants(contextualItems);
           if (items.length === 0) return null;
           
           // A member completion replaces only the identifier after the final
@@ -669,9 +860,24 @@ export function createTypstAutocomplete(
           const isHashPrefix = word?.text.startsWith('#');
           const preferLocalTokenRange = fontValueFrom === null
             && Boolean(word?.text);
+          const variantsByFamily = new Map<string, Set<TypstCompletionSyntaxVariant>>();
+          for (const item of items) {
+            const syntax = effectiveTypstCompletionSyntax(item, rawVariantsByFamily);
+            const variants = variantsByFamily.get(syntax.family)
+              ?? new Set<TypstCompletionSyntaxVariant>();
+            variants.add(syntax.variant);
+            variantsByFamily.set(syntax.family, variants);
+          }
+          const completionPreferences = readTypstCompletionPreferences();
           
           const options: Completion[] = items.map(item => {
-            let label = item.label;
+            const originalLabel = item.label;
+            const syntax = effectiveTypstCompletionSyntax(item, rawVariantsByFamily);
+            const hasExplicitSyntaxVariants = (variantsByFamily.get(syntax.family)?.size ?? 0) > 1;
+            const preferenceLabel = syntax.variant === "bare"
+              ? syntax.family
+              : `${syntax.family}.${syntax.variant}`;
+            let label = syntax.displayLabel;
             let detail = item.labelDetails?.description ?? item.labelDetails?.detail ?? item.detail;
             let info = typeof item.documentation === 'string' ? item.documentation : item.documentation?.value;
             const type = getCmCompletionType(item.kind);
@@ -694,10 +900,20 @@ export function createTypstAutocomplete(
               isHashPrefix,
               Boolean(textEdit) && !isHashPrefix
             );
+            if (syntax.variant === "bare" && hasExplicitSyntaxVariants) {
+              apply = applyTextForHashPrefix(
+                originalLabel.replace(/^#/, ""),
+                type,
+                isHashPrefix,
+                false
+              );
+            }
             
             const callableSnippet = normalizeCallableCompletionSnippet(
               apply,
-              item.kind,
+              syntax.variant === "bare" && hasExplicitSyntaxVariants
+                ? undefined
+                : item.kind,
               item.detail ?? item.labelDetails?.description
             );
             if (insertTextFormat === 2 || callableSnippet.opensArguments) {
@@ -706,7 +922,12 @@ export function createTypstAutocomplete(
                 detail,
                 info,
                 type,
-                sortText: item.sortText
+                sortText: item.sortText,
+                boost: typstCompletionPreferenceBoost(
+                  preferenceLabel,
+                  variantsByFamily,
+                  completionPreferences
+                )
               });
               const snippetApply = completion.apply;
               if (typeof snippetApply !== "function") return completion;
@@ -729,6 +950,9 @@ export function createTypstAutocomplete(
                     preferLocalTokenRange
                   );
                   snippetApply(view, selected, edit.from, edit.to);
+                  if (hasExplicitSyntaxVariants) {
+                    recordTypstCompletionPreference(preferenceLabel);
+                  }
                   if (callableSnippet.opensArguments) {
                     const line = view.state.doc.lineAt(edit.from);
                     const caretInLine = completedEmptyCallCaret(
@@ -758,6 +982,11 @@ export function createTypstAutocomplete(
               info,
               type,
               sortText: item.sortText,
+              boost: typstCompletionPreferenceBoost(
+                preferenceLabel,
+                variantsByFamily,
+                completionPreferences
+              ),
               apply(view, _selected, from, to) {
                 const replacement = (isMemberAccess
                   ? liveTypstMemberCompletionEditOffsets(
@@ -779,6 +1008,9 @@ export function createTypstAutocomplete(
                   selection: { anchor: replacement.from + apply.length },
                   userEvent: "input.complete"
                 });
+                if (hasExplicitSyntaxVariants) {
+                  recordTypstCompletionPreference(preferenceLabel);
+                }
               }
             };
           });

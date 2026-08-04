@@ -6,7 +6,9 @@ import {
   completionEditOffsets,
   completedEmptyCallCaret,
   contextualCompletionEditOffsets,
+  deduplicateTypstCompletionVariants,
   displayLabelForHashPrefix,
+  effectiveTypstCompletionSyntax,
   fontCompletionValueStart,
   isEmptyTypstFunctionCallAt,
   isDirectMemberCompletion,
@@ -20,6 +22,11 @@ import {
   normalizeCallableCompletionSnippet,
   preferContextualArgumentCompletions,
   quotedCompletionEditOffsets,
+  readTypstCompletionPreferences,
+  recordTypstCompletionPreference,
+  typstCompletionPreferenceBoost,
+  typstCompletionSyntax,
+  typstCompletionVariantsByFamily,
   typstMemberCompletionValidFor,
   typstCompletionValidFor
 } from "../src/editor/autocomplete";
@@ -60,6 +67,90 @@ describe("language word completion context", () => {
 });
 
 describe("LSP autocomplete edits", () => {
+  test("presents Tinymist syntax variants as Typst source forms", () => {
+    expect(typstCompletionSyntax("figure")).toEqual({
+      family: "figure",
+      variant: "bare",
+      displayLabel: "figure"
+    });
+    expect(typstCompletionSyntax("figure.paren").displayLabel).toBe("figure()");
+    expect(typstCompletionSyntax("#figure.bracket").displayLabel).toBe("#figure[]");
+    expect(typstCompletionSyntax("figure()").variant).toBe("paren");
+    expect(typstCompletionSyntax("figure[]").variant).toBe("bracket");
+  });
+
+  test("deduplicates equivalent Tinymist syntax aliases", () => {
+    const items = deduplicateTypstCompletionVariants([
+      { label: "figure", kind: 3 },
+      { label: "#figure", kind: 3 },
+      { label: "figure()" },
+      { label: "figure.paren", insertText: "figure(${1:})" },
+      { label: "figure[]" },
+      { label: "figure.bracket", insertText: "figure[${1:}]" }
+    ]);
+
+    expect(items.map(item => item.label)).toEqual([
+      "figure",
+      "figure.bracket"
+    ]);
+  });
+
+  test("merges a callable primary entry with its parenthesized alias", () => {
+    const figureVariants = typstCompletionVariantsByFamily([
+      "figure",
+      "figure.paren",
+      "figure.bracket"
+    ]);
+    expect(effectiveTypstCompletionSyntax(
+      { label: "figure", kind: 3 },
+      figureVariants
+    )).toEqual({
+      family: "figure",
+      variant: "paren",
+      displayLabel: "figure()"
+    });
+
+    const emph = deduplicateTypstCompletionVariants([
+      { label: "emph", kind: 3 },
+      { label: "emph.bracket", kind: 3 }
+    ]);
+    const emphVariants = typstCompletionVariantsByFamily([
+      "emph",
+      "emph.bracket"
+    ]);
+    expect(emph.map(item => effectiveTypstCompletionSyntax(item, emphVariants).displayLabel))
+      .toEqual(["emph()", "emph[]"]);
+  });
+
+  test("learns syntax-form preference globally with recent choices weighted higher", () => {
+    const values = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => { values.set(key, value); }
+    };
+    const variants = typstCompletionVariantsByFamily([
+      "figure",
+      "figure.paren",
+      "figure.bracket"
+    ]);
+
+    recordTypstCompletionPreference("figure.paren", storage);
+    recordTypstCompletionPreference("figure.paren", storage);
+    recordTypstCompletionPreference("figure.bracket", storage);
+    const preferences = readTypstCompletionPreferences(storage);
+
+    expect(typstCompletionPreferenceBoost("figure.paren", variants, preferences)).toBe(99);
+    expect(typstCompletionPreferenceBoost("figure.bracket", variants, preferences)).toBeGreaterThan(0);
+    expect(typstCompletionPreferenceBoost("figure", variants, preferences)).toBeUndefined();
+    expect(typstCompletionPreferenceBoost("table.paren", variants, preferences)).toBeUndefined();
+
+    recordTypstCompletionPreference("figure.bracket", storage);
+    recordTypstCompletionPreference("figure.bracket", storage);
+    const changedPreferences = readTypstCompletionPreferences(storage);
+    expect(typstCompletionPreferenceBoost("figure.bracket", variants, changedPreferences)).toBe(99);
+    expect(typstCompletionPreferenceBoost("figure.paren", variants, changedPreferences)).toBeLessThan(99);
+  });
+
   test("keeps hash-triggered completion active while typing an identifier", () => {
     expect(typstCompletionValidFor.test("#")).toBe(true);
     expect(typstCompletionValidFor.test("#i")).toBe(true);
