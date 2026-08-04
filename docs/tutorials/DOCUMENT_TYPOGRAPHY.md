@@ -29,6 +29,19 @@ content.
 7. Choose **Apply to document**, or **Apply as template** for shared project
    typography.
 
+To prepare another font for the same script, choose **Add font**, select that
+script and family, then clear **Default text font**. The row becomes **Prepared
+font only**: Typsastra scales and activates the family but does not add it to
+the default fallback stack. You can call it directly anywhere in the document:
+
+```typst
+#text(font: "Moul")[មូល]
+#show heading.where(level: 1): it => text(font: "Moul")[it]
+```
+
+Only one row per script owns default text and language tools. Prepared-only
+fonts can each use their own scale.
+
 For example:
 
 ```text

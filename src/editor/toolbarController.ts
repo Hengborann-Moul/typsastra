@@ -127,10 +127,17 @@ export class EditorToolbarController {
     });
     document.getElementById("toolbar-add-script-font")?.addEventListener("click", event => {
       event.preventDefault();
-      const used = new Set(this.fallbackRows().map(row => this.rowScript(row).value));
-      const script = typographyScripts.find(candidate => !used.has(candidate.id));
-      if (!script) return;
-      this.fallbackContainer()?.append(this.createFallbackRow({ script: script.id, family: "", scale: 1, language: null }));
+      const rows = this.fallbackRows();
+      const scriptId = rows.length > 0
+        ? this.rowScript(rows[rows.length - 1]).value
+        : typographyScripts[0].id;
+      this.fallbackContainer()?.append(this.createFallbackRow({
+        script: scriptId,
+        family: "",
+        scale: 1,
+        language: null,
+        defaultText: false,
+      }));
       this.updateTypographyAvailability();
     });
     document.getElementById("toolbar-document-typography")?.addEventListener("click", event => {
@@ -569,6 +576,14 @@ export class EditorToolbarController {
     const language = document.createElement("select");
     language.dataset.fallbackLanguage = "";
     language.setAttribute("aria-label", "Script language tools");
+    const defaultFont = document.createElement("input");
+    defaultFont.type = "checkbox";
+    defaultFont.dataset.defaultTextFont = "";
+    defaultFont.checked = fallback.defaultText !== false;
+    const defaultFontText = document.createElement("span");
+    const defaultFontLabel = document.createElement("label");
+    defaultFontLabel.className = "document-typography-default-font";
+    defaultFontLabel.append(defaultFont, defaultFontText);
     const remove = document.createElement("button");
     remove.type = "button";
     remove.className = "toolbar-remove-fallback";
@@ -602,7 +617,7 @@ export class EditorToolbarController {
     scriptCell.classList.add("document-typography-script-cell");
     row.append(
       scriptCell,
-      cell("Font", font, hint),
+      cell("Font", font, hint, defaultFontLabel),
       cell("Scale", scale, scaleWarning),
       cell("Language tools", language),
       cell("Status", status),
@@ -610,17 +625,44 @@ export class EditorToolbarController {
     );
     this.populateRowFonts(row, fallback.script, fallback.family || undefined);
     this.populateRowLanguages(row, fallback.script, fallback.language);
+    const updateDefaultFontRole = (transferLanguage = false) => {
+      if (defaultFont.checked) {
+        const previousDefault = this.fallbackRows().find(other =>
+          other !== row
+          && this.rowScript(other).value === script.value
+          && other.querySelector<HTMLInputElement>("[data-default-text-font]")?.checked
+        );
+        const previousLanguage = transferLanguage
+          ? previousDefault?.querySelector<HTMLSelectElement>("[data-fallback-language]")?.value ?? ""
+          : "";
+        if (previousDefault) {
+          const previousToggle = previousDefault.querySelector<HTMLInputElement>("[data-default-text-font]");
+          const previousLanguageSelect = previousDefault.querySelector<HTMLSelectElement>("[data-fallback-language]");
+          if (previousToggle) previousToggle.checked = false;
+          if (previousLanguageSelect) previousLanguageSelect.value = "";
+          this.updatePreparedFontRole(previousDefault);
+        }
+        if (previousLanguage && !language.value) {
+          this.populateRowLanguages(row, script.value, previousLanguage);
+        }
+      } else {
+        language.value = "";
+      }
+      this.updatePreparedFontRole(row);
+    };
+    updateDefaultFontRole();
     if (detected) hint.textContent = `Detected ${typographyScripts.find(item => item.id === fallback.script)?.label}. ${hint.textContent}`;
     script.addEventListener("change", () => {
-      const duplicate = this.fallbackRows().some(other => other !== row && this.rowScript(other).value === script.value);
-      if (duplicate) {
-        const replacement = typographyScripts.find(candidate =>
-          !this.fallbackRows().some(other => other !== row && this.rowScript(other).value === candidate.id)
-        );
-        if (replacement) script.value = replacement.id;
-      }
       this.populateRowFonts(row, script.value);
       this.populateRowLanguages(row, script.value, null);
+      if (defaultFont.checked && this.fallbackRows().some(other =>
+        other !== row
+        && this.rowScript(other).value === script.value
+        && other.querySelector<HTMLInputElement>("[data-default-text-font]")?.checked
+      )) {
+        defaultFont.checked = false;
+      }
+      updateDefaultFontRole();
       dragHandle.setAttribute("aria-label", `Reorder ${this.typographyScriptLabel(row)} script`);
       this.updateTypographyAvailability();
     });
@@ -629,6 +671,7 @@ export class EditorToolbarController {
       this.updateTypographyAvailability();
     });
     language.addEventListener("change", () => this.populateRowLanguages(row, script.value, language.value || null));
+    defaultFont.addEventListener("change", () => updateDefaultFontRole(true));
     scale.addEventListener("input", () => this.updateRowScaleAvailability(row));
     this.updateRowScaleAvailability(row);
     settingsButton.addEventListener("click", () => {
@@ -654,6 +697,27 @@ export class EditorToolbarController {
     });
     dragHandle.addEventListener("dragstart", event => event.preventDefault());
     return row;
+  }
+
+  private updatePreparedFontRole(row: HTMLElement): void {
+    const isDefault = row.querySelector<HTMLInputElement>("[data-default-text-font]")?.checked ?? true;
+    const language = row.querySelector<HTMLSelectElement>("[data-fallback-language]");
+    const label = row.querySelector<HTMLElement>(".document-typography-default-font span");
+    if (label) label.textContent = isDefault ? "Default text font" : "Prepared font only";
+    if (!language) return;
+    language.disabled = !isDefault;
+    if (!isDefault) {
+      language.value = "";
+      const status = row.querySelector<HTMLElement>("[data-language-status]");
+      const statusText = row.querySelector<HTMLElement>("[data-language-status-text]");
+      if (status) status.dataset.state = "off";
+      if (statusText) {
+        statusText.textContent = "Prepared";
+        statusText.title = "This font is prepared for explicit use and does not own default text or language tools.";
+      }
+    } else {
+      this.populateRowLanguages(row, this.rowScript(row).value, language.value || null);
+    }
   }
 
   private updateRowScaleAvailability(row: HTMLElement): void {
@@ -774,7 +838,12 @@ export class EditorToolbarController {
         family,
         script: this.rowScript(row).value,
         scale: this.boundedTypographyNumber(row.querySelector<HTMLInputElement>("[data-fallback-scale]")?.value ?? "1", 0.5, 2, 1),
-        language: row.querySelector<HTMLSelectElement>("[data-fallback-language]")?.value || null
+        language: row.querySelector<HTMLInputElement>("[data-default-text-font]")?.checked === false
+          ? null
+          : row.querySelector<HTMLSelectElement>("[data-fallback-language]")?.value || null,
+        ...(row.querySelector<HTMLInputElement>("[data-default-text-font]")?.checked === false
+          ? { defaultText: false }
+          : {}),
       }];
     });
     if (fonts.length === 0) return;
@@ -829,10 +898,13 @@ export class EditorToolbarController {
             family: font.family,
             script: font.script,
             scale: this.boundedTypographyNumber(String(font.scale), 0.5, 2, 1),
-            language: typeof font.language === "string" ? font.language : null
+            language: "defaultText" in font && font.defaultText === false
+              ? null
+              : typeof font.language === "string" ? font.language : null,
+            ...("defaultText" in font && font.defaultText === false ? { defaultText: false } : {}),
           }]
           : []
-      ).filter((font, index, all) => all.findIndex(candidate => candidate.script === font.script) === index);
+      );
       if (fonts.length === 0) return null;
       return {
         baseSizePt: this.boundedTypographyNumber(String(baseSizePt), 6, 96, 11),
@@ -1058,6 +1130,7 @@ export class EditorToolbarController {
       this.toolbar.querySelectorAll("button, select, input").forEach(el => {
         el.removeAttribute("disabled");
       });
+      this.fallbackRows().forEach(row => this.updatePreparedFontRole(row));
       this.updateTypographyAvailability();
     }
   }

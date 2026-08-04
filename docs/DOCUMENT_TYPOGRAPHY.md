@@ -1,9 +1,9 @@
 # Document typography
 
-Typsastra records a preferred font and optional scale for each writing script,
-then writes those families as an ordinary ordered Typst fallback stack. There
-is no primary or embedded typography role: Latin, Khmer, Arabic, and other
-scripts use the same configuration model and may be listed in any order.
+Typsastra records document fonts and optional scales for each writing script.
+One font per script can participate in the ordinary ordered Typst fallback
+stack. Additional fonts for the same script can be prepared at independent
+scales and called explicitly throughout the document.
 
 ## Problems addressed
 
@@ -69,6 +69,29 @@ toolbar configuration, prepare private cached font variants, and select one
 optional language-tools provider per script. Older typography metadata is
 migrated when Typsastra reads and reapplies the configuration. Retired
 shared-mark metadata is ignored and removed the next time the rule is applied.
+
+## Additional scaled fonts
+
+Use **Add font** to configure another family for an existing script. Clear
+**Default text font** so the row becomes **Prepared font only**. Typsastra then
+prepares and activates its selected scale without adding the family to the
+managed `#set text(font: ...)` fallback stack.
+
+For example, Khmer OS can remain the default Khmer text font while Moul is
+prepared at a different scale:
+
+```typst
+// The directive also records Moul with "defaultText": false.
+#text(font: "Moul")[មូល]
+
+#show heading.where(level: 1): it => text(font: "Moul")[it]
+```
+
+The family keeps its normal name, so the prepared variant can be used anywhere
+Typst accepts a font family. A prepared-only row does not own language tools;
+spellcheck and completion remain attached to the script's default text row.
+The generated variant is machine-local, just like other non-unit typography
+scales, so recipients need the same font and Typsastra configuration.
 
 ## Private local font directories
 

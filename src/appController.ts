@@ -3901,7 +3901,7 @@ export class TypsastraWorkspaceController {
     }
     let changed = false;
     if (status.generationRequired) {
-      this.previewFrame.setLoading(`Scaling ${scaled.length} document fallback font${scaled.length === 1 ? "" : "s"}… The result will be stored in Typsastra's global cache.`);
+      this.previewFrame.setLoading(`Scaling ${scaled.length} document font${scaled.length === 1 ? "" : "s"}… The result will be stored in Typsastra's global cache.`);
     }
     for (const font of scaled) {
       const result = await invoke<{ changed: boolean }>("prepare_scaled_workspace_font", {
@@ -5048,7 +5048,8 @@ export class TypsastraWorkspaceController {
     const signature = (fonts: DocumentScriptFont[]) => JSON.stringify(fonts.map(font => ({
       family: font.family,
       script: font.script,
-      scale: Number(font.scale.toFixed(4))
+      scale: Number(font.scale.toFixed(4)),
+      defaultText: font.defaultText !== false,
     })));
     if (signature(previousFonts) === signature(config.fonts)) return;
     this.editorToolbarController.synchronizeDocumentTypography(config);

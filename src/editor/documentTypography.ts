@@ -17,6 +17,8 @@ export type DocumentScriptFont = {
   family: string;
   scale: number;
   language: string | null;
+  /** False prepares the scaled family without adding it to the default text fallback stack. */
+  defaultText?: boolean;
 };
 
 export type TypographyEdit = { from: number; to: number; insert: string };
@@ -237,12 +239,16 @@ export function renderTypographyBlock(config: DocumentTypography): string {
     lines.push(`// typsastra:document-scripts ${JSON.stringify(fonts)}`);
   }
   if (fonts.length > 0) {
-    const descriptors = fonts.map(font => `"${escapeTypstString(font.family)}"`);
+    const descriptors = fonts
+      .filter(font => font.defaultText !== false)
+      .map(font => `"${escapeTypstString(font.family)}"`);
     lines.push(
       "#set text(",
-      "  font: (",
-      ...descriptors.map(descriptor => `    ${descriptor},`),
-      "  ),",
+      ...(descriptors.length > 0 ? [
+        "  font: (",
+        ...descriptors.map(descriptor => `    ${descriptor},`),
+        "  ),",
+      ] : []),
       `  size: ${decimal(config.baseSizePt)}pt,`,
       ")"
     );
@@ -256,7 +262,8 @@ function documentScriptMetadata(fonts: readonly DocumentScriptFont[]) {
     family: font.family,
     script: font.script,
     scale: Math.max(0.5, Math.min(2, font.scale)),
-    ...(font.language ? { language: font.language } : {})
+    ...(font.language && font.defaultText !== false ? { language: font.language } : {}),
+    ...(font.defaultText === false ? { defaultText: false } : {}),
   }));
 }
 
@@ -290,7 +297,8 @@ export function parseDocumentScripts(text: string): DocumentScriptFont[] {
         scale: typeof candidate.scale === "number" && Number.isFinite(candidate.scale)
           ? Math.max(0.5, Math.min(2, candidate.scale))
           : 1,
-        language,
+        language: candidate.defaultText === false ? null : language,
+        ...(candidate.defaultText === false ? { defaultText: false } : {}),
       }];
     });
   } catch {
@@ -321,7 +329,8 @@ export function parseTypographyBlock(text: string): DocumentTypography | null {
       scale: typeof candidate.scale === "number" && Number.isFinite(candidate.scale)
         ? Math.max(0.5, Math.min(2, candidate.scale))
         : 1,
-      language
+      language: candidate.defaultText === false ? null : language,
+      ...(candidate.defaultText === false ? { defaultText: false } : {}),
     }];
   });
   let fonts: DocumentScriptFont[] = [];
@@ -381,14 +390,15 @@ export function parseTypographyBlock(text: string): DocumentTypography | null {
       language: null
     }));
   }
-  if (stackFonts.length > 0 && fonts.length === stackFonts.length) {
-    fonts = fonts.map((font, index) => ({ ...font, family: stackFonts[index] }));
+  const fallbackIndexes = fonts.flatMap((font, index) => font.defaultText === false ? [] : [index]);
+  if (stackFonts.length > 0 && fallbackIndexes.length === stackFonts.length) {
+    fonts = fonts.map((font, index) => {
+      const fallbackIndex = fallbackIndexes.indexOf(index);
+      return fallbackIndex >= 0 ? { ...font, family: stackFonts[fallbackIndex] } : font;
+    });
   }
-  const uniqueFonts = fonts.filter((font, index) =>
-    fonts.findIndex(candidate => candidate.script === font.script) === index
-  );
-  if (uniqueFonts.length === 0) return null;
-  return { baseSizePt, fonts: uniqueFonts };
+  if (fonts.length === 0) return null;
+  return { baseSizePt, fonts };
 }
 
 export function typographyEdit(text: string, config: DocumentTypography): TypographyEdit {

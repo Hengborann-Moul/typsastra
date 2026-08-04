@@ -2286,6 +2286,22 @@ body.typsastra-resizing #input-container-wrapper::after {
   white-space: nowrap;
 }
 
+.document-typography-default-font {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 5px;
+  color: var(--ui-header-text);
+  font-size: 9px;
+  line-height: 1.25;
+  cursor: pointer;
+}
+
+.document-typography-default-font input {
+  width: auto;
+  margin: 0;
+}
+
 .document-typography-scale-warning {
   color: var(--ui-warning-text, #b7791f);
 }

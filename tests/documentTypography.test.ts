@@ -180,6 +180,23 @@ describe("document typography", () => {
     expect(parseTypographyBlock(latinBlock)).toEqual(latinOnly);
   });
 
+  test("prepares additional scaled fonts without adding them to default text fallback", () => {
+    const typography = {
+      baseSizePt: 11,
+      fonts: [
+        { family: "Khmer OS", script: "khmer", scale: 0.95, language: "km" },
+        { family: "Moul", script: "khmer", scale: 1.08, language: null, defaultText: false },
+        { family: "Calibri", script: "latin", scale: 1, language: "en-US" },
+      ],
+    };
+    const block = renderTypographyBlock(typography);
+    expect(block).toContain('"family":"Moul","script":"khmer","scale":1.08,"defaultText":false');
+    expect(block).toContain('    "Khmer OS",');
+    expect(block).toContain('    "Calibri",');
+    expect(block).not.toContain('    "Moul",');
+    expect(parseTypographyBlock(block)).toEqual(typography);
+  });
+
   test("always renders ordinary fallback and drops retired shared-mark metadata", () => {
     const formerOverride = {
       baseSizePt: 11,
