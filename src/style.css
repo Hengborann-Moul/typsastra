@@ -3345,7 +3345,7 @@ button.welcome-item:disabled {
   right: 20px !important;
   border-radius: 0 0 6px 6px !important;
   z-index: 100 !important;
-  max-width: 420px !important;
+  max-width: 560px !important;
 }
 
 .cm-panel.cm-search input[type="text"],
@@ -3393,6 +3393,11 @@ button.welcome-item:disabled {
   gap: 4px !important;
   cursor: pointer !important;
   margin-right: 4px !important;
+}
+
+.cm-panel.cm-search label:has(input:disabled) {
+  cursor: default !important;
+  opacity: 0.5;
 }
 
 .cm-panel.cm-search .cm-search-match-count {

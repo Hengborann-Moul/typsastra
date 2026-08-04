@@ -19,6 +19,8 @@ example that matches the feature you want to learn.
 
 - `01-writing-basics`: markup, tables, references, and equations.
 - `02-unicode-math`: Unicode symbols and mathematical notation.
+- `03-diacritic-aware-search`: exact and accent-insensitive search across
+  composed Unicode, decomposed Unicode, and complex-script marks.
 
 == 02. Multilingual writing
 

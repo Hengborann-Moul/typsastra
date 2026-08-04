@@ -11,6 +11,7 @@ import {
   searchKeymap,
   searchPanelOpen
 } from "@codemirror/search";
+import { TypsastraSearchPanel } from "./search";
 import { baseEditorLayoutTheme, editorFontTheme, typstColorHighlighting, typstFontHighlighting, typstFunctionHighlighting, typstSemanticHighlighting, typstVariableHighlighting } from "./themes";
 import {
   codeFolding,
@@ -672,6 +673,7 @@ export function getEditorExtensions(
     tooltips({ parent: document.body }),
     search({
       top: true,
+      createPanel: view => new TypsastraSearchPanel(view),
       scrollToMatch: range => EditorView.scrollIntoView(range, { y: "center" })
     }),
     visibleFirstSearchNavigation,

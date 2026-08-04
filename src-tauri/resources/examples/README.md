@@ -20,6 +20,10 @@ providers, and font binaries do not belong in this workspace's bundled source.
 
 Tutorials: <https://github.com/Sovichea/typsastra/tree/main/docs/tutorials>
 
+The Basics section includes a diacritic-aware search fixture for testing exact
+accent matching, accent-insensitive matching, replacement ranges, and the
+preservation of complex-script marks.
+
 ## v0.6.0 showcase
 
 The `06-v0.6-feature-showcase` section provides short exercises for:

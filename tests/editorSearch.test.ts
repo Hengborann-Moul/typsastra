@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { EditorState } from "@codemirror/state";
-import { SearchQuery } from "@codemirror/search";
+import { SearchQuery, getSearchQuery, search, setSearchQuery } from "@codemirror/search";
 import { codeFolding, foldEffect } from "@codemirror/language";
 import {
   firstSearchMatch,
@@ -9,15 +9,85 @@ import {
   mergeVisibleSearchRanges,
   searchQueryHasVisibleMatch
 } from "../src/editor/extensions";
+import { collapseSearchSelection, TypsastraSearchQuery } from "../src/editor/search";
 
 describe("editor search navigation", () => {
+  test("matches diacritics exactly by default", () => {
+    const state = EditorState.create({ doc: "cafe café résumé" });
+    const plain = new TypsastraSearchQuery({ search: "cafe" });
+    const accented = new TypsastraSearchQuery({ search: "résumé" });
+
+    expect(Array.from(plain.getCursor(state))).toEqual([
+      { from: 0, to: 4, precise: true }
+    ]);
+    expect(Array.from(accented.getCursor(state))).toEqual([
+      { from: 10, to: 18, precise: true }
+    ]);
+  });
+
+  test("can ignore generic diacritics without leaving decomposed marks behind", () => {
+    const state = EditorState.create({ doc: "café résumé" });
+    const cafe = new TypsastraSearchQuery({ search: "cafe", matchDiacritics: false });
+    const resume = new TypsastraSearchQuery({ search: "resume", matchDiacritics: false });
+
+    expect(Array.from(cafe.getCursor(state))).toEqual([
+      { from: 0, to: 4, precise: true }
+    ]);
+    expect(Array.from(resume.getCursor(state))).toEqual([
+      { from: 5, to: 13, precise: true }
+    ]);
+  });
+
+  test("does not strip complex-script marks when diacritic matching is disabled", () => {
+    const state = EditorState.create({ doc: "ក" });
+    const query = new TypsastraSearchQuery({ search: "កំ", matchDiacritics: false });
+
+    expect(Array.from(query.getCursor(state))).toEqual([]);
+  });
+
+  test("keeps regular-expression searches authoritative", () => {
+    const state = EditorState.create({ doc: "café cafe" });
+    const query = new TypsastraSearchQuery({
+      search: "cafe",
+      regexp: true,
+      matchDiacritics: false
+    });
+
+    expect(Array.from(query.getCursor(state))).toEqual([
+      { from: 5, to: 9, precise: true, match: expect.any(Array) }
+    ]);
+  });
+
+  test("installs the custom query into CodeMirror search state", () => {
+    let state = EditorState.create({ doc: "résumé", extensions: [search()] });
+    const query = new TypsastraSearchQuery({ search: "resume", matchDiacritics: false });
+    state = state.update({ effects: setSearchQuery.of(query) }).state;
+
+    expect(getSearchQuery(state)).toBe(query);
+    expect(query.create().matchAll(state, 100)).toEqual([
+      { from: 0, to: 6, precise: true }
+    ]);
+  });
+
+  test("clears a previous search match before reopening an empty search", () => {
+    const state = EditorState.create({
+      doc: "café",
+      selection: { anchor: 0, head: 4 }
+    });
+
+    expect(collapseSearchSelection(state).main).toMatchObject({ from: 4, to: 4 });
+  });
+
   test("ships an incremental current/total result counter", async () => {
     const source = await Bun.file(new URL("../src/editor/extensions.ts", import.meta.url)).text();
+    const searchSource = await Bun.file(new URL("../src/editor/search.ts", import.meta.url)).text();
     const css = await Bun.file(new URL("../src/style.css", import.meta.url)).text();
 
     expect(source).toContain("cm-search-match-count");
     expect(source).toContain("performance.now() - startedAt < 4");
     expect(source).toContain("`${current}/${total}`");
+    expect(searchSource).toContain("queueMicrotask(() =>");
+    expect(searchSource).not.toContain("mount(): void {\n    this.searchField.select();\n    this.view.dispatch");
     expect(css).toContain(".cm-panel.cm-search .cm-search-match-count");
   });
 
