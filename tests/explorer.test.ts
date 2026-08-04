@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { inlineCreationPlacement, isHiddenWorkspaceEntry, sortFileNodes, workspaceParentDirectories, workspacePathSetContains, type FileNode } from "../src/components/explorer";
-import { duplicateFileName, explorerKeyboardAction, isMainFileCandidate } from "../src/components/contextMenuController";
+import { deleteConfirmationMessage, duplicateFileName, explorerKeyboardAction, isMainFileCandidate } from "../src/components/contextMenuController";
 
 describe("workspace explorer", () => {
   test("sorts folders before files without mutating the source list", () => {
@@ -99,5 +99,27 @@ describe("workspace explorer", () => {
     expect(duplicateFileName("archive.tar.gz")).toBe("archive.tar copy.gz");
     expect(duplicateFileName("README")).toBe("README copy");
     expect(duplicateFileName(".gitignore")).toBe(".gitignore copy");
+  });
+
+  test("identifies the selected item in deletion confirmations", () => {
+    expect(deleteConfirmationMessage("chapter-1.typ", false)).toBe(
+      'Are you sure you want to delete the file "chapter-1.typ"? It will be moved to the Trash.'
+    );
+    expect(deleteConfirmationMessage("chapters", true)).toBe(
+      'Are you sure you want to delete the folder "chapters"? It and its contents will be moved to the Trash.'
+    );
+  });
+
+  test("keeps project actions out of file and folder context menus", async () => {
+    const source = await Bun.file(new URL("../src/components/contextMenuController.ts", import.meta.url)).text();
+    const itemMenuStart = source.indexOf("private explorerItems()");
+    const backgroundMenuStart = source.indexOf("private explorerBackgroundItems()", itemMenuStart);
+    const itemMenu = source.slice(itemMenuStart, backgroundMenuStart);
+    const backgroundMenu = source.slice(backgroundMenuStart, source.indexOf("private tabItems()", backgroundMenuStart));
+
+    expect(itemMenu).not.toContain("ctx-open-project");
+    expect(itemMenu).not.toContain("ctx-restart-workspace");
+    expect(backgroundMenu).toContain("ctx-open-project");
+    expect(backgroundMenu).toContain("ctx-restart-workspace");
   });
 });

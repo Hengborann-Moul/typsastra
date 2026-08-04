@@ -56,6 +56,14 @@ export function duplicateFileName(name: string): string {
     : `${name} copy`;
 }
 
+export function deleteConfirmationMessage(name: string, isDirectory: boolean): string {
+  const kind = isDirectory ? "folder" : "file";
+  const consequence = isDirectory
+    ? "It and its contents will be moved to the Trash."
+    : "It will be moved to the Trash.";
+  return `Are you sure you want to delete the ${kind} "${name}"? ${consequence}`;
+}
+
 export class ContextMenuController {
   private targetPath = "";
   private targetIsDirectory = false;
@@ -294,7 +302,7 @@ export class ContextMenuController {
       }
     }
 
-    const accepted = await confirm(`Are you sure you want to move this ${this.targetIsDirectory ? "folder" : "file"} to the Trash?`, {
+    const accepted = await confirm(deleteConfirmationMessage(await basename(path), this.targetIsDirectory), {
       title: "Confirm Delete", kind: "warning"
     });
     if (!accepted) return;
@@ -551,7 +559,7 @@ export class ContextMenuController {
 
   private explorerItems(): string {
     const mainAction = this.mainFileItem();
-    return `${mainAction}<div class="dropdown-item" id="ctx-new-file">New File <span class="hotkey">Ctrl+N</span></div><div class="dropdown-item" id="ctx-fs-new-folder">New Folder</div><div class="dropdown-separator"></div><div class="dropdown-item" id="ctx-fs-rename">Rename <span class="hotkey">F2</span></div><div class="dropdown-item" id="ctx-fs-delete">Delete <span class="hotkey">Delete</span></div>${this.targetIsDirectory ? "" : '<div class="dropdown-separator"></div><div class="dropdown-item" id="ctx-fs-duplicate">Duplicate File</div><div class="dropdown-item" id="ctx-fs-copy">Copy File <span class="hotkey">Ctrl+C</span></div>'}${this.copiedFilePath ? '<div class="dropdown-item" id="ctx-fs-paste">Paste File <span class="hotkey">Ctrl+V</span></div>' : ""}<div class="dropdown-separator"></div><div class="dropdown-item" id="ctx-fs-reveal">Reveal in System Explorer</div><div class="dropdown-item" id="ctx-fs-copy-rel-path">Copy Relative Path</div><div class="dropdown-item" id="ctx-fs-copy-abs-path">Copy Absolute Path</div><div class="dropdown-separator"></div><div class="dropdown-item" id="ctx-open-project">Open Project <span class="hotkey">Ctrl+O</span></div><div class="dropdown-separator"></div><div class="dropdown-item" id="ctx-restart-workspace">Reload Project</div>`;
+    return `${mainAction}<div class="dropdown-item" id="ctx-new-file">New File <span class="hotkey">Ctrl+N</span></div><div class="dropdown-item" id="ctx-fs-new-folder">New Folder</div><div class="dropdown-separator"></div><div class="dropdown-item" id="ctx-fs-rename">Rename <span class="hotkey">F2</span></div><div class="dropdown-item" id="ctx-fs-delete">Delete <span class="hotkey">Delete</span></div>${this.targetIsDirectory ? "" : '<div class="dropdown-separator"></div><div class="dropdown-item" id="ctx-fs-duplicate">Duplicate File</div><div class="dropdown-item" id="ctx-fs-copy">Copy File <span class="hotkey">Ctrl+C</span></div>'}${this.copiedFilePath ? '<div class="dropdown-item" id="ctx-fs-paste">Paste File <span class="hotkey">Ctrl+V</span></div>' : ""}<div class="dropdown-separator"></div><div class="dropdown-item" id="ctx-fs-reveal">Reveal in System Explorer</div><div class="dropdown-item" id="ctx-fs-copy-rel-path">Copy Relative Path</div><div class="dropdown-item" id="ctx-fs-copy-abs-path">Copy Absolute Path</div>`;
   }
 
   private explorerBackgroundItems(): string {
