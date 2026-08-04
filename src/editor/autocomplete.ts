@@ -344,6 +344,15 @@ function innermostTypstFunctionArgumentStart(
     : null;
 }
 
+export function isInsideTypstFunctionArgumentsAt(
+  doc: Text,
+  cursorPosition: number
+): boolean {
+  return innermostTypstFunctionArgumentStart(doc, cursorPosition) !== null;
+}
+
+export()
+
 export function isTypstFunctionArgumentContextAt(
   doc: Text,
   cursorPosition: number,
@@ -494,7 +503,8 @@ function contextualCompletionSuffix(items: LspCompletionItem[]): LspCompletionIt
 export function preferContextualArgumentValueCompletions(
   items: LspCompletionItem[]
 ): LspCompletionItem[] {
-  return contextualCompletionSuffix(items);
+  const contextual = contextualCompletionSuffix(items);
+  return contextual.length < items.length ? contextual : [];
 }
 
 function textEditFromDefault(range: LspEditRange | undefined, newText: string): LspTextEdit | undefined {
@@ -773,7 +783,14 @@ export function createTypstAutocomplete(
   return autocompletion({
     override: [
       async (context: CompletionContext) => {
-        if (languageWordCompletion && !context.view?.composing && context.state.selection.ranges.length === 1) {
+        const insideTypstFunctionArguments = isInsideTypstFunctionArgumentsAt(
+          context.state.doc,
+          context.pos
+        );
+        if (languageWordCompletion
+          && !insideTypstFunctionArguments
+          && !context.view?.composing
+          && context.state.selection.ranges.length === 1) {
           const languageCompletionStartedAt = performance.now();
           const matches = getProviders()
             .filter(provider => provider.supportsCompletion === true)
@@ -896,7 +913,9 @@ export function createTypstAutocomplete(
           activeLine.text,
           context.pos - activeLine.from
         );
-        const fallbackCompletions = () => isFunctionArgumentStart || isMemberAccess
+        const fallbackCompletions = () => isFunctionArgumentStart
+          || isFunctionArgumentValue
+          || isMemberAccess
           ? null
           : typstCompletions(context);
 

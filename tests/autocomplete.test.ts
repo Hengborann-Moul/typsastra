@@ -12,6 +12,7 @@ import {
   fontCompletionValueStart,
   isEmptyTypstFunctionCallAt,
   isDirectMemberCompletion,
+  isInsideTypstFunctionArgumentsAt,
   isNamedArgumentCompletion,
   isTypstMemberAccessAt,
   isTypstFunctionArgumentContextAt,
@@ -56,6 +57,17 @@ describe("language word completion context", () => {
     expect(allowsLanguageWordCompletionOnLine("#set p", 5)).toBe(false);
     expect(allowsLanguageWordCompletionOnLine("#show h", 6)).toBe(false);
     expect(allowsLanguageWordCompletionOnLine("#let previewRoot = tr", 5)).toBe(false);
+  });
+
+  test("blocks language completion in multiline function arguments", () => {
+    const argument = Text.of(["#figure(", "  ga", ")"]);
+    expect(isInsideTypstFunctionArgumentsAt(argument, argument.line(2).to)).toBe(true);
+
+    const prose = Text.of(["A regular paragraph with ga"]);
+    expect(isInsideTypstFunctionArgumentsAt(prose, prose.length)).toBe(false);
+
+    const tuple = Text.of(["#let values = (", "  ga", ")"]);
+    expect(isInsideTypstFunctionArgumentsAt(tuple, tuple.line(2).to)).toBe(false);
   });
 
   test("continues to Typst LSP completion when syntax rejects a language word", async () => {
@@ -238,6 +250,7 @@ describe("LSP autocomplete edits", () => {
 
     expect(preferContextualArgumentValueCompletions(items).map(item => item.label))
       .toEqual(['"contain"', '"cover"', '"stretch"']);
+    expect(preferContextualArgumentValueCompletions(items.slice(0, 2))).toEqual([]);
   });
 
   test("does not treat colon-bearing global snippets as function arguments", () => {
