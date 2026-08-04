@@ -29,7 +29,12 @@ import { indentationMarkers } from '@replit/codemirror-indentation-markers';
 
 import * as uiwThemes from "@uiw/codemirror-themes-all";
 import { oneDark } from "@codemirror/theme-one-dark";
-import { createTypstAutocomplete, isTypstFunctionArgumentContextAt, type ProviderCapabilities } from "./autocomplete";
+import {
+  createTypstAutocomplete,
+  isInsideTypstFunctionArgumentsAt,
+  isTypstFunctionArgumentContextAt,
+  type ProviderCapabilities
+} from "./autocomplete";
 import {
   acceptCompletion,
   closeCompletion,
@@ -101,6 +106,10 @@ const completionNavigationHandler = Prec.highest(EditorView.domEventHandlers({
         true
       )
     );
+    const insideFunctionArguments = isInsideTypstFunctionArgumentsAt(
+      view.state.doc,
+      view.state.selection.main.head
+    );
     if (event.ctrlKey && !event.altKey && !event.metaKey && event.code === "Space") {
       // Escape can dismiss the menu while an asynchronous LSP query is still
       // settling. Resetting the selection transaction aborts that stale query
@@ -117,14 +126,14 @@ const completionNavigationHandler = Prec.highest(EditorView.domEventHandlers({
       handled = moveCompletionSelection(true, "page")(view);
     } else if (event.key === "PageUp") {
       handled = moveCompletionSelection(false, "page")(view);
+    } else if (event.key === "Enter" && event.ctrlKey && insideFunctionArguments) {
+      handled = insertNewlineAndIndent(view);
+      if (handled) queueMicrotask(() => startCompletion(view));
     } else if (event.key === "Tab" && completionActive) {
       handled = acceptCompletion(view);
       if (handled && namedArgumentSelected) {
         queueMicrotask(() => closeCompletion(view));
       }
-    } else if (event.key === "Enter" && namedArgumentSelected) {
-      handled = insertNewlineAndIndent(view);
-      if (handled) queueMicrotask(() => startCompletion(view));
     } else if (event.key === "Enter") {
       handled = acceptCompletion(view);
     }

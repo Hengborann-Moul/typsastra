@@ -496,13 +496,15 @@ describe("LSP autocomplete edits", () => {
     expect(isTypstFunctionArgumentValueContextAt(argumentName, 10)).toBe(false);
   });
 
-  test("uses Tab to accept every completion and Enter to continue named fields on a new line", async () => {
+  test("uses Tab and Enter to accept completions and Ctrl+Enter for argument newlines", async () => {
     const source = await Bun.file(new URL("../src/editor/extensions.ts", import.meta.url)).text();
     expect(source).toContain('event.key === "Tab" && completionActive');
     expect(source).toContain("handled = acceptCompletion(view)");
     expect(source).toContain("handled && namedArgumentSelected");
     expect(source).toContain("queueMicrotask(() => closeCompletion(view))");
-    expect(source).toContain('event.key === "Enter" && namedArgumentSelected');
+    expect(source).toContain('event.key === "Enter" && event.ctrlKey && insideFunctionArguments');
+    expect(source).not.toContain('event.key === "Enter" && namedArgumentSelected');
+    expect(source).toContain('else if (event.key === "Enter")');
     expect(source).toContain("handled = insertNewlineAndIndent(view)");
     expect(source).toContain("queueMicrotask(() => startCompletion(view))");
   });

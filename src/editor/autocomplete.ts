@@ -351,8 +351,6 @@ export function isInsideTypstFunctionArgumentsAt(
   return innermostTypstFunctionArgumentStart(doc, cursorPosition) !== null;
 }
 
-export()
-
 export function isTypstFunctionArgumentContextAt(
   doc: Text,
   cursorPosition: number,
