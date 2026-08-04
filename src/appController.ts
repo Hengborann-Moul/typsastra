@@ -5051,6 +5051,7 @@ export class TypsastraWorkspaceController {
       scale: Number(font.scale.toFixed(4))
     })));
     if (signature(previousFonts) === signature(config.fonts)) return;
+    this.editorToolbarController.synchronizeDocumentTypography(config);
     if (!this.isPinnedMainFile(filePath)) {
       this.acceptedTypographyScales.set(documentKey, config.fonts.map(font => ({ ...font })));
       return;

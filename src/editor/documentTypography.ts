@@ -140,6 +140,82 @@ function unescapeTypstString(value: string): string {
   return value.replace(/\\"/g, '"').replace(/\\\\/g, "\\");
 }
 
+function matchingDelimiter(text: string, start: number, open: string, close: string): number {
+  let depth = 0;
+  let quoted = false;
+  let escaped = false;
+  for (let index = start; index < text.length; index += 1) {
+    const character = text[index];
+    if (quoted) {
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === '"') quoted = false;
+      continue;
+    }
+    if (character === '"') {
+      quoted = true;
+      continue;
+    }
+    if (character === open) depth += 1;
+    else if (character === close && --depth === 0) return index;
+  }
+  return -1;
+}
+
+function splitTopLevel(value: string): string[] {
+  const parts: string[] = [];
+  let start = 0;
+  let depth = 0;
+  let quoted = false;
+  let escaped = false;
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index];
+    if (quoted) {
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === '"') quoted = false;
+      continue;
+    }
+    if (character === '"') quoted = true;
+    else if ("([{<".includes(character)) depth += 1;
+    else if (")]}>".includes(character)) depth = Math.max(0, depth - 1);
+    else if (character === "," && depth === 0) {
+      parts.push(value.slice(start, index).trim());
+      start = index + 1;
+    }
+  }
+  parts.push(value.slice(start).trim());
+  return parts.filter(Boolean);
+}
+
+function quotedValue(value: string): string | null {
+  const match = /^"((?:\\.|[^"])*)"$/.exec(value.trim());
+  return match ? unescapeTypstString(match[1]) : null;
+}
+
+function managedFontFamilies(block: string): string[] {
+  const rule = /(?:^|\n)\s*#?set\s+text\s*\(/g.exec(block);
+  if (!rule) return [];
+  const callStart = block.indexOf("(", rule.index);
+  const callEnd = matchingDelimiter(block, callStart, "(", ")");
+  if (callStart < 0 || callEnd < 0) return [];
+  const argumentsText = block.slice(callStart + 1, callEnd);
+  const fontArgument = splitTopLevel(argumentsText).find(argument => /^font\s*:/.test(argument));
+  if (!fontArgument) return [];
+  const value = fontArgument.slice(fontArgument.indexOf(":") + 1).trim();
+  const single = quotedValue(value);
+  if (single) return [single];
+  if (!value.startsWith("(")) return [];
+  const tupleEnd = matchingDelimiter(value, 0, "(", ")");
+  if (tupleEnd < 0) return [];
+  return splitTopLevel(value.slice(1, tupleEnd)).flatMap(entry => {
+    const direct = quotedValue(entry);
+    if (direct) return [direct];
+    const named = /(?:^|[,({]\s*)name\s*:\s*"((?:\\.|[^"])*)"/.exec(entry);
+    return named ? [unescapeTypstString(named[1])] : [];
+  });
+}
+
 function decimal(value: number): string {
   return Number(value.toFixed(2)).toString();
 }
@@ -266,8 +342,6 @@ export function parseTypographyBlock(text: string): DocumentTypography | null {
       fonts = parseFonts(raw);
     }
   } catch { return null; }
-  const stack = block.match(/#set text\(font: \(([^\r\n]+)\), size: (-?\d+(?:\.\d+)?)pt\)/);
-  const single = block.match(/#set text\(font: "((?:\\.|[^"])*)", size: (-?\d+(?:\.\d+)?)pt\)/);
   const legacyComplex = block.match(/#show regex\("\\p\{([^}]+)\}\+"\): set text\(font: "((?:\\.|[^"])*)", size: 1em ([+-]) (\d+(?:\.\d+)?)pt\)/);
   // Managed rules are written as `#set text` in a document, but lose the
   // leading `#` when they are installed inside a Typst template function.
@@ -277,10 +351,8 @@ export function parseTypographyBlock(text: string): DocumentTypography | null {
     ? documentScripts.find(candidate => candidate.unicodeProperty === legacyComplex[1])
     : null;
   const size = /\bsize:\s*(-?\d+(?:\.\d+)?)pt/.exec(block);
-  const baseSizePt = Number(size?.[1] ?? stack?.[2] ?? single?.[2] ?? 11);
-  const stackFonts = stack
-    ? [...stack[1].matchAll(/"((?:\\.|[^"])*)"/g)].map(match => unescapeTypstString(match[1]))
-    : [];
+  const baseSizePt = Number(size?.[1] ?? 11);
+  const stackFonts = managedFontFamilies(block);
   if (!documentScriptMetadata && !scriptFontMetadata && !roleMetadata && fonts.length > 0 && stackFonts[0]
     && !fonts.some(font => font.family === stackFonts[0])) {
     fonts.unshift({ family: stackFonts[0], script: "latin", scale: 1, language: null });
@@ -289,7 +361,7 @@ export function parseTypographyBlock(text: string): DocumentTypography | null {
     ? Number(legacyComplex[4]) * (legacyComplex[3] === "-" ? -1 : 1)
     : 0;
   if (fonts.length === 0 && legacyComplex && legacyScript) {
-    const firstFont = stackFonts[0] ?? (single ? unescapeTypstString(single[1]) : null);
+    const firstFont = stackFonts[0] ?? null;
     if (firstFont) fonts.push({ family: firstFont, script: "latin", scale: 1, language: null });
     fonts.push({
       family: unescapeTypstString(legacyComplex[2]),
@@ -301,13 +373,16 @@ export function parseTypographyBlock(text: string): DocumentTypography | null {
   if (fonts.length === 0) {
     const orderedFamilies = stackFonts.length > 0
       ? stackFonts
-      : single ? [unescapeTypstString(single[1])] : [];
+      : [];
     fonts = orderedFamilies.map((family, index) => ({
       family,
       script: index === 0 ? "latin" : documentScripts[Math.min(index - 1, documentScripts.length - 1)].id,
       scale: 1,
       language: null
     }));
+  }
+  if (stackFonts.length > 0 && fonts.length === stackFonts.length) {
+    fonts = fonts.map((font, index) => ({ ...font, family: stackFonts[index] }));
   }
   const uniqueFonts = fonts.filter((font, index) =>
     fonts.findIndex(candidate => candidate.script === font.script) === index

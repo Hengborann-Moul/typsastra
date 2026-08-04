@@ -55,6 +55,39 @@ describe("document typography", () => {
     expect(parseTypographyBlock(renderTypographyBlock(config))).toEqual(config);
   });
 
+  test("treats manually edited set-text fonts as the current typography values", () => {
+    const edited = renderTypographyBlock(config)
+      .replace('    "Calibri",', '    "Aptos",')
+      .replace('    "MiSans Khmer",', '    "Khmer OS Content",');
+    expect(parseTypographyBlock(edited)?.fonts).toEqual([
+      { family: "Aptos", script: "latin", scale: 1, language: "en-US" },
+      { family: "Khmer OS Content", script: "khmer", scale: 1.05, language: "km" },
+      { family: "MiSans Lao", script: "lao", scale: 1, language: null },
+    ]);
+  });
+
+  test("reads manually edited named font rules without treating regex strings as fonts", () => {
+    const source = [
+      "// typsastra:typography:start",
+      '// typsastra:document-scripts [{"family":"Old Khmer","script":"khmer","scale":1},{"family":"Old Latin","script":"latin","scale":1}]',
+      "#set text(",
+      "  font: (",
+      '    (name: "Khmer OS", covers: regex("[\\p{scx=Khmer}]")),',
+      '    (name: "Aptos", covers: regex("[\\p{scx=Latin}]")),',
+      "  ),",
+      "  size: 12pt,",
+      ")",
+      "// typsastra:typography:end",
+    ].join("\n");
+    expect(parseTypographyBlock(source)).toEqual({
+      baseSizePt: 12,
+      fonts: [
+        { family: "Khmer OS", script: "khmer", scale: 1, language: null },
+        { family: "Aptos", script: "latin", scale: 1, language: null },
+      ],
+    });
+  });
+
   test("reads document-script routing independently from a typography block", () => {
     expect(parseDocumentScripts('// typsastra:document-scripts [{"family":"Latin","script":"latin","scale":1,"language":"fr-FR"}]\n#import "template.typ"'))
       .toEqual([{ family: "Latin", script: "latin", scale: 1, language: "fr-FR" }]);
