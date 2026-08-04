@@ -751,11 +751,14 @@ export class TypsastraWorkspaceController {
       }
       return null;
     },
+    getSpellingIssuesInRange: (from, to) => this.spellcheckController.issuesInRange(from, to),
     getSpellingSuggestions: issue => this.spellcheckController.suggestions(issue),
     replaceSpelling: (issue, replacement) => this.spellcheckController.replace(issue, replacement),
-    addSpellingToDictionary: issue => this.settingsController.update(settings => {
-      if (!settings.editor.userDictionary.includes(issue.word)) {
-        settings.editor.userDictionary.push(issue.word);
+    addSpellingToDictionary: words => this.settingsController.update(settings => {
+      for (const word of words) {
+        if (!settings.editor.userDictionary.includes(word)) {
+          settings.editor.userDictionary.push(word);
+        }
       }
     }),
     addSpellingTerminology: (issue, scope) => {

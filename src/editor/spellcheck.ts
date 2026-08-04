@@ -480,6 +480,18 @@ export class SpellcheckController {
       .sort((a, b) => (a.to - a.from) - (b.to - b.from))[0] ?? null;
   }
 
+  public issuesInRange(from: number, to: number): SpellingIssue[] {
+    const start = Math.min(from, to);
+    const end = Math.max(from, to);
+    if (start === end) return [];
+    return this.issues
+      .filter(issue => !issue.synthetic
+        && issue.from >= start
+        && issue.to <= end
+        && this.isCurrentIssue(issue, false))
+      .sort((a, b) => a.from - b.from || a.to - b.to);
+  }
+
   public async suggestions(issue: SpellingIssue): Promise<string[]> {
     if (!this.isCurrentIssue(issue)) return [];
     // TODO: Re-enable correction menus for segmented scripts when providers can
@@ -592,7 +604,10 @@ export class SpellcheckController {
     let response: AnalyzeResponse | null = null;
     try {
       response = await invoke<AnalyzeResponse>("analyze_language_ranges", {
-        request: { chunks }
+        request: {
+          chunks,
+          userDictionary: [...this.userDictionary],
+        }
       });
       response = { tokens: response.tokens, failures: response.failures ?? [] };
       for (const failure of response.failures) {

@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, mock, test, afterEach } from "bun:test";
 import { EditorState, Text } from "@codemirror/state";
 import { typstLanguage } from "../src/editor/typstLanguage";
+import { dictionaryWordsForSelection } from "../src/components/contextMenuController";
 
 type Invocation = { command: string; resolve: (value: unknown) => void; reject: (error: unknown) => void; args?: any };
 const invocations: Invocation[] = [];
@@ -149,9 +150,53 @@ describe("spellcheck request safety", () => {
     const fixture = await controllerFor("ខុស");
     fixture.controller.setUserDictionary(["ខុស"]);
     const request = await startAnalysis(fixture.controller);
+    expect(request.args?.request.userDictionary).toEqual(["ខុស"]);
     request.resolve(analysis("ខុស"));
     await wait(20);
     expect(fixture.controller.issues).toEqual([]);
+  });
+
+  test("returns only complete misspelled words contained in an editor selection", async () => {
+    const fixture = await controllerFor("wrong text bad");
+    const request = await startAnalysis(fixture.controller);
+    request.resolve({
+      tokens: [
+        {
+          provider: "test-corrections",
+          sourceFromUtf16: 0,
+          sourceToUtf16: 5,
+          sourceText: "wrong",
+          normalizedText: "wrong",
+          known: false,
+          knownPrefix: false,
+        },
+        {
+          provider: "test-corrections",
+          sourceFromUtf16: 11,
+          sourceToUtf16: 14,
+          sourceText: "bad",
+          normalizedText: "bad",
+          known: false,
+          knownPrefix: false,
+        },
+      ],
+      failures: [],
+    });
+    await wait(20);
+
+    expect(fixture.controller.issuesInRange(0, 14).map((issue: any) => issue.word))
+      .toEqual(["wrong", "bad"]);
+    expect(fixture.controller.issuesInRange(1, 14).map((issue: any) => issue.word))
+      .toEqual(["bad"]);
+    expect(fixture.controller.issuesInRange(5, 11)).toEqual([]);
+  });
+
+  test("uses a selected word as the dictionary entry when it contains a misspelling", () => {
+    expect(dictionaryWordsForSelection("សេចក្តី", [{ word: "ក្ត" }]))
+      .toEqual(["សេចក្តី"]);
+    expect(dictionaryWordsForSelection("wrong text bad", [{ word: "wrong" }, { word: "bad" }]))
+      .toEqual(["wrong", "bad"]);
+    expect(dictionaryWordsForSelection("known", [])).toEqual([]);
   });
 
   test("discards a response invalidated immediately by an edit", async () => {

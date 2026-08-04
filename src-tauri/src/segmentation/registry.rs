@@ -1809,6 +1809,7 @@ impl SegmentationRegistry {
         let mut candidates = Vec::<ProviderTokenCandidate>::new();
         let mut failures = Vec::<ProviderFailure>::new();
         let mut seen_failures = HashSet::<(String, usize, usize, String)>::new();
+        let user_dictionary = request.user_dictionary;
 
         for chunk in request.chunks {
             let byte_to_utf16 = byte_to_utf16_offsets(&chunk.text);
@@ -1860,7 +1861,7 @@ impl SegmentationRegistry {
                     .iter()
                     .filter(|provider| provider.supports(span_text))
                 {
-                    let analysis = match provider.analyze(span_text) {
+                    let mut analysis = match provider.analyze(span_text) {
                         Ok(analysis) => analysis,
                         Err(message) => {
                             push_provider_failure(
@@ -1874,6 +1875,13 @@ impl SegmentationRegistry {
                             continue;
                         }
                     };
+                    if provider.id() == "khmer-segmenter" {
+                        apply_khmer_user_dictionary(
+                            span_text,
+                            &user_dictionary,
+                            &mut analysis.tokens,
+                        );
+                    }
 
                     for token in analysis.tokens {
                         let Some(source_range) =
@@ -1922,6 +1930,66 @@ impl SegmentationRegistry {
             failures,
         })
     }
+}
+
+fn apply_khmer_user_dictionary(
+    text: &str,
+    user_dictionary: &[String],
+    tokens: &mut Vec<SegmentToken>,
+) {
+    let byte_to_utf16 = byte_to_utf16_offsets(text);
+    let mut matches = user_dictionary
+        .iter()
+        .filter_map(|word| {
+            let word = word.trim();
+            (!word.is_empty()
+                && word.chars().any(is_khmer_character)
+                && word.chars().all(|character| {
+                    is_khmer_character(character)
+                        || matches!(character, '\u{200b}' | '\u{200c}' | '\u{200d}')
+                }))
+            .then_some(word)
+        })
+        .flat_map(|word| {
+            text.match_indices(word)
+                .map(move |(from, _)| (from, from + word.len(), word))
+        })
+        .collect::<Vec<_>>();
+    matches.sort_by(|left, right| {
+        left.0
+            .cmp(&right.0)
+            .then_with(|| (right.1 - right.0).cmp(&(left.1 - left.0)))
+    });
+
+    let mut accepted = Vec::<(usize, usize, &str)>::new();
+    for candidate in matches {
+        if accepted
+            .iter()
+            .any(|(from, to, _)| candidate.0 < *to && *from < candidate.1)
+        {
+            continue;
+        }
+        accepted.push(candidate);
+    }
+
+    for (from_byte, to_byte, word) in accepted {
+        let from = byte_to_utf16[from_byte];
+        let to = byte_to_utf16[to_byte];
+        tokens.retain(|token| token.to <= from || token.from >= to);
+        tokens.push(SegmentToken {
+            text: word.to_owned(),
+            from,
+            to,
+            known: true,
+            known_prefix: true,
+            hyphenated: None,
+        });
+    }
+    tokens.sort_by_key(|token| (token.from, token.to));
+}
+
+fn is_khmer_character(character: char) -> bool {
+    ('\u{1780}'..='\u{17ff}').contains(&character)
 }
 
 struct ProviderTokenCandidate {
@@ -2384,6 +2452,39 @@ mod tests {
         text[range].to_string()
     }
 
+    #[test]
+    fn khmer_user_dictionary_word_replaces_overlapping_segments() {
+        let word = "សេចក្តី";
+        let mut tokens = vec![
+            SegmentToken {
+                text: "សេច".to_string(),
+                from: 0,
+                to: "សេច".encode_utf16().count(),
+                known: false,
+                known_prefix: false,
+                hyphenated: None,
+            },
+            SegmentToken {
+                text: "ក្តី".to_string(),
+                from: "សេច".encode_utf16().count(),
+                to: word.encode_utf16().count(),
+                known: false,
+                known_prefix: false,
+                hyphenated: None,
+            },
+        ];
+
+        apply_khmer_user_dictionary(word, &[word.to_string()], &mut tokens);
+
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].text, word);
+        assert_eq!(
+            (tokens[0].from, tokens[0].to),
+            (0, word.encode_utf16().count())
+        );
+        assert!(tokens[0].known);
+    }
+
     fn lao_test_provider() -> GenericHunspellProvider {
         GenericHunspellProvider::new(
             "lo_LA",
@@ -2462,6 +2563,7 @@ mod tests {
                 provider: None,
                 content_mode: AnalyzeContentMode::TypstSource,
             }],
+            user_dictionary: Vec::new(),
         })
         .expect("Khmer-only analysis");
         let mixed = SegmentationRegistry {
@@ -2475,6 +2577,7 @@ mod tests {
                 provider: None,
                 content_mode: AnalyzeContentMode::TypstSource,
             }],
+            user_dictionary: Vec::new(),
         })
         .expect("mixed analysis");
         let khmer_tokens = |response: &AnalyzeResponse| {
@@ -2947,6 +3050,7 @@ mod tests {
                         content_mode: AnalyzeContentMode::TypstSource,
                     },
                 ],
+                user_dictionary: Vec::new(),
             })
             .expect("analyze language ranges");
 
@@ -2996,6 +3100,7 @@ mod tests {
                     provider: None,
                     content_mode: AnalyzeContentMode::TypstSource,
                 }],
+                user_dictionary: Vec::new(),
             })
             .expect("mixed analysis");
 
@@ -3085,6 +3190,7 @@ mod tests {
                     provider: None,
                     content_mode: AnalyzeContentMode::TypstSource,
                 }],
+                user_dictionary: Vec::new(),
             })
             .expect("analysis");
         assert!(response
@@ -3136,6 +3242,7 @@ mod tests {
                     provider: Some("hunspell:en_GB".to_string()),
                     content_mode: AnalyzeContentMode::PlainText,
                 }],
+                user_dictionary: Vec::new(),
             })
             .expect("routed analysis");
 
@@ -3185,6 +3292,7 @@ mod tests {
                     provider: Some("hunspell:en_US".to_string()),
                     content_mode: AnalyzeContentMode::PlainText,
                 }],
+                user_dictionary: Vec::new(),
             })
             .expect("routed analysis");
         assert!(response
@@ -3204,6 +3312,7 @@ mod tests {
                     provider: Some("removed-provider".to_string()),
                     content_mode: AnalyzeContentMode::PlainText,
                 }],
+                user_dictionary: Vec::new(),
             })
             .expect_err("unknown provider must fail closed");
         assert!(error.contains("Unknown or unavailable routed language provider"));
@@ -3278,6 +3387,7 @@ This paragraph has a recieve typo.
                     provider: None,
                     content_mode: AnalyzeContentMode::TypstSource,
                 }],
+                user_dictionary: Vec::new(),
             })
             .expect("analysis");
         let english_tokens: Vec<_> = response

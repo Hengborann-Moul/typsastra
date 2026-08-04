@@ -23,9 +23,10 @@ export type ContextMenuDependencies = {
   closeOtherTabs: (path: string) => void | Promise<void>;
   restartWorkspace: () => void | Promise<void>;
   getSpellingIssue: (x: number, y: number, target?: HTMLElement) => SpellingIssue | null;
+  getSpellingIssuesInRange: (from: number, to: number) => SpellingIssue[];
   getSpellingSuggestions: (issue: SpellingIssue) => Promise<string[]>;
   replaceSpelling: (issue: SpellingIssue, replacement: string) => void;
-  addSpellingToDictionary: (issue: SpellingIssue) => void;
+  addSpellingToDictionary: (words: readonly string[]) => void;
   addSpellingTerminology: (issue: SpellingIssue, scope: "global" | "project" | "languageFamily") => void;
   setSpellingIgnored: (issue: SpellingIssue, ignored: boolean) => void;
   isPinnedMainFile: (path: string) => boolean;
@@ -64,6 +65,16 @@ export function deleteConfirmationMessage(name: string, isDirectory: boolean): s
   return `Are you sure you want to delete the ${kind} "${name}"? ${consequence}`;
 }
 
+export function dictionaryWordsForSelection(
+  selectedText: string,
+  issues: readonly Pick<SpellingIssue, "word">[],
+): string[] {
+  if (issues.length === 0) return [];
+  const selectedWord = selectedText.trim();
+  if (selectedWord && !/\s/u.test(selectedWord)) return [selectedWord];
+  return [...new Set(issues.map(issue => issue.word).filter(Boolean))];
+}
+
 export class ContextMenuController {
   private targetPath = "";
   private targetIsDirectory = false;
@@ -73,6 +84,7 @@ export class ContextMenuController {
   private contextText = "";
   private readonly menu = document.getElementById("context-menu")!;
   private spellingIssue: SpellingIssue | null = null;
+  private spellingDictionaryWords: string[] = [];
   private spellingSuggestions: string[] = [];
   private contextMenuOpenedFromExplorer = false;
 
@@ -189,7 +201,9 @@ export class ContextMenuController {
         }
         return;
       case "ctx-spelling-add":
-        if (this.spellingIssue) this.dependencies.addSpellingToDictionary(this.spellingIssue);
+        if (this.spellingDictionaryWords.length > 0) {
+          this.dependencies.addSpellingToDictionary(this.spellingDictionaryWords);
+        }
         return;
       case "ctx-spelling-add-global":
       case "ctx-spelling-add-project":
@@ -498,6 +512,13 @@ export class ContextMenuController {
       closeCompletion(editor);
       editor.dispatch({ effects: closeHoverTooltips });
       this.spellingIssue = this.dependencies.getSpellingIssue(event.clientX, event.clientY, target);
+      const selection = editor.state.selection.main;
+      const selectedIssues = selection.empty
+        ? []
+        : this.dependencies.getSpellingIssuesInRange(selection.from, selection.to);
+      this.spellingDictionaryWords = selectedIssues.length > 0
+        ? dictionaryWordsForSelection(editor.state.sliceDoc(selection.from, selection.to), selectedIssues)
+        : this.spellingIssue ? [this.spellingIssue.word] : [];
       this.spellingSuggestions = this.spellingIssue
         ? await this.dependencies.getSpellingSuggestions(this.spellingIssue)
         : [];
@@ -579,9 +600,15 @@ export class ContextMenuController {
   }
 
   private editorItems(): string {
-    const spelling = this.spellingIssue
-      ? `${this.spellingSuggestions.map((suggestion, index) => `<div class="dropdown-item spelling-suggestion" id="ctx-spelling-${index}">${this.escapeHtml(suggestion)}</div>`).join("")}<div class="dropdown-item" id="ctx-spelling-add-global">Add to global terminology</div><div class="dropdown-item" id="ctx-spelling-add-project">Add to project terminology</div>${this.spellingIssue.languageFamily ? `<div class="dropdown-item" id="ctx-spelling-add-language">Add to ${this.escapeHtml(this.spellingIssue.languageFamily)} dictionary</div>` : ""}<div class="dropdown-item" id="ctx-spelling-ignore">${this.spellingIssue.ignored ? "Stop ignoring" : this.spellingIssue.languageFamily ? `Ignore in ${this.escapeHtml(this.spellingIssue.languageFamily)}` : "Ignore globally"} “${this.escapeHtml(this.spellingIssue.sourceText)}”</div><div class="dropdown-separator"></div>`
-      : "";
+    const dictionary = this.spellingDictionaryWords.length === 1
+      ? `<div class="dropdown-item" id="ctx-spelling-add">Add “${this.escapeHtml(this.spellingDictionaryWords[0])}” to user dictionary</div>`
+      : this.spellingDictionaryWords.length > 1
+        ? `<div class="dropdown-item" id="ctx-spelling-add">Add ${this.spellingDictionaryWords.length} misspelled words to user dictionary</div>`
+        : "";
+    const issueActions = this.spellingIssue
+      ? `${this.spellingSuggestions.map((suggestion, index) => `<div class="dropdown-item spelling-suggestion" id="ctx-spelling-${index}">${this.escapeHtml(suggestion)}</div>`).join("")}${dictionary}<div class="dropdown-item" id="ctx-spelling-add-global">Add to global terminology</div><div class="dropdown-item" id="ctx-spelling-add-project">Add to project terminology</div>${this.spellingIssue.languageFamily ? `<div class="dropdown-item" id="ctx-spelling-add-language">Add to ${this.escapeHtml(this.spellingIssue.languageFamily)} dictionary</div>` : ""}<div class="dropdown-item" id="ctx-spelling-ignore">${this.spellingIssue.ignored ? "Stop ignoring" : this.spellingIssue.languageFamily ? `Ignore in ${this.escapeHtml(this.spellingIssue.languageFamily)}` : "Ignore globally"} “${this.escapeHtml(this.spellingIssue.sourceText)}”</div>`
+      : dictionary;
+    const spelling = issueActions ? `${issueActions}<div class="dropdown-separator"></div>` : "";
     const forwardSyncAvailable = this.dependencies.canRevealCursorInPreview();
     const forwardSyncShortcut = navigator.userAgent.toLowerCase().includes("mac")
       ? "Option+Enter"

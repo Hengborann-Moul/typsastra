@@ -59,6 +59,8 @@ pub enum AnalyzeContentMode {
 #[serde(rename_all = "camelCase")]
 pub struct AnalyzeRequest {
     pub chunks: Vec<AnalyzeChunk>,
+    #[serde(default)]
+    pub user_dictionary: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
