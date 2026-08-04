@@ -418,7 +418,7 @@ impl LanguageSegmenter for KhmerProvider {
     }
 
     fn version(&self) -> &'static str {
-        "0.2.0-rc.1"
+        "0.2.0-rc.2"
     }
 
     fn license(&self) -> &'static str {
@@ -463,14 +463,12 @@ impl LanguageSegmenter for KhmerProvider {
     }
 
     fn analyze(&self, text: &str) -> Result<TextAnalysis, String> {
-        let result = self
+        let analysis = self
             .segmenter
-            .segment_detailed(text)
+            .analyze_text(text, SpellcheckProfile::Typing)
             .map_err(|error| error.to_string())?;
-        let diagnostics = self
-            .segmenter
-            .check_text(text, SpellcheckProfile::Typing)
-            .map_err(|error| error.to_string())?;
+        let result = &analysis.segmentation;
+        let diagnostics = &analysis.diagnostics;
         let normalized = result.normalized();
         let clean_text: String = text
             .chars()
@@ -492,27 +490,21 @@ impl LanguageSegmenter for KhmerProvider {
         // intended-word span so correction requests reach the new API with
         // the same text that it diagnosed.
         for diagnostic in diagnostics {
-            let overlapping: Vec<usize> = segments
+            for index in segments
                 .iter()
                 .enumerate()
-                .filter_map(|(index, segment)| {
-                    (segment.normalized_range.start < diagnostic.range.end
-                        && diagnostic.range.start < segment.normalized_range.end)
-                        .then_some(index)
+                .filter(|(_, segment)| {
+                    segment.normalized_range.start < diagnostic.range.end
+                        && diagnostic.range.start < segment.normalized_range.end
                 })
-                .collect();
-            let (Some(first), Some(last)) = (overlapping.first(), overlapping.last()) else {
-                continue;
-            };
-            for index in &overlapping {
-                consumed[*index] = true;
+                .map(|(index, _)| index)
+            {
+                consumed[index] = true;
             }
-            let source_start = segments[*first].source_range.start;
-            let source_end = segments[*last].source_range.end;
             tokens.push(SegmentToken {
-                text: diagnostic.text,
-                from: byte_to_utf16[source_start],
-                to: byte_to_utf16[source_end],
+                text: diagnostic.text.clone(),
+                from: byte_to_utf16[diagnostic.source_range.start],
+                to: byte_to_utf16[diagnostic.source_range.end],
                 known: false,
                 known_prefix: false,
                 hyphenated: None,
@@ -527,7 +519,7 @@ impl LanguageSegmenter for KhmerProvider {
             let known = !token
                 .chars()
                 .any(|character| ('\u{1780}'..='\u{17d3}').contains(&character))
-                || self.segmenter.is_known_word(token);
+                || self.segmenter.is_spelling_valid(token);
             let known_prefix = known || !self.segmenter.complete_word(token, 1).is_empty();
             let hyphenated = self
                 .hyphenation
@@ -574,7 +566,7 @@ impl LanguageSegmenter for KhmerProvider {
     }
 
     fn is_known_word(&self, word: &str) -> bool {
-        self.segmenter.is_known_word(word)
+        self.segmenter.is_spelling_valid(word)
     }
 }
 
@@ -1368,7 +1360,7 @@ fn khmer_provider_capabilities() -> ProviderCapabilities {
         supports_custom_dictionary: true,
         has_editing_policy: true,
         provider_type: "deep".to_string(),
-        version: "0.2.0-rc.1".to_string(),
+        version: "0.2.0-rc.2".to_string(),
         license: "MIT; lexical data retains upstream source terms".to_string(),
     }
 }
@@ -2510,7 +2502,7 @@ mod tests {
 
     #[test]
     fn khmer_reference_provider_fixtures_are_locked() {
-        const PINNED_UPSTREAM: &str = "b68a2efac7b4e6df5779597b435afd812006a97f";
+        const PINNED_UPSTREAM: &str = "67a79f64f0c68908345099009765615588da1faa";
         let fixture: KhmerReferenceFixture =
             serde_json::from_str(include_str!("../../../tests/fixtures/khmer/provider.json"))
                 .expect("Khmer provider reference fixture");

@@ -3,7 +3,7 @@
 These compiled artifacts are generated from the language data pinned by the
 `third_party/khmer_segmenter` submodule:
 
-- `khmer_dictionary.kdict` supplies deterministic segmentation boundaries.
+- `khmer_dictionary.kdict` is the RC2 unified KDIC v2 artifact. It supplies deterministic segmentation boundaries plus the curated spellcheck, completion, and correction metadata used by the bundled provider.
 - `khmer_hyphenation.kdict` supplies optional layout break metadata.
 
 They are application runtime data, not an independent editable source of Khmer

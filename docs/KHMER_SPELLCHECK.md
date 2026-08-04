@@ -13,10 +13,10 @@ ISO 15924 script:  Khmr
 Support:           Deep · Experimental
 Policy contract:   1
 Capability schema: 1
-Upstream commit:   b68a2efac7b4e6df5779597b435afd812006a97f
+Upstream commit:   67a79f64f0c68908345099009765615588da1faa (v0.2.0-rc.2)
 ```
 
-The gitlink at `third_party/khmer_segmenter` pins the code, curated language data, and normalization behavior. Typsastra rebuilds the KDIC and hyphenation binaries from that revision and stores only those compiled runtime artifacts under `src-tauri/resources/language-providers/khmer/`. `tests/fixtures/khmer/provider.json` records the same commit and exact expected output. Runtime artifacts retain the usage and attribution requirements documented upstream. Changing the submodule, dictionary, normalization, or post-processing requires an intentional fixture update and an explanation in the change review.
+The gitlink at `third_party/khmer_segmenter` pins the code, curated language data, and normalization behavior. Typsastra rebuilds the KDIC and hyphenation binaries from that revision and stores only those compiled runtime artifacts under `src-tauri/resources/language-providers/khmer/`. RC2 uses the segmenter's single-pass analysis API, which returns segmentation plus spelling diagnostics whose source ranges already map to the original document. `tests/fixtures/khmer/provider.json` records the same commit and exact expected output. Runtime artifacts retain the usage and attribution requirements documented upstream. Changing the submodule, dictionary, normalization, or post-processing requires an intentional fixture update and an explanation in the change review.
 
 Typsastra does not add semantic or LLM-generated boundary repairs after the segmenter. The pinned deterministic output is the lexical baseline even when another compound convention could also be linguistically defensible.
 
@@ -74,9 +74,10 @@ The editing policy never performs dictionary lookup or IPC. The Rust provider ne
 | Behavior | Owner | Contract |
 |:--|:--|:--|
 | Normalization and source spans | pinned segmenter | Return normalized ranges mapped to original byte ranges |
-| Editor offsets | Khmer provider | Convert original byte boundaries to CodeMirror UTF-16 once |
+| Editor offsets | Khmer provider | Convert upstream source-byte boundaries to CodeMirror UTF-16 once |
 | Lexical segmentation | pinned segmenter and dictionary | Deterministic dictionary/frequency output |
-| Known words and prefixes | pinned segmenter | Use the curated spellcheck vocabulary and completion index |
+| Segmentation words | pinned segmenter | May include supplemental forms solely to maintain reliable boundaries |
+| Spellcheck validity and prefixes | pinned segmenter | Use the curated spelling vocabulary and completion index; a segmentation-only form is not silently accepted as correctly spelled |
 | Completion | `complete_language_word` | Return provider ID, explicit UTF-16 replacement range, and bounded ranked options |
 | Current known word | Khmer provider | Put the exact current known word first before longer completions |
 | Corrections | pinned segmenter and capability contract | Return ranked corrections for upstream intended-word spans |
