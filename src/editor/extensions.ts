@@ -88,7 +88,8 @@ export function visibleIndentationMarkers(): Extension {
 const completionNavigationHandler = Prec.highest(EditorView.domEventHandlers({
   keydown(event, view) {
     let handled = false;
-    const completion = completionStatus(view.state) === "active"
+    const completionActive = completionStatus(view.state) === "active";
+    const completion = completionActive
       ? selectedCompletion(view.state)
       : null;
     const namedArgumentSelected = Boolean(
@@ -116,9 +117,11 @@ const completionNavigationHandler = Prec.highest(EditorView.domEventHandlers({
       handled = moveCompletionSelection(true, "page")(view);
     } else if (event.key === "PageUp") {
       handled = moveCompletionSelection(false, "page")(view);
-    } else if (event.key === "Tab" && namedArgumentSelected) {
+    } else if (event.key === "Tab" && completionActive) {
       handled = acceptCompletion(view);
-      if (handled) queueMicrotask(() => closeCompletion(view));
+      if (handled && namedArgumentSelected) {
+        queueMicrotask(() => closeCompletion(view));
+      }
     } else if (event.key === "Enter" && namedArgumentSelected) {
       handled = insertNewlineAndIndent(view);
       if (handled) queueMicrotask(() => startCompletion(view));
