@@ -697,7 +697,9 @@ export class TypsastraWorkspaceController {
     renderWysiwym: markup => this.mapMarkupToWysiwym(markup),
     save: () => this.saveActiveFile(),
     syncPreview: cursor => this.previewSyncController.renderAtCursor(cursor),
-    applyTypography: (config, target) => this.applyTypography(config, target)
+    applyTypography: (config, target) => this.applyTypography(config, target),
+    getWorkspaceRoot: () => this.workspaceRootPath,
+    onWorkspacePrivateFontDirectoriesChanged: () => this.handlePrivateFontDirectoriesChanged()
     // TODO: Re-enable when the WYSIWYM layout is ready for use.
     // toggleMode: () => this.switchViewLayoutMode()
   });
@@ -3707,7 +3709,9 @@ export class TypsastraWorkspaceController {
     message: string;
     fonts: DocumentScriptFont[];
   } | null> {
-    const catalog = await invoke<{ all: string[] }>("list_system_fonts");
+    const catalog = await invoke<{ all: string[] }>("list_system_fonts", {
+      workspaceRootPath: this.workspaceRootPath
+    });
     const unsupported = unsupportedTypstInternalFontScales(config.fonts, catalog.all);
     if (unsupported.length === 0) return null;
     return {

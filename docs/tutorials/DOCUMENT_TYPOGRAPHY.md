@@ -76,11 +76,17 @@ Document Typography lists families in this order:
 2. **Private local**
 3. **System fonts**
 
-The directory is a global, machine-local setting. Typsastra passes it to
-diagnostics, live preview, source synchronization, and PDF export, but does not
-load those fonts into the source editor. It also never copies the original font
-files into `.typsastra` or a project export. A recipient therefore needs the
-same font dependency installed or configured on their own machine.
+The Settings directory is global and machine-local. For a font used by one
+project, Document Typography also offers **Workspace private fonts**. Folders
+inside the workspace are stored relatively; external folders remain absolute
+and local to that computer. These workspace entries are written only to ignored
+`.typsastra/local.json`, never to an archive or project export.
+
+Typsastra passes both kinds of directory to diagnostics, live preview, source
+synchronization, and PDF export, but does not load those fonts into the source
+editor. It also never copies the original font files into `.typsastra` or a
+project export. A recipient therefore needs the same font dependency installed
+or configured on their own machine.
 
 Typsastra recommends no more than 10 cached scale variants per font face. It
 asks before creating another variant and keeps every existing variant until the

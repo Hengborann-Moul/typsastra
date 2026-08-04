@@ -3,6 +3,7 @@ import type { EditorView } from "@codemirror/view";
 import { undo, redo } from "@codemirror/commands";
 import { openSearchPanel } from "@codemirror/search";
 import { invoke } from "@tauri-apps/api/core";
+import { confirm, message, open } from "@tauri-apps/plugin-dialog";
 import {
   parseLanguageCatalog,
   parseLanguageProviderCapabilitiesList,
@@ -23,6 +24,12 @@ import {
 type EditorMode = "CODE" | "WYSIWYM";
 const typographyChoiceStorageKey = "typsastra-last-document-typography";
 
+type PrivateFontDirectoryInspection = {
+  path: string;
+  families: string[];
+  collisions: string[];
+};
+
 export type EditorToolbarDependencies = {
   getMode: () => EditorMode;
   getEditor: () => EditorView;
@@ -32,6 +39,8 @@ export type EditorToolbarDependencies = {
   save: () => Promise<void>;
   syncPreview: (cursor: number) => Promise<void>;
   applyTypography: (config: DocumentTypography, target: "document" | "template") => Promise<boolean>;
+  getWorkspaceRoot: () => string | null;
+  onWorkspacePrivateFontDirectoriesChanged: () => void | Promise<void>;
   // TODO: Re-enable when the WYSIWYM layout is ready for use.
   // toggleMode: () => void;
 };
@@ -104,6 +113,7 @@ export class EditorToolbarController {
     window.addEventListener("pointercancel", this.onTypographyPointerUp);
     document.addEventListener("typsastra:system-fonts-changed", () => void this.initializeTypographyControls());
     document.addEventListener("typsastra:private-fonts-changed", () => void this.initializeTypographyControls());
+    document.addEventListener("typsastra:workspace-private-fonts-changed", () => void this.initializeTypographyControls());
     document.addEventListener("typsastra:language-providers-changed", () => void this.initializeTypographyControls());
     document.getElementById("toolbar-typography-apply")?.addEventListener("click", event => {
       event.preventDefault();
@@ -126,6 +136,9 @@ export class EditorToolbarController {
     document.getElementById("toolbar-document-typography")?.addEventListener("click", event => {
       event.preventDefault();
       this.openTypographyModal(event.currentTarget as HTMLElement);
+    });
+    document.getElementById("toolbar-add-workspace-private-font-directory")?.addEventListener("click", () => {
+      void this.addWorkspacePrivateFontDirectory();
     });
     document.getElementById("document-typography-close")?.addEventListener("click", () => this.closeTypographyModal());
     document.getElementById("document-typography-cancel")?.addEventListener("click", () => this.closeTypographyModal());
@@ -173,7 +186,7 @@ export class EditorToolbarController {
           privateLocal: string[];
           documentAll: string[];
           documentScripts: Record<string, string[]>;
-        }>("list_system_fonts"),
+        }>("list_system_fonts", { workspaceRootPath: this.dependencies.getWorkspaceRoot() }),
         invoke<unknown>("list_hunspell_catalog"),
         invoke<unknown>("get_provider_capabilities"),
       ]);
@@ -227,6 +240,110 @@ export class EditorToolbarController {
     ];
   }
 
+  private async workspacePrivateFontDirectories(): Promise<string[]> {
+    const workspaceRootPath = this.dependencies.getWorkspaceRoot();
+    if (!workspaceRootPath) return [];
+    return invoke<string[]>("load_workspace_private_font_directories", { workspaceRootPath });
+  }
+
+  private async populateWorkspacePrivateFontDirectories(): Promise<void> {
+    const section = document.getElementById("toolbar-workspace-private-fonts-section");
+    const container = document.getElementById("toolbar-workspace-private-font-directories");
+    const workspaceRootPath = this.dependencies.getWorkspaceRoot();
+    if (!section || !container) return;
+    section.hidden = !workspaceRootPath;
+    if (!workspaceRootPath) {
+      container.replaceChildren();
+      return;
+    }
+    try {
+      const paths = await this.workspacePrivateFontDirectories();
+      const rows = paths.map(path => {
+        const text = document.createElement("span");
+        text.className = "settings-private-font-path";
+        text.textContent = path;
+        text.title = path;
+
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "settings-secondary-button";
+        remove.textContent = "Remove";
+        remove.setAttribute("aria-label", `Remove workspace private font directory ${path}`);
+        remove.addEventListener("click", () => void this.removeWorkspacePrivateFontDirectory(path));
+
+        const row = document.createElement("div");
+        row.className = "settings-private-font-directory";
+        row.append(text, remove);
+        return row;
+      });
+      if (rows.length === 0) {
+        const empty = document.createElement("small");
+        empty.className = "settings-private-font-empty";
+        empty.textContent = "No workspace private font directory configured.";
+        container.replaceChildren(empty);
+      } else {
+        container.replaceChildren(...rows);
+      }
+    } catch (error) {
+      const empty = document.createElement("small");
+      empty.className = "settings-private-font-empty";
+      empty.textContent = `Unable to load workspace private fonts: ${String(error)}`;
+      container.replaceChildren(empty);
+    }
+  }
+
+  private async addWorkspacePrivateFontDirectory(): Promise<void> {
+    const workspaceRootPath = this.dependencies.getWorkspaceRoot();
+    if (!workspaceRootPath) return;
+    const selected = await open({
+      directory: true,
+      multiple: false,
+      title: "Choose Workspace Private Font Directory"
+    });
+    if (typeof selected !== "string") return;
+    try {
+      const inspection = await invoke<PrivateFontDirectoryInspection>(
+        "inspect_private_font_directory",
+        { path: selected, workspaceRootPath }
+      );
+      if (inspection.collisions.length > 0) {
+        await message(
+          `This directory contains font families that are already available from the system, global private folders, or another workspace folder:\n\n${inspection.collisions.join("\n")}\n\nTypsastra does not add ambiguous font families because the compiler could select a different file between sessions.`,
+          { title: "Ambiguous Font Families", kind: "error" }
+        );
+        return;
+      }
+      const paths = await this.workspacePrivateFontDirectories();
+      await this.saveWorkspacePrivateFontDirectories([...paths, inspection.path]);
+    } catch (error) {
+      await message(String(error), { title: "Unable to Add Workspace Font Directory", kind: "error" });
+    }
+  }
+
+  private async removeWorkspacePrivateFontDirectory(path: string): Promise<void> {
+    const accepted = await confirm(
+      `Remove this private font directory from this workspace?\n\n${path}\n\nThe font files will not be deleted. Documents using these fonts may no longer compile on this computer.`,
+      {
+        title: "Remove Workspace Private Font Directory?",
+        kind: "warning",
+        okLabel: "Remove",
+        cancelLabel: "Cancel"
+      }
+    );
+    if (!accepted) return;
+    const paths = await this.workspacePrivateFontDirectories();
+    await this.saveWorkspacePrivateFontDirectories(paths.filter(candidate => candidate !== path));
+  }
+
+  private async saveWorkspacePrivateFontDirectories(paths: string[]): Promise<void> {
+    const workspaceRootPath = this.dependencies.getWorkspaceRoot();
+    if (!workspaceRootPath) return;
+    await invoke<string[]>("save_workspace_private_font_directories", { workspaceRootPath, paths });
+    await this.dependencies.onWorkspacePrivateFontDirectoriesChanged();
+    document.dispatchEvent(new Event("typsastra:workspace-private-fonts-changed"));
+    await this.populateWorkspacePrivateFontDirectories();
+  }
+
   private supportedFonts(scriptId: string): string[] {
     if (scriptId === "latin") {
       return [...new Set([...this.systemFontFamilies, ...TYPST_INTERNAL_FONT_FAMILIES])]
@@ -248,6 +365,7 @@ export class EditorToolbarController {
     this.typographyReturnFocus = returnFocus;
     this.closeDropdowns();
     this.syncTypographyControls();
+    void this.populateWorkspacePrivateFontDirectories();
     const overlay = this.typographyOverlay();
     if (!overlay) return;
     overlay.classList.remove("hidden");
@@ -577,7 +695,8 @@ export class EditorToolbarController {
       try {
         const families = await invoke<string[]>("font_families_supporting_text", {
           families: this.systemFontFamilies,
-          characters
+          characters,
+          workspaceRootPath: this.dependencies.getWorkspaceRoot()
         });
         if (generation !== this.coverageGeneration || !row.isConnected || this.rowScript(row).value !== scriptId) return;
         this.populateRowFonts(row, scriptId, selected, families);

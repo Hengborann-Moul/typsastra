@@ -2219,6 +2219,38 @@ body.typsastra-resizing #input-container-wrapper::after {
   margin-top: 20px;
 }
 
+.document-typography-workspace-fonts {
+  margin-top: 20px;
+  padding: 12px;
+  border: 1px solid var(--ui-border);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--ui-bg) 92%, var(--ui-hover));
+}
+
+.document-typography-workspace-fonts .settings-private-font-directories {
+  grid-column: auto;
+  margin-top: 12px;
+}
+
+.document-typography-workspace-fonts .settings-private-font-directory .settings-secondary-button {
+  padding: 4px 7px;
+  font-size: 10px;
+}
+
+#toolbar-add-workspace-private-font-directory {
+  min-height: 28px;
+  flex-shrink: 0;
+  padding: 0 10px;
+  font: 600 11px var(--ui-font), sans-serif;
+}
+
+.document-typography-workspace-fonts .settings-private-font-empty {
+  display: block;
+  padding: 2px 0;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
 .document-typography-table-header {
   display: grid;
   grid-template-columns: minmax(105px, 0.8fr) minmax(150px, 1.35fr) 70px minmax(150px, 1.2fr) minmax(95px, 0.7fr) 30px;

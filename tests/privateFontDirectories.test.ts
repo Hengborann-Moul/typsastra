@@ -29,4 +29,16 @@ describe("private local font directories", () => {
     expect(native).toContain("apply_workspace_font_paths(&mut command, &app_handle, &data_dir, parent)");
     expect(native).toContain("compiler_font_directories(&app_handle, &data_dir, Path::new(workspace_root))");
   });
+
+  test("keeps workspace folders local while preserving relative project folders", async () => {
+    const native = await Bun.file(new URL("../src-tauri/src/lib.rs", import.meta.url)).text();
+    const toolbar = await Bun.file(new URL("../src/editor/toolbarController.ts", import.meta.url)).text();
+
+    expect(native).toContain(".join(\"local.json\")");
+    expect(native).toContain("is_safe_relative_workspace_font_path");
+    expect(native).toContain("workspace_font_directory_storage_path");
+    expect(native).toContain("save_workspace_private_font_directories");
+    expect(toolbar).toContain("toolbar-workspace-private-fonts-section");
+    expect(toolbar).toContain('"save_workspace_private_font_directories"');
+  });
 });

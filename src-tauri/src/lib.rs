@@ -72,13 +72,68 @@ fn configured_private_font_directories(app_handle: &tauri::AppHandle) -> Vec<Pat
         .collect()
 }
 
+fn is_safe_relative_workspace_font_path(path: &Path) -> bool {
+    !path.as_os_str().is_empty()
+        && path.is_relative()
+        && path
+            .components()
+            .all(|component| matches!(component, std::path::Component::Normal(_)))
+}
+
+fn workspace_private_font_directories(start: &Path) -> Vec<PathBuf> {
+    for workspace_root in start.ancestors() {
+        let metadata = workspace_root.join(".typsastra");
+        if !metadata.is_dir() {
+            continue;
+        }
+        let Ok(contents) = std::fs::read_to_string(metadata.join("local.json")) else {
+            return Vec::new();
+        };
+        let Ok(local) = serde_json::from_str::<serde_json::Value>(&contents) else {
+            return Vec::new();
+        };
+        return local
+            .pointer("/privateFontDirectories")
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .filter_map(|value| {
+                let candidate = PathBuf::from(value);
+                if candidate.is_absolute() {
+                    Some(candidate)
+                } else if is_safe_relative_workspace_font_path(&candidate) {
+                    Some(workspace_root.join(candidate))
+                } else {
+                    None
+                }
+            })
+            .filter(|path| path.is_dir())
+            .take(32)
+            .collect();
+    }
+    Vec::new()
+}
+
+fn private_font_directories(app_handle: &tauri::AppHandle, start: &Path) -> Vec<PathBuf> {
+    let mut paths = workspace_private_font_directories(start);
+    for private_path in configured_private_font_directories(app_handle) {
+        if !paths.iter().any(|path| path == &private_path) {
+            paths.push(private_path);
+        }
+    }
+    paths
+}
+
 fn compiler_font_directories(
     app_handle: &tauri::AppHandle,
     app_local_data_dir: &Path,
     start: &Path,
 ) -> Vec<PathBuf> {
     let mut paths = workspace_font_directories(app_local_data_dir, start);
-    for private_path in configured_private_font_directories(app_handle) {
+    for private_path in private_font_directories(app_handle, start) {
         if !paths.iter().any(|path| path == &private_path) {
             paths.push(private_path);
         }
@@ -100,9 +155,126 @@ fn apply_workspace_font_paths(
     }
 }
 
+fn workspace_font_directory_storage_path(
+    workspace_root: &Path,
+    path: &Path,
+) -> Result<String, String> {
+    let absolute = path.canonicalize().map_err(|error| {
+        format!(
+            "Unable to resolve private font directory '{}': {error}",
+            path.display()
+        )
+    })?;
+    let root = workspace_root.canonicalize().map_err(|error| {
+        format!(
+            "Unable to resolve workspace '{}': {error}",
+            workspace_root.display()
+        )
+    })?;
+    if let Ok(relative) = absolute.strip_prefix(&root) {
+        if !is_safe_relative_workspace_font_path(relative) {
+            return Err(
+                "Private font directories inside a workspace must use a safe relative path."
+                    .to_string(),
+            );
+        }
+        return Ok(relative.to_string_lossy().replace('\\', "/"));
+    }
+    Ok(absolute.to_string_lossy().to_string())
+}
+
+fn workspace_local_settings_path(workspace_root: &Path) -> PathBuf {
+    workspace_root.join(".typsastra").join("local.json")
+}
+
 #[tauri::command]
-fn list_system_fonts(app_handle: tauri::AppHandle) -> font_store::SystemFontCatalog {
-    font_store::list_system_fonts(&configured_private_font_directories(&app_handle))
+fn load_workspace_private_font_directories(
+    workspace_root_path: String,
+) -> Result<Vec<String>, String> {
+    let workspace_root = Path::new(&workspace_root_path);
+    if !workspace_root.is_dir() {
+        return Err("The workspace root does not exist.".to_string());
+    }
+    let Ok(contents) = std::fs::read_to_string(workspace_local_settings_path(workspace_root))
+    else {
+        return Ok(Vec::new());
+    };
+    let local = serde_json::from_str::<serde_json::Value>(&contents)
+        .map_err(|error| format!("Invalid workspace local settings: {error}"))?;
+    Ok(local
+        .pointer("/privateFontDirectories")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .map(str::to_owned)
+        .collect())
+}
+
+#[tauri::command]
+fn save_workspace_private_font_directories(
+    workspace_root_path: String,
+    paths: Vec<String>,
+) -> Result<Vec<String>, String> {
+    let workspace_root = Path::new(&workspace_root_path);
+    if !workspace_root.is_dir() {
+        return Err("The workspace root does not exist.".to_string());
+    }
+    let mut stored = Vec::new();
+    for path in paths
+        .into_iter()
+        .map(|path| path.trim().to_owned())
+        .filter(|path| !path.is_empty())
+    {
+        let candidate = PathBuf::from(&path);
+        let absolute = if candidate.is_absolute() {
+            candidate
+        } else if is_safe_relative_workspace_font_path(&candidate) {
+            workspace_root.join(candidate)
+        } else {
+            return Err(format!("Private font directory does not exist: {path}"));
+        };
+        if !absolute.is_dir() {
+            return Err(format!("Private font directory does not exist: {path}"));
+        }
+        let value = workspace_font_directory_storage_path(workspace_root, &absolute)?;
+        if !stored
+            .iter()
+            .any(|existing: &String| existing.eq_ignore_ascii_case(&value))
+        {
+            stored.push(value);
+        }
+    }
+    let metadata = workspace_root.join(".typsastra");
+    std::fs::create_dir_all(&metadata)
+        .map_err(|error| format!("Failed to create {}: {error}", metadata.display()))?;
+    write_json_atomically(
+        &workspace_local_settings_path(workspace_root),
+        &serde_json::json!({ "schemaVersion": 1, "privateFontDirectories": stored }),
+    )?;
+    let ignore = metadata.join(".gitignore");
+    let mut ignored = std::fs::read_to_string(&ignore).unwrap_or_default();
+    if !ignored.lines().any(|line| line.trim() == "local.json") {
+        if !ignored.is_empty() && !ignored.ends_with('\n') {
+            ignored.push('\n');
+        }
+        ignored.push_str("local.json\n");
+        std::fs::write(&ignore, ignored)
+            .map_err(|error| format!("Failed to write {}: {error}", ignore.display()))?;
+    }
+    Ok(stored)
+}
+
+#[tauri::command]
+fn list_system_fonts(
+    app_handle: tauri::AppHandle,
+    workspace_root_path: Option<String>,
+) -> font_store::SystemFontCatalog {
+    let private = workspace_root_path
+        .as_deref()
+        .map(|path| private_font_directories(&app_handle, Path::new(path)))
+        .unwrap_or_else(|| configured_private_font_directories(&app_handle));
+    font_store::list_system_fonts(&private)
 }
 
 #[tauri::command]
@@ -110,23 +282,26 @@ fn font_families_supporting_text(
     app_handle: tauri::AppHandle,
     families: Vec<String>,
     characters: String,
+    workspace_root_path: Option<String>,
 ) -> Vec<String> {
-    font_store::font_families_supporting_text(
-        &families,
-        &characters,
-        &configured_private_font_directories(&app_handle),
-    )
+    let private = workspace_root_path
+        .as_deref()
+        .map(|path| private_font_directories(&app_handle, Path::new(path)))
+        .unwrap_or_else(|| configured_private_font_directories(&app_handle));
+    font_store::font_families_supporting_text(&families, &characters, &private)
 }
 
 #[tauri::command]
 fn inspect_private_font_directory(
     app_handle: tauri::AppHandle,
     path: String,
+    workspace_root_path: Option<String>,
 ) -> Result<font_store::PrivateFontDirectoryInspection, String> {
-    font_store::inspect_private_font_directory(
-        Path::new(&path),
-        &configured_private_font_directories(&app_handle),
-    )
+    let private = workspace_root_path
+        .as_deref()
+        .map(|workspace| private_font_directories(&app_handle, Path::new(workspace)))
+        .unwrap_or_else(|| configured_private_font_directories(&app_handle));
+    font_store::inspect_private_font_directory(Path::new(&path), &private)
 }
 
 #[tauri::command]
@@ -155,7 +330,7 @@ async fn prepare_scaled_workspace_font(
         Path::new(&workspace_root_path),
         &family,
         scale,
-        &configured_private_font_directories(&app_handle),
+        &private_font_directories(&app_handle, Path::new(&workspace_root_path)),
     )
 }
 
@@ -540,7 +715,12 @@ fn save_workspace_metadata(
 
 #[cfg(test)]
 mod workspace_metadata_tests {
-    use super::{load_workspace_metadata, save_workspace_metadata};
+    use std::path::Path;
+
+    use super::{
+        load_workspace_metadata, save_workspace_metadata, save_workspace_private_font_directories,
+        workspace_private_font_directories,
+    };
 
     #[test]
     fn persists_project_and_session_metadata_inside_workspace() {
@@ -575,6 +755,39 @@ mod workspace_metadata_tests {
             )
             .unwrap()["mainFile"],
             "moved.typ"
+        );
+    }
+
+    #[test]
+    fn stores_inside_workspace_font_folders_relatively_and_external_folders_absolutely() {
+        let workspace = tempfile::tempdir().unwrap();
+        let local_fonts = workspace.path().join("fonts").join("private");
+        std::fs::create_dir_all(&local_fonts).unwrap();
+        let external = tempfile::tempdir().unwrap();
+        let root = workspace.path().to_string_lossy().to_string();
+
+        let stored = save_workspace_private_font_directories(
+            root,
+            vec![
+                local_fonts.to_string_lossy().to_string(),
+                external.path().to_string_lossy().to_string(),
+            ],
+        )
+        .unwrap();
+
+        assert!(stored.contains(&"fonts/private".to_string()));
+        assert!(stored.iter().any(|path| Path::new(path).is_absolute()));
+        assert_eq!(
+            workspace_private_font_directories(workspace.path()).len(),
+            2
+        );
+        let local_settings =
+            std::fs::read_to_string(workspace.path().join(".typsastra/local.json")).unwrap();
+        assert!(local_settings.contains("fonts/private"));
+        assert!(
+            std::fs::read_to_string(workspace.path().join(".typsastra/.gitignore"))
+                .unwrap()
+                .contains("local.json")
         );
     }
 
@@ -3935,6 +4148,8 @@ pub fn run() {
             list_system_fonts,
             font_families_supporting_text,
             inspect_private_font_directory,
+            load_workspace_private_font_directories,
+            save_workspace_private_font_directories,
             prepare_scaled_workspace_font,
             scaled_workspace_font_update_required,
             scaled_workspace_font_set_update_required,

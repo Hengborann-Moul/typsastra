@@ -81,12 +81,19 @@ this order:
 2. Private local;
 3. System fonts.
 
-Typsastra stores these absolute paths in global machine-local application
-settings. It reads the font files in place and supplies the same directories to
-Tinymist diagnostics, live and draft preview, forward and inverse
-synchronization, scale-variant generation, and PDF export. Changing the list
-restarts the active Tinymist session so every compiler path sees the same
-catalog.
+Global directories belong in **Settings → Editor → Private local font
+directories**. A workspace can additionally configure folders in **Document
+Typography → Workspace private fonts**. Inside-project folders are recorded as
+safe relative paths; folders outside the project are stored as absolute,
+machine-local paths. Workspace paths are saved in the ignored
+`.typsastra/local.json`, so they are not exported, archived, or shared with a
+copy of the project.
+
+Typsastra reads the font files in place and supplies the effective global and
+workspace directories to Tinymist diagnostics, live and draft preview, forward
+and inverse synchronization, scale-variant generation, and PDF export.
+Changing either list restarts the active Tinymist session so every compiler path
+sees the same catalog.
 
 A directory is rejected when it contains no supported fonts or when one of its
 family names is already supplied by the operating system or another private

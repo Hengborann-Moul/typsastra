@@ -1008,6 +1008,11 @@ mod tests {
             r#"{ "schemaVersion": 1, "activeFile": "main.typ" }"#,
         )
         .unwrap();
+        std::fs::write(
+            workspace.path().join(".typsastra").join("local.json"),
+            r#"{ "schemaVersion": 1, "privateFontDirectories": ["fonts"] }"#,
+        )
+        .unwrap();
         std::fs::create_dir_all(workspace.path().join(".typsastra/cache/render")).unwrap();
         std::fs::write(
             workspace
@@ -1179,6 +1184,7 @@ mod tests {
         assert!(names.contains(&"chapters/ខ្មែរ.typ".to_string()));
         assert!(names.contains(&".typsastra/config.json".to_string()));
         assert!(names.contains(&".typsastra/workspace.json".to_string()));
+        assert!(!names.contains(&".typsastra/local.json".to_string()));
         assert!(!names.iter().any(|name| name.contains("cache.txt")));
         assert!(!names.iter().any(
             |name| name.contains(".typsastra/cache/") || name.contains("generated-preview.pdf")
