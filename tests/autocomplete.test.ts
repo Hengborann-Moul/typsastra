@@ -14,6 +14,7 @@ import {
   isDirectMemberCompletion,
   isNamedArgumentCompletion,
   isTypstMemberAccessAt,
+  isTypstFunctionArgumentContextAt,
   isTypstRuleTargetAt,
   languageCompletionRange,
   languageCompletionValidFor,
@@ -21,6 +22,8 @@ import {
   lspCompletionEditOffsets,
   normalizeCallableCompletionSnippet,
   preferContextualArgumentCompletions,
+  preferContextualArgumentValueCompletions,
+  isTypstFunctionArgumentValueContextAt,
   quotedCompletionEditOffsets,
   readTypstCompletionPreferences,
   recordTypstCompletionPreference,
@@ -106,8 +109,8 @@ describe("LSP autocomplete edits", () => {
       figureVariants
     )).toEqual({
       family: "figure",
-      variant: "paren",
-      displayLabel: "figure()"
+      variant: "bare",
+      displayLabel: "figure"
     });
 
     const emph = deduplicateTypstCompletionVariants([
@@ -119,7 +122,24 @@ describe("LSP autocomplete edits", () => {
       "emph.bracket"
     ]);
     expect(emph.map(item => effectiveTypstCompletionSyntax(item, emphVariants).displayLabel))
-      .toEqual(["emph()", "emph[]"]);
+      .toEqual(["emph", "emph[]"]);
+  });
+
+  test("learns global usage for a callable with only a bare visible form", () => {
+    const values = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => { values.set(key, value); }
+    };
+    const variants = typstCompletionVariantsByFamily(["figure", "image"]);
+
+    recordTypstCompletionPreference("figure", storage);
+    recordTypstCompletionPreference("image", storage);
+    recordTypstCompletionPreference("image", storage);
+    const preferences = readTypstCompletionPreferences(storage);
+
+    expect(typstCompletionPreferenceBoost("image", variants, preferences)).toBe(99);
+    expect(typstCompletionPreferenceBoost("figure", variants, preferences)).toBeLessThan(99);
   });
 
   test("learns syntax-form preference globally with recent choices weighted higher", () => {
@@ -205,6 +225,19 @@ describe("LSP autocomplete edits", () => {
 
     expect(preferContextualArgumentCompletions(items).map(item => item.label))
       .toEqual(["alt", "fit", "width"]);
+  });
+
+  test("keeps only Tinymist's contextual argument values after a global fallback", () => {
+    const items = [
+      { label: "figure", kind: 3, sortText: "008", insertText: "figure" },
+      { label: "none", kind: 6, sortText: "013", insertText: "none" },
+      { label: '"contain"', kind: 12, sortText: "000", insertText: '"contain"' },
+      { label: '"cover"', kind: 12, sortText: "001", insertText: '"cover"' },
+      { label: '"stretch"', kind: 12, sortText: "002", insertText: '"stretch"' }
+    ];
+
+    expect(preferContextualArgumentValueCompletions(items).map(item => item.label))
+      .toEqual(['"contain"', '"cover"', '"stretch"']);
   });
 
   test("does not treat colon-bearing global snippets as function arguments", () => {
@@ -422,6 +455,51 @@ describe("LSP autocomplete edits", () => {
     expect(isEmptyTypstFunctionCallAt("#show heading()", 14)).toBe(true);
     expect(isEmptyTypstFunctionCallAt("#page()", 7)).toBe(false);
     expect(isEmptyTypstFunctionCallAt("#page(width: 10cm)", 6)).toBe(false);
+  });
+
+  test("recognizes named-argument slots across function lines", () => {
+    const empty = Text.of(["#figure(", "  ", ")"]);
+    expect(isTypstFunctionArgumentContextAt(empty, empty.line(2).to)).toBe(true);
+
+    const prefix = Text.of(["#figure(", "  capt", ")"]);
+    expect(isTypstFunctionArgumentContextAt(prefix, prefix.line(2).to)).toBe(false);
+    expect(isTypstFunctionArgumentContextAt(prefix, prefix.line(2).to, true)).toBe(true);
+
+    const value = Text.of(["#figure(", "  caption: content", ")"]);
+    expect(isTypstFunctionArgumentContextAt(value, value.line(2).to, true)).toBe(false);
+
+    const tuple = Text.of(["#let value = (", "  ", ")"]);
+    expect(isTypstFunctionArgumentContextAt(tuple, tuple.line(2).to, true)).toBe(false);
+  });
+
+  test("recognizes function argument value slots", () => {
+    const emptyValue = Text.of(["#image(fit: )"]);
+    expect(isTypstFunctionArgumentValueContextAt(emptyValue, 12)).toBe(true);
+
+    const partialValue = Text.of(["#image(fit: \"con\")"]);
+    expect(isTypstFunctionArgumentValueContextAt(partialValue, 16)).toBe(true);
+
+    const argumentName = Text.of(["#image(fit)"]);
+    expect(isTypstFunctionArgumentValueContextAt(argumentName, 10)).toBe(false);
+  });
+
+  test("uses Tab to accept named fields and Enter to continue them on a new line", async () => {
+    const source = await Bun.file(new URL("../src/editor/extensions.ts", import.meta.url)).text();
+    expect(source).toContain('event.key === "Tab" && namedArgumentSelected');
+    expect(source).toContain("queueMicrotask(() => closeCompletion(view))");
+    expect(source).toContain('event.key === "Enter" && namedArgumentSelected');
+    expect(source).toContain("handled = insertNewlineAndIndent(view)");
+    expect(source).toContain("queueMicrotask(() => startCompletion(view))");
+  });
+
+  test("allows explicit field completion after a partial argument name", async () => {
+    const source = await Bun.file(new URL("../src/editor/autocomplete.ts", import.meta.url)).text();
+    expect(source).toMatch(
+      /isTypstFunctionArgumentContextAt\(\s*context\.state\.doc,\s*context\.pos,\s*context\.explicit\s*\)/
+    );
+    const partial = Text.of(["#image(f)"]);
+    expect(isTypstFunctionArgumentContextAt(partial, 8)).toBe(false);
+    expect(isTypstFunctionArgumentContextAt(partial, 8, true)).toBe(true);
   });
 
   test("keeps set and show target completion separate from argument filtering", () => {

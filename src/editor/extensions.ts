@@ -2,7 +2,7 @@ import { Extension, Compartment, EditorSelection, EditorState, StateEffect, Rang
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { lineNumbers, highlightActiveLineGutter, highlightActiveLine, drawSelection, dropCursor, keymap, EditorView, ViewPlugin, Decoration, DecorationSet, ViewUpdate, tooltips } from "@codemirror/view";
-import { defaultKeymap, history, historyKeymap, insertTab } from "@codemirror/commands";
+import { defaultKeymap, history, historyKeymap, insertNewlineAndIndent, insertTab } from "@codemirror/commands";
 import {
   SearchQuery,
   closeSearchPanel,
@@ -29,12 +29,15 @@ import { indentationMarkers } from '@replit/codemirror-indentation-markers';
 
 import * as uiwThemes from "@uiw/codemirror-themes-all";
 import { oneDark } from "@codemirror/theme-one-dark";
-import { createTypstAutocomplete, type ProviderCapabilities } from "./autocomplete";
+import { createTypstAutocomplete, isTypstFunctionArgumentContextAt, type ProviderCapabilities } from "./autocomplete";
 import {
   acceptCompletion,
+  closeCompletion,
   completionKeymap,
+  completionStatus,
   closeBrackets,
   moveCompletionSelection,
+  selectedCompletion,
   startCompletion
 } from "@codemirror/autocomplete";
 import { bracketMatching } from "@codemirror/language";
@@ -85,6 +88,18 @@ export function visibleIndentationMarkers(): Extension {
 const completionNavigationHandler = Prec.highest(EditorView.domEventHandlers({
   keydown(event, view) {
     let handled = false;
+    const completion = completionStatus(view.state) === "active"
+      ? selectedCompletion(view.state)
+      : null;
+    const namedArgumentSelected = Boolean(
+      completion
+      && /(?:^|\s)(?:field|property)(?:\s|$)/.test(completion.type ?? "")
+      && isTypstFunctionArgumentContextAt(
+        view.state.doc,
+        view.state.selection.main.head,
+        true
+      )
+    );
     if (event.ctrlKey && !event.altKey && !event.metaKey && event.code === "Space") {
       // Escape can dismiss the menu while an asynchronous LSP query is still
       // settling. Resetting the selection transaction aborts that stale query
@@ -101,6 +116,12 @@ const completionNavigationHandler = Prec.highest(EditorView.domEventHandlers({
       handled = moveCompletionSelection(true, "page")(view);
     } else if (event.key === "PageUp") {
       handled = moveCompletionSelection(false, "page")(view);
+    } else if (event.key === "Tab" && namedArgumentSelected) {
+      handled = acceptCompletion(view);
+      if (handled) queueMicrotask(() => closeCompletion(view));
+    } else if (event.key === "Enter" && namedArgumentSelected) {
+      handled = insertNewlineAndIndent(view);
+      if (handled) queueMicrotask(() => startCompletion(view));
     } else if (event.key === "Enter") {
       handled = acceptCompletion(view);
     }

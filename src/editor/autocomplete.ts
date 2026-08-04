@@ -92,18 +92,21 @@ function isCallableCompletionItem(item: CompletionSyntaxItem): boolean {
 
 export function effectiveTypstCompletionSyntax(
   item: CompletionSyntaxItem,
-  rawVariantsByFamily: ReadonlyMap<string, ReadonlySet<TypstCompletionSyntaxVariant>>
+  _rawVariantsByFamily: ReadonlyMap<string, ReadonlySet<TypstCompletionSyntaxVariant>>
 ): ReturnType<typeof typstCompletionSyntax> {
   const syntax = typstCompletionSyntax(item.label);
-  const alternatives = rawVariantsByFamily.get(syntax.family);
-  if (syntax.variant !== "bare"
-    || !isCallableCompletionItem(item)
-    || !alternatives
-    || alternatives.size < 2) return syntax;
+  if (syntax.variant === "paren") {
+    return {
+      family: syntax.family,
+      variant: "bare",
+      displayLabel: `${item.label.startsWith("#") ? "#" : ""}${syntax.family}`
+    };
+  }
+  if (syntax.variant !== "bare" || !isCallableCompletionItem(item)) return syntax;
   return {
     family: syntax.family,
-    variant: "paren",
-    displayLabel: `${item.label.startsWith("#") ? "#" : ""}${syntax.family}()`
+    variant: "bare",
+    displayLabel: item.label
   };
 }
 
@@ -183,14 +186,18 @@ export function recordTypstCompletionPreference(
   if (!storage) return;
   const { family, variant } = typstCompletionSyntax(label);
   const preferences = readTypstCompletionPreferences(storage);
-  const previous = preferences[family] ?? {};
-  const next: Partial<Record<TypstCompletionSyntaxVariant, number>> = {};
-  for (const candidate of ["bare", "paren", "bracket"] as const) {
-    const decayed = (previous[candidate] ?? 0) * completionPreferenceDecay;
-    const score = decayed + (candidate === variant ? 1 : 0);
-    if (score >= 0.001) next[candidate] = Number(score.toFixed(4));
+  for (const [candidateFamily, previous] of Object.entries(preferences)) {
+    const next: Partial<Record<TypstCompletionSyntaxVariant, number>> = {};
+    for (const candidate of ["bare", "paren", "bracket"] as const) {
+      const decayed = (previous[candidate] ?? 0) * completionPreferenceDecay;
+      if (decayed >= 0.001) next[candidate] = Number(decayed.toFixed(4));
+    }
+    if (Object.keys(next).length > 0) preferences[candidateFamily] = next;
+    else delete preferences[candidateFamily];
   }
-  preferences[family] = next;
+  const selected = preferences[family] ?? {};
+  selected[variant] = Number(((selected[variant] ?? 0) + 1).toFixed(4));
+  preferences[family] = selected;
   try {
     storage.setItem(completionPreferenceStorageKey, JSON.stringify(preferences));
   } catch {
@@ -205,13 +212,15 @@ export function typstCompletionPreferenceBoost(
 ): number | undefined {
   const { family, variant } = typstCompletionSyntax(label);
   const variants = variantsByFamily.get(family);
-  if (!variants || variants.size < 2) return undefined;
+  if (!variants) return undefined;
   const scores = preferences[family];
   const score = scores?.[variant] ?? 0;
   if (score <= 0) return undefined;
   const maximum = Math.max(
     0,
-    ...[...variants].map(candidate => scores?.[candidate] ?? 0)
+    ...[...variantsByFamily].flatMap(([candidateFamily, candidates]) =>
+      [...candidates].map(candidate => preferences[candidateFamily]?.[candidate] ?? 0)
+    )
   );
   return maximum > 0 ? Math.max(1, Math.min(99, Math.round((score / maximum) * 99))) : undefined;
 }
@@ -290,6 +299,75 @@ export function isEmptyTypstFunctionCallAt(
   const after = lineText.slice(boundedCursor);
   return /#(?:(?:set|show)\s+)?[\p{L}\p{M}\p{N}_.-]+\($/u.test(before)
     && after.startsWith(")");
+}
+
+function innermostTypstFunctionArgumentStart(
+  doc: Text,
+  cursorPosition: number
+): number | null {
+  const text = doc.sliceString(0, Math.max(0, Math.min(cursorPosition, doc.length)));
+  const stack: Array<{ delimiter: string; index: number }> = [];
+  let inString = false;
+  let inLineComment = false;
+  for (let index = 0; index < text.length; index++) {
+    const char = text[index];
+    const next = text[index + 1];
+    if (inLineComment) {
+      if (char === "\n") inLineComment = false;
+      continue;
+    }
+    if (inString) {
+      if (char === '"' && !isEscaped(text, index)) inString = false;
+      continue;
+    }
+    if (char === "/" && next === "/") {
+      inLineComment = true;
+      index++;
+      continue;
+    }
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+    if (char === "(" || char === "[" || char === "{") {
+      stack.push({ delimiter: char, index });
+      continue;
+    }
+    const expected = char === ")" ? "(" : char === "]" ? "[" : char === "}" ? "{" : null;
+    if (expected && stack[stack.length - 1]?.delimiter === expected) stack.pop();
+  }
+  const open = stack[stack.length - 1];
+  if (!open || open.delimiter !== "(") return null;
+  const before = text.slice(0, open.index).trimEnd();
+  return /(?:#(?:set|show)\s+|#)?[\p{L}_][\p{L}\p{M}\p{N}_.-]*$/u.test(before)
+    ? open.index
+    : null;
+}
+
+export function isTypstFunctionArgumentContextAt(
+  doc: Text,
+  cursorPosition: number,
+  allowIdentifier = false
+): boolean {
+  const argumentStart = innermostTypstFunctionArgumentStart(doc, cursorPosition);
+  if (argumentStart === null) return false;
+  const segment = doc.sliceString(argumentStart + 1, cursorPosition);
+  const currentSlot = segment.slice(Math.max(segment.lastIndexOf(","), segment.lastIndexOf("\n")) + 1);
+  return allowIdentifier
+    ? /^\s*[\p{L}_][\p{L}\p{M}\p{N}_-]*\s*$/u.test(currentSlot)
+      || /^\s*$/u.test(currentSlot)
+    : /^\s*$/u.test(currentSlot);
+}
+
+export function isTypstFunctionArgumentValueContextAt(
+  doc: Text,
+  cursorPosition: number
+): boolean {
+  const argumentStart = innermostTypstFunctionArgumentStart(doc, cursorPosition);
+  if (argumentStart === null) return false;
+  const segment = doc.sliceString(argumentStart + 1, cursorPosition);
+  const currentSlot = segment.slice(Math.max(segment.lastIndexOf(","), segment.lastIndexOf("\n")) + 1);
+  return /^\s*[\p{L}_][\p{L}\p{M}\p{N}_-]*\s*:\s*[^,]*$/u.test(currentSlot);
 }
 
 export function isTypstRuleTargetAt(
@@ -394,6 +472,14 @@ export function completedEmptyCallCaret(
 export function preferContextualArgumentCompletions(
   items: LspCompletionItem[]
 ): LspCompletionItem[] {
+  const contextual = contextualCompletionSuffix(items);
+  return contextual.length < items.length
+    && contextual.every(isNamedArgumentCompletion)
+    ? contextual
+    : items;
+}
+
+function contextualCompletionSuffix(items: LspCompletionItem[]): LspCompletionItem[] {
   let contextualStart = -1;
   for (let index = 1; index < items.length; index++) {
     const previous = items[index - 1].sortText;
@@ -402,11 +488,13 @@ export function preferContextualArgumentCompletions(
       contextualStart = index;
     }
   }
-  if (contextualStart <= 0) return items;
-  const contextual = items.slice(contextualStart);
-  return contextual.length > 0 && contextual.every(isNamedArgumentCompletion)
-    ? contextual
-    : items;
+  return contextualStart > 0 ? items.slice(contextualStart) : items;
+}
+
+export function preferContextualArgumentValueCompletions(
+  items: LspCompletionItem[]
+): LspCompletionItem[] {
+  return contextualCompletionSuffix(items);
 }
 
 function textEditFromDefault(range: LspEditRange | undefined, newText: string): LspTextEdit | undefined {
@@ -794,11 +882,21 @@ export function createTypstAutocomplete(
           activeLine.text,
           context.pos - activeLine.from
         );
+        const isFunctionArgumentStart = isEmptyFunctionCall
+          || isTypstFunctionArgumentContextAt(
+            context.state.doc,
+            context.pos,
+            context.explicit
+          );
+        const isFunctionArgumentValue = isTypstFunctionArgumentValueContextAt(
+          context.state.doc,
+          context.pos
+        );
         const isRuleTarget = isTypstRuleTargetAt(
           activeLine.text,
           context.pos - activeLine.from
         );
-        const fallbackCompletions = () => isEmptyFunctionCall || isMemberAccess
+        const fallbackCompletions = () => isFunctionArgumentStart || isMemberAccess
           ? null
           : typstCompletions(context);
 
@@ -840,11 +938,13 @@ export function createTypstAutocomplete(
           const memberItems = isMemberAccess
             ? responseItems.filter(isDirectMemberCompletion)
             : responseItems;
-          const contextualItems = isEmptyFunctionCall
+          const contextualItems = isFunctionArgumentStart
             ? memberItems.filter(isNamedArgumentCompletion)
-            : isRuleTarget
-              ? memberItems
-              : preferContextualArgumentCompletions(memberItems);
+            : isFunctionArgumentValue
+              ? preferContextualArgumentValueCompletions(memberItems)
+              : isRuleTarget
+                ? memberItems
+                : preferContextualArgumentCompletions(memberItems);
           const rawVariantsByFamily = typstCompletionVariantsByFamily(
             contextualItems.map(item => item.label)
           );
@@ -868,12 +968,16 @@ export function createTypstAutocomplete(
             variants.add(syntax.variant);
             variantsByFamily.set(syntax.family, variants);
           }
-          const completionPreferences = readTypstCompletionPreferences();
+          const completionPreferences = isFunctionArgumentValue
+            ? {}
+            : readTypstCompletionPreferences();
+          const allowsAdaptivePreference = !isFunctionArgumentStart
+            && !isFunctionArgumentValue
+            && !isMemberAccess
+            && fontValueFrom === null;
           
           const options: Completion[] = items.map(item => {
-            const originalLabel = item.label;
             const syntax = effectiveTypstCompletionSyntax(item, rawVariantsByFamily);
-            const hasExplicitSyntaxVariants = (variantsByFamily.get(syntax.family)?.size ?? 0) > 1;
             const preferenceLabel = syntax.variant === "bare"
               ? syntax.family
               : `${syntax.family}.${syntax.variant}`;
@@ -900,20 +1004,9 @@ export function createTypstAutocomplete(
               isHashPrefix,
               Boolean(textEdit) && !isHashPrefix
             );
-            if (syntax.variant === "bare" && hasExplicitSyntaxVariants) {
-              apply = applyTextForHashPrefix(
-                originalLabel.replace(/^#/, ""),
-                type,
-                isHashPrefix,
-                false
-              );
-            }
-            
             const callableSnippet = normalizeCallableCompletionSnippet(
               apply,
-              syntax.variant === "bare" && hasExplicitSyntaxVariants
-                ? undefined
-                : item.kind,
+              item.kind,
               item.detail ?? item.labelDetails?.description
             );
             if (insertTextFormat === 2 || callableSnippet.opensArguments) {
@@ -950,7 +1043,7 @@ export function createTypstAutocomplete(
                     preferLocalTokenRange
                   );
                   snippetApply(view, selected, edit.from, edit.to);
-                  if (hasExplicitSyntaxVariants) {
+                  if (allowsAdaptivePreference) {
                     recordTypstCompletionPreference(preferenceLabel);
                   }
                   if (callableSnippet.opensArguments) {
@@ -1008,7 +1101,7 @@ export function createTypstAutocomplete(
                   selection: { anchor: replacement.from + apply.length },
                   userEvent: "input.complete"
                 });
-                if (hasExplicitSyntaxVariants) {
+                if (allowsAdaptivePreference) {
                   recordTypstCompletionPreference(preferenceLabel);
                 }
               }
