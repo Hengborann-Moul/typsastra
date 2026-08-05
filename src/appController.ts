@@ -78,6 +78,7 @@ import { EditorToolbarController } from "./editor/toolbarController";
 import { ContextMenuController } from "./components/contextMenuController";
 import { ToolchainController, type ToolchainStatus } from "./toolchain/toolchainController";
 import { DocumentOutlineController, type DocumentHeading } from "./outline/documentOutline";
+import { WindowStateController } from "./window/windowStateController";
 import {
   parseTypographyBlock,
   parseDocumentScripts,
@@ -836,6 +837,7 @@ export class TypsastraWorkspaceController {
   private readonly systemResumeMonitor = new SystemResumeMonitor(suspendedMs => {
     this.recoverAfterSystemResume(suspendedMs);
   });
+  private readonly windowStateController = new WindowStateController(getCurrentWindow());
   private lspStatus = document.getElementById("lsp-status")!;
   private lspStatusDot = this.lspStatus.querySelector(".status-dot") as HTMLElement;
   private lspStatusText = this.lspStatus.querySelector(".status-text") as HTMLElement;
@@ -873,6 +875,13 @@ export class TypsastraWorkspaceController {
     document.body.classList.remove("preview-only-mode");
 
     await this.timeStartup("load settings", () => this.settingsController.load());
+    await this.timeStartup("restore main window", async () => {
+      try {
+        await this.windowStateController.restore();
+      } catch (error) {
+        console.warn("Failed to restore the main window state:", error);
+      }
+    });
     for (const entry of this.settingsController.getTimings()) this.recordStartupTimingEntry(entry);
     this.timeStartupSync("initialize recent projects", () => this.recentProjectsController.initialize());
     this.timeStartupSync("initialize CodeMirror", () => this.initCodeMirror());
@@ -9504,6 +9513,9 @@ export class TypsastraWorkspaceController {
       const maximized = await appWindow.isMaximized();
       updateMaximizeIcon(maximized);
     });
+    void this.windowStateController.start().catch(error => {
+      console.warn("Failed to monitor the main window state:", error);
+    });
     void appWindow.isMaximized().then(maximized => updateMaximizeIcon(maximized));
     document.getElementById("titlebar-close")?.addEventListener("click", () => appWindow.close());
 
@@ -9527,6 +9539,7 @@ export class TypsastraWorkspaceController {
       }
       if (proceed) proceed = await this.appUpdateController.prepareForClose();
       if (proceed) {
+        await this.windowStateController.persistNow();
         try {
           const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
           const previewWin = await WebviewWindow.getByLabel("preview");
