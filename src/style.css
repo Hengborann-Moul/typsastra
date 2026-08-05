@@ -340,8 +340,28 @@ html {
 }
 
 .dropdown-submenu:hover > .dropdown-submenu-menu,
-.dropdown-submenu:focus-within > .dropdown-submenu-menu {
+.dropdown-submenu:focus-within > .dropdown-submenu-menu,
+.dropdown-submenu-menu.submenu-open {
   display: block;
+}
+
+.dropdown-submenu-menu-left {
+  right: calc(100% - 2px);
+  left: auto;
+}
+
+.context-spelling-submenu-menu {
+  min-width: 280px;
+  max-width: min(440px, calc(100vw - 24px));
+  max-height: min(520px, calc(100vh - 24px));
+  overflow-y: auto;
+}
+
+.context-spelling-submenu-menu .dropdown-item:focus-visible,
+.context-spelling-submenu-trigger:focus-visible {
+  background: var(--ui-hover);
+  outline: 1px solid var(--ui-accent-color);
+  outline-offset: -1px;
 }
 
 button.dropdown-item {
@@ -1254,6 +1274,96 @@ body.typsastra-resizing #input-container-wrapper::after {
 .recent-projects-dialog {
   width: min(720px, 100%);
   height: min(620px, calc(100vh - 48px));
+}
+
+.surround-with-dialog {
+  width: min(560px, 100%);
+  height: min(560px, calc(100vh - 48px));
+}
+
+.surround-with-content {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 18px 18px;
+}
+
+.surround-with-search-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--ui-header-text);
+  font-size: 11px;
+}
+
+.surround-with-search-wrap input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 9px 11px;
+  color: var(--ui-text);
+  background: var(--ui-bg);
+  border: 1px solid var(--ui-border);
+  border-radius: 6px;
+  outline: none;
+  font: 13px var(--font-family-sans);
+}
+
+.surround-with-search-wrap input:focus {
+  border-color: var(--ui-accent-color);
+  box-shadow: 0 0 0 1px var(--ui-accent-color);
+}
+
+.surround-with-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  border: 1px solid var(--ui-border);
+  border-radius: 7px;
+}
+
+.surround-with-list-item {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(150px, 0.8fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 14px;
+  padding: 10px 12px;
+  color: var(--ui-text);
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--ui-border);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.surround-with-list-item:last-child { border-bottom: 0; }
+.surround-with-list-item:hover,
+.surround-with-list-item.keyboard-selected,
+.surround-with-list-item:focus-visible {
+  background: var(--ui-hover);
+  outline: none;
+}
+
+.surround-with-list-item code {
+  color: var(--ui-text);
+  font: 13px var(--font-family-mono);
+}
+
+.surround-with-list-item span {
+  overflow: hidden;
+  color: var(--ui-header-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.surround-with-empty {
+  margin: 0;
+  padding: 18px;
+  color: var(--ui-header-text);
+  text-align: center;
 }
 
 .recent-projects-dialog .settings-header h2 {

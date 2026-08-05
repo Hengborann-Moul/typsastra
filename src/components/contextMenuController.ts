@@ -8,6 +8,11 @@ import { closeHoverTooltips, type EditorView } from "@codemirror/view";
 import { selectAll, toggleLineComment } from "@codemirror/commands";
 import type { WorkspaceExplorer } from "./explorer";
 import type { SpellingIssue } from "../editor/spellcheck";
+import {
+  filterSurroundWithOptions,
+  surroundEditorRange,
+  type SurroundWithOption,
+} from "../editor/surroundWith";
 
 export type ContextMenuDependencies = {
   getWorkspaceRoot: () => string | null;
@@ -87,12 +92,31 @@ export class ContextMenuController {
   private spellingDictionaryWords: string[] = [];
   private spellingSuggestions: string[] = [];
   private contextMenuOpenedFromExplorer = false;
+  private surroundSelection: { from: number; to: number } | null = null;
+  private surroundSelectionIndex = 0;
+  private readonly surroundOverlay = document.getElementById("surround-with-overlay");
+  private readonly surroundSearch = document.getElementById("surround-with-search") as HTMLInputElement | null;
+  private readonly surroundList = document.getElementById("surround-with-list");
 
   constructor(private readonly dependencies: ContextMenuDependencies) {}
 
   public initialize(): void {
     document.addEventListener("click", () => this.hide());
     this.menu.addEventListener("click", event => {
+      const submenuTrigger = (event.target as HTMLElement)
+        .closest<HTMLElement>(".context-spelling-submenu-trigger");
+      if (submenuTrigger) {
+        event.preventDefault();
+        event.stopPropagation();
+        const submenu = submenuTrigger.nextElementSibling as HTMLElement | null;
+        const expanded = !submenu?.classList.contains("submenu-open");
+        submenu?.classList.toggle("submenu-open", expanded);
+        submenuTrigger.setAttribute("aria-expanded", String(expanded));
+        if (expanded) {
+          submenu?.querySelector<HTMLElement>(".dropdown-item")?.focus();
+        }
+        return;
+      }
       const action = (event.target as HTMLElement).closest<HTMLElement>(".dropdown-item")?.id;
       if (action) {
         const restoreExplorerFocus = this.contextMenuOpenedFromExplorer;
@@ -102,6 +126,22 @@ export class ContextMenuController {
       }
     });
     document.addEventListener("contextmenu", event => void this.showForTarget(event));
+    this.surroundSearch?.addEventListener("input", () => {
+      this.surroundSelectionIndex = 0;
+      this.renderSurroundWithOptions();
+    });
+    this.surroundSearch?.addEventListener("keydown", event => this.handleSurroundWithKeydown(event));
+    document.getElementById("surround-with-close")?.addEventListener("click", () => this.closeSurroundWith());
+    this.surroundOverlay?.addEventListener("click", event => {
+      if (event.target === this.surroundOverlay) this.closeSurroundWith();
+    });
+    document.addEventListener("keydown", event => {
+      if (event.key === "Escape" && !this.surroundOverlay?.classList.contains("hidden")) {
+        event.preventDefault();
+        this.closeSurroundWith();
+      }
+    });
+    this.menu.addEventListener("keydown", event => this.handleContextMenuKeydown(event));
     document.getElementById("preview-menu-btn")?.addEventListener("click", event => {
       event.stopPropagation();
       if (this.menu.style.display === "block" && this.menu.dataset.menuKind === "preview") {
@@ -200,6 +240,7 @@ export class ContextMenuController {
           this.dependencies.revealCursorInPreview();
         }
         return;
+      case "ctx-editor-surround-with": this.openSurroundWith(); return;
       case "ctx-spelling-add":
         if (this.spellingDictionaryWords.length > 0) {
           this.dependencies.addSpellingToDictionary(this.spellingDictionaryWords);
@@ -525,6 +566,7 @@ export class ContextMenuController {
       editor.dispatch({ effects: closeHoverTooltips });
       this.spellingIssue = this.dependencies.getSpellingIssue(event.clientX, event.clientY, target);
       const selection = editor.state.selection.main;
+      this.surroundSelection = selection.empty ? null : { from: selection.from, to: selection.to };
       const selectedIssues = selection.empty
         ? []
         : this.dependencies.getSpellingIssuesInRange(selection.from, selection.to);
@@ -567,11 +609,51 @@ export class ContextMenuController {
     if (alignRight) x -= rect.width;
     this.menu.style.left = `${Math.max(0, Math.min(x, window.innerWidth - rect.width))}px`;
     this.menu.style.top = `${Math.max(0, Math.min(y, window.innerHeight - rect.height))}px`;
+    const spellingSubmenu = this.menu.querySelector<HTMLElement>(".context-spelling-submenu-menu");
+    spellingSubmenu?.classList.toggle(
+      "dropdown-submenu-menu-left",
+      x + rect.width + 360 > window.innerWidth,
+    );
   }
 
   private hide(): void {
     this.menu.style.display = "none";
+    this.menu.querySelectorAll<HTMLElement>(".submenu-open")
+      .forEach(submenu => submenu.classList.remove("submenu-open"));
     delete this.menu.dataset.menuKind;
+  }
+
+  private handleContextMenuKeydown(event: KeyboardEvent): void {
+    const target = event.target as HTMLElement;
+    const trigger = target.closest<HTMLElement>(".context-spelling-submenu-trigger");
+    const submenu = target.closest<HTMLElement>(".context-spelling-submenu-menu");
+    if (trigger && ["ArrowRight", "Enter", " "].includes(event.key)) {
+      event.preventDefault();
+      event.stopPropagation();
+      const menu = trigger.nextElementSibling as HTMLElement | null;
+      menu?.classList.add("submenu-open");
+      trigger.setAttribute("aria-expanded", "true");
+      menu?.querySelector<HTMLElement>(".dropdown-item")?.focus();
+      return;
+    }
+    if (!submenu) return;
+    const items = [...submenu.querySelectorAll<HTMLElement>(".dropdown-item:not(.dropdown-item-disabled)")];
+    const currentIndex = items.indexOf(target.closest<HTMLElement>(".dropdown-item")!);
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      if (!items.length) return;
+      event.preventDefault();
+      const delta = event.key === "ArrowDown" ? 1 : -1;
+      items[(Math.max(0, currentIndex) + delta + items.length) % items.length].focus();
+      return;
+    }
+    if (event.key === "ArrowLeft" || event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      submenu.classList.remove("submenu-open");
+      const owner = submenu.previousElementSibling as HTMLElement | null;
+      owner?.setAttribute("aria-expanded", "false");
+      owner?.focus();
+    }
   }
 
   private textControlFor(target: HTMLElement): HTMLInputElement | HTMLTextAreaElement | null {
@@ -617,16 +699,140 @@ export class ContextMenuController {
       : this.spellingDictionaryWords.length > 1
         ? `<div class="dropdown-item" id="ctx-spelling-add">Add ${this.spellingDictionaryWords.length} misspelled words to user dictionary</div>`
         : "";
-    const issueActions = this.spellingIssue
-      ? `${this.spellingSuggestions.map((suggestion, index) => `<div class="dropdown-item spelling-suggestion" id="ctx-spelling-${index}">${this.escapeHtml(suggestion)}</div>`).join("")}${dictionary}<div class="dropdown-item" id="ctx-spelling-add-global">Add to global terminology</div><div class="dropdown-item" id="ctx-spelling-add-project">Add to project terminology</div>${this.spellingIssue.languageFamily ? `<div class="dropdown-item" id="ctx-spelling-add-language">Add to ${this.escapeHtml(this.spellingIssue.languageFamily)} dictionary</div>` : ""}<div class="dropdown-item" id="ctx-spelling-ignore">${this.spellingIssue.ignored ? "Stop ignoring" : this.spellingIssue.languageFamily ? `Ignore in ${this.escapeHtml(this.spellingIssue.languageFamily)}` : "Ignore globally"} “${this.escapeHtml(this.spellingIssue.sourceText)}”</div>`
+    const suggestionActions = this.spellingIssue
+      ? this.spellingSuggestions.map((suggestion, index) => `<div class="dropdown-item spelling-suggestion" id="ctx-spelling-${index}">${this.escapeHtml(suggestion)}</div>`).join("")
+      : "";
+    const dictionaryActions = this.spellingIssue
+      ? `${dictionary}${this.spellingIssue.languageFamily ? `<div class="dropdown-item" id="ctx-spelling-add-language">Add to ${this.escapeHtml(this.spellingIssue.languageFamily)} dictionary</div>` : ""}`
       : dictionary;
-    const spelling = issueActions ? `${issueActions}<div class="dropdown-separator"></div>` : "";
+    const terminologyActions = this.spellingIssue
+      ? '<div class="dropdown-item" id="ctx-spelling-add-global">Add to global terminology</div><div class="dropdown-item" id="ctx-spelling-add-project">Add to project terminology</div>'
+      : "";
+    const ignoreAction = this.spellingIssue
+      ? `<div class="dropdown-item" id="ctx-spelling-ignore">${this.spellingIssue.ignored ? "Stop ignoring" : this.spellingIssue.languageFamily ? `Ignore in ${this.escapeHtml(this.spellingIssue.languageFamily)}` : "Ignore globally"} “${this.escapeHtml(this.spellingIssue.sourceText)}”</div>`
+      : "";
+    const issueActions = [suggestionActions, dictionaryActions, terminologyActions, ignoreAction]
+      .filter(Boolean)
+      .join('<div class="dropdown-separator" role="separator"></div>');
+    const spelling = issueActions
+      ? `<div class="dropdown-submenu context-spelling-submenu">
+          <div class="dropdown-item dropdown-submenu-trigger context-spelling-submenu-trigger" tabindex="0" role="menuitem" aria-haspopup="true" aria-expanded="false">
+            Spelling
+            <span class="dropdown-submenu-arrow" aria-hidden="true">›</span>
+          </div>
+          <div class="dropdown-submenu-menu context-spelling-submenu-menu" role="menu">
+            ${issueActions.replace(/class="dropdown-item/g, 'tabindex="-1" role="menuitem" class="dropdown-item')}
+          </div>
+        </div><div class="dropdown-separator"></div>`
+      : "";
     const forwardSyncAvailable = this.dependencies.canRevealCursorInPreview();
     const forwardSyncShortcut = navigator.userAgent.toLowerCase().includes("mac")
       ? "Option+Enter"
       : "Alt+Enter";
     const forwardSync = `<div class="dropdown-item${forwardSyncAvailable ? "" : " dropdown-item-disabled"}" id="ctx-editor-forward-sync" aria-disabled="${String(!forwardSyncAvailable)}"${forwardSyncAvailable ? "" : ' title="Available only for textual Typst content when the compiled preview is ready"'}>Reveal Cursor in Preview <span class="hotkey">${forwardSyncShortcut}</span></div><div class="dropdown-separator"></div>`;
-    return `${spelling}${forwardSync}<div class="dropdown-item" id="ctx-copy-text">Copy <span class="hotkey">Ctrl+C</span></div><div class="dropdown-item" id="ctx-paste-text">Paste <span class="hotkey">Ctrl+V</span></div><div class="dropdown-item" id="ctx-cut-text">Cut <span class="hotkey">Ctrl+X</span></div><div class="dropdown-separator"></div><div class="dropdown-item" id="ctx-editor-toggle-comment">Toggle Line Comment</div><div class="dropdown-item" id="ctx-editor-format">Format Document</div><div class="dropdown-separator"></div><div class="dropdown-item" id="ctx-undo">Undo</div><div class="dropdown-item" id="ctx-redo">Redo</div><div class="dropdown-separator"></div><div class="dropdown-item" id="ctx-editor-select-all">Select All</div>`;
+    const surroundWith = this.surroundSelection && this.dependencies.getActiveFile()?.toLowerCase().endsWith(".typ")
+      ? '<div class="dropdown-item" id="ctx-editor-surround-with">Surround With…</div><div class="dropdown-separator"></div>'
+      : "";
+    return `${spelling}${forwardSync}${surroundWith}<div class="dropdown-item" id="ctx-copy-text">Copy <span class="hotkey">Ctrl+C</span></div><div class="dropdown-item" id="ctx-paste-text">Paste <span class="hotkey">Ctrl+V</span></div><div class="dropdown-item" id="ctx-cut-text">Cut <span class="hotkey">Ctrl+X</span></div><div class="dropdown-separator"></div><div class="dropdown-item" id="ctx-editor-toggle-comment">Toggle Line Comment</div><div class="dropdown-item" id="ctx-editor-format">Format Document</div><div class="dropdown-separator"></div><div class="dropdown-item" id="ctx-undo">Undo</div><div class="dropdown-item" id="ctx-redo">Redo</div><div class="dropdown-separator"></div><div class="dropdown-item" id="ctx-editor-select-all">Select All</div>`;
+  }
+
+  private openSurroundWith(): void {
+    if (!this.surroundOverlay || !this.surroundSelection) return;
+    const editor = this.dependencies.getEditor();
+    const { from, to } = this.surroundSelection;
+    if (to <= from || to > editor.state.doc.length) return;
+    if (this.surroundSearch) this.surroundSearch.value = "";
+    this.surroundSelectionIndex = 0;
+    this.renderSurroundWithOptions();
+    this.surroundOverlay.classList.remove("hidden");
+    this.surroundSearch?.setAttribute("aria-expanded", "true");
+    window.requestAnimationFrame(() => this.surroundSearch?.focus());
+  }
+
+  private closeSurroundWith(restoreEditorFocus = true): void {
+    this.surroundOverlay?.classList.add("hidden");
+    this.surroundSearch?.setAttribute("aria-expanded", "false");
+    if (restoreEditorFocus) this.dependencies.getEditor().focus();
+  }
+
+  private renderSurroundWithOptions(): void {
+    if (!this.surroundList) return;
+    const options = filterSurroundWithOptions(this.surroundSearch?.value ?? "");
+    this.surroundList.replaceChildren();
+    if (!options.length) {
+      const empty = document.createElement("p");
+      empty.className = "surround-with-empty";
+      empty.textContent = "No bracket-capable functions match your search.";
+      this.surroundList.appendChild(empty);
+      this.surroundSearch?.removeAttribute("aria-activedescendant");
+      return;
+    }
+    options.forEach((option, index) => {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "surround-with-list-item";
+      item.id = `surround-with-result-${index}`;
+      item.setAttribute("role", "option");
+      item.setAttribute("aria-selected", "false");
+      const form = document.createElement("code");
+      form.textContent = option.label;
+      const description = document.createElement("span");
+      description.textContent = option.description;
+      item.append(form, description);
+      item.addEventListener("click", () => this.applySurroundWith(option));
+      item.addEventListener("pointermove", () => this.selectSurroundWithResult(index, false));
+      item.addEventListener("focus", () => this.selectSurroundWithResult(index, false));
+      this.surroundList?.appendChild(item);
+    });
+    this.selectSurroundWithResult(Math.min(this.surroundSelectionIndex, options.length - 1), false);
+  }
+
+  private handleSurroundWithKeydown(event: KeyboardEvent): void {
+    const items = this.surroundResultItems();
+    if (event.key === "Enter") {
+      const selected = items[this.surroundSelectionIndex];
+      if (!selected) return;
+      event.preventDefault();
+      selected.click();
+      return;
+    }
+    if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+    if (!items.length) return;
+    event.preventDefault();
+    const delta = event.key === "ArrowDown" ? 1 : -1;
+    this.selectSurroundWithResult(
+      (this.surroundSelectionIndex + delta + items.length) % items.length,
+      true,
+    );
+  }
+
+  private surroundResultItems(): HTMLButtonElement[] {
+    return this.surroundList
+      ? [...this.surroundList.querySelectorAll<HTMLButtonElement>(".surround-with-list-item")]
+      : [];
+  }
+
+  private selectSurroundWithResult(index: number, scrollIntoView: boolean): void {
+    const items = this.surroundResultItems();
+    if (!items.length) return;
+    this.surroundSelectionIndex = Math.max(0, Math.min(index, items.length - 1));
+    items.forEach((item, itemIndex) => {
+      const selected = itemIndex === this.surroundSelectionIndex;
+      item.classList.toggle("keyboard-selected", selected);
+      item.setAttribute("aria-selected", String(selected));
+    });
+    const selected = items[this.surroundSelectionIndex];
+    this.surroundSearch?.setAttribute("aria-activedescendant", selected.id);
+    if (scrollIntoView) selected.scrollIntoView({ block: "nearest" });
+  }
+
+  private applySurroundWith(option: SurroundWithOption): void {
+    const selection = this.surroundSelection;
+    this.closeSurroundWith(false);
+    if (selection) {
+      surroundEditorRange(this.dependencies.getEditor(), selection.from, selection.to, option);
+    }
+    this.surroundSelection = null;
   }
 
   private escapeHtml(value: string): string {
