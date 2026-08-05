@@ -90,13 +90,21 @@ export const bracketColorizer = ViewPlugin.fromClass(class {
   update(update: ViewUpdate): void {
     if (update.transactions.some(transaction => transaction.effects.some(effect => effect.is(refreshBracketColors)))) {
       const result = visibleBracketDecorations(update.view);
-      this.decorations = result.decorations;
-      if (!result.syntaxReady) this.scheduleParserRetry();
-      else this.parseRetries = 0;
+      // A document edit temporarily leaves Lezer with a partial syntax tree.
+      // Publishing decorations from that tree makes bracket colors disappear
+      // for a frame and then reappear on the parser retry. Retain the mapped
+      // stable set until a complete replacement is available.
+      if (result.syntaxReady) {
+        this.decorations = result.decorations;
+        this.parseRetries = 0;
+      } else {
+        this.scheduleParserRetry();
+      }
       return;
     }
 
     if (update.docChanged) {
+      this.decorations = this.decorations.map(update.changes);
       this.parseRetries = 0;
       this.scheduleRefresh(16);
     } else if (update.viewportChanged) {

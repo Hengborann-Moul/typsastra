@@ -398,6 +398,20 @@ describe("LSP autocomplete edits", () => {
     expect(applyTextForHashPrefix("set", "keyword", true, true)).toBe("set");
   });
 
+  test("replaces existing quotes for a quoted snippet value", () => {
+    const inside = Text.of(['#set text(lang: "")']);
+    expect(quotedCompletionEditOffsets(inside, inside.length - 2, '${1:"km"}'))
+      .toEqual({ from: 16, to: 18 });
+    expect(quotedCompletionEditOffsets(inside, inside.length - 2, '${1:\\"km\\"}'))
+      .toEqual({ from: 16, to: 18 });
+    expect(quotedCompletionEditOffsets(inside, inside.length - 2, '\\"km\\"'))
+      .toEqual({ from: 16, to: 18 });
+
+    const after = Text.of(['#set text(lang: "")']);
+    expect(quotedCompletionEditOffsets(after, after.length - 1, '${1:"km"}'))
+      .toEqual({ from: 16, to: 18 });
+  });
+
   test("replaces the complete local hash token instead of appending to it", () => {
     const doc = Text.of(["#pag"]);
     const replacement = contextualCompletionEditOffsets(

@@ -635,8 +635,16 @@ export function quotedCompletionEditOffsets(
     closing = quotes[quotes.length - 1];
   }
   if (opening < 0) return null;
-  const replacesOpeningQuote = insertion.startsWith('"');
-  const replacesClosingQuote = insertion.endsWith('"');
+  const visibleInsertion = insertion
+    .replace(/\$\{\d+:([^}]*)\}/g, "$1")
+    .replace(/\$\d+/g, "")
+    // Tinymist can escape quotes in snippet values even though CodeMirror's
+    // snippet expansion later materializes them as ordinary quotes. Inspect
+    // the text the user will actually see when deciding whether the existing
+    // source quote pair must also be replaced.
+    .replace(/\\"/g, '"');
+  const replacesOpeningQuote = visibleInsertion.startsWith('"');
+  const replacesClosingQuote = visibleInsertion.endsWith('"');
   return {
     from: line.from + opening + (replacesOpeningQuote ? 0 : 1),
     to: closing >= 0
