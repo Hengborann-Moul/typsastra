@@ -26,6 +26,7 @@ import {
   preferContextualArgumentCompletions,
   preferContextualArgumentValueCompletions,
   isTypstFunctionArgumentValueContextAt,
+  quotedTypstArgumentValueStart,
   quotedCompletionEditOffsets,
   readTypstCompletionPreferences,
   recordTypstCompletionPreference,
@@ -569,6 +570,34 @@ describe("LSP autocomplete edits", () => {
 
     const argumentName = Text.of(["#image(fit)"]);
     expect(isTypstFunctionArgumentValueContextAt(argumentName, 10)).toBe(false);
+  });
+
+  test("queries quoted argument values from their opening quote", () => {
+    const empty = Text.of(['#image(fit: "")']);
+    expect(quotedTypstArgumentValueStart(empty, empty.length - 2)).toBe(12);
+
+    const partial = Text.of(['#image(fit: "co")']);
+    expect(quotedTypstArgumentValueStart(partial, partial.length - 2)).toBe(12);
+
+    const prose = Text.of(['#image("asset.png")']);
+    expect(quotedTypstArgumentValueStart(prose, prose.length - 2)).toBeNull();
+  });
+
+  test("prefers the complete quoted value over an insertion-only LSP edit", () => {
+    const doc = Text.of(['#image(fit: "")']);
+    expect(completionEditOffsets(
+      doc,
+      doc.length - 2,
+      '"contain"',
+      {
+        newText: '"contain"',
+        range: {
+          start: { line: 0, character: 12 },
+          end: { line: 0, character: 12 }
+        }
+      },
+      (_text, character) => character
+    )).toEqual({ from: 12, to: 14 });
   });
 
   test("places the caret after accepted non-callable argument values", async () => {

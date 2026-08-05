@@ -378,6 +378,31 @@ export function isTypstFunctionArgumentValueContextAt(
   return /^\s*[\p{L}_][\p{L}\p{M}\p{N}_-]*\s*:\s*[^,]*$/u.test(currentSlot);
 }
 
+export function quotedTypstArgumentValueStart(
+  doc: Text,
+  cursorPosition: number
+): number | null {
+  const argumentStart = innermostTypstFunctionArgumentStart(doc, cursorPosition);
+  if (argumentStart === null || !isTypstFunctionArgumentValueContextAt(doc, cursorPosition)) return null;
+  const line = doc.lineAt(cursorPosition);
+  const cursor = cursorPosition - line.from;
+  let openingQuote = -1;
+  let quoted = false;
+  for (let index = 0; index < cursor; index++) {
+    if (line.text[index] !== '"' || isEscaped(line.text, index)) continue;
+    quoted = !quoted;
+    openingQuote = quoted ? index : -1;
+  }
+  if (!quoted || openingQuote < 0) return null;
+
+  const absoluteOpeningQuote = line.from + openingQuote;
+  const beforeQuote = doc.sliceString(argumentStart + 1, absoluteOpeningQuote);
+  const slotStart = Math.max(beforeQuote.lastIndexOf(","), beforeQuote.lastIndexOf("\n")) + 1;
+  return /^\s*[\p{L}_][\p{L}\p{M}\p{N}_-]*\s*:\s*$/u.test(beforeQuote.slice(slotStart))
+    ? line.from + openingQuote
+    : null;
+}
+
 export function typstCompletionRequestPosition(
   doc: Text,
   cursorPosition: number,
@@ -644,8 +669,8 @@ export function completionEditOffsets(
   characterOffset: (text: string, character: number) => number
 ): { from: number; to: number } | null {
   return fontCompletionEditOffsets(doc, cursorPosition, insertion)
-    ?? lspCompletionEditOffsets(doc, textEdit, characterOffset)
-    ?? quotedCompletionEditOffsets(doc, cursorPosition, insertion);
+    ?? quotedCompletionEditOffsets(doc, cursorPosition, insertion)
+    ?? lspCompletionEditOffsets(doc, textEdit, characterOffset);
 }
 
 export function contextualCompletionEditOffsets(
@@ -957,6 +982,10 @@ export function createTypstAutocomplete(
           context.state.doc,
           context.pos
         );
+        const quotedArgumentValueStart = quotedTypstArgumentValueStart(
+          context.state.doc,
+          context.pos
+        );
         const isRuleTarget = isTypstRuleTargetAt(
           activeLine.text,
           context.pos - activeLine.from
@@ -972,11 +1001,8 @@ export function createTypstAutocomplete(
         if (!client || !uri) return fallbackCompletions();
         
         const doc = context.state.doc;
-        const requestPosition = typstCompletionRequestPosition(
-          doc,
-          context.pos,
-          isFunctionArgumentStart
-        );
+        const requestPosition = quotedArgumentValueStart
+          ?? typstCompletionRequestPosition(doc, context.pos, isFunctionArgumentStart);
         const position = client.lspPositionFromEditorPosition(doc, requestPosition);
         
         try {
@@ -1216,9 +1242,11 @@ export function createTypstAutocomplete(
           });
           
           const result = {
-            from: fontValueFrom ?? word?.from ?? context.pos,
+            from: quotedArgumentValueStart !== null
+              ? quotedArgumentValueStart + 1
+              : fontValueFrom ?? word?.from ?? context.pos,
             options,
-            validFor: fontValueFrom !== null
+            validFor: fontValueFrom !== null || quotedArgumentValueStart !== null
               ? /^[^"\r\n]*$/
               : isMemberAccess
                 ? typstMemberCompletionValidFor
