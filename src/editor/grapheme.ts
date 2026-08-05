@@ -1,5 +1,5 @@
 import { EditorSelection, EditorState, type Extension, type Text, type Transaction } from "@codemirror/state";
-import { EditorView } from "@codemirror/view";
+import { EditorView, type MouseSelectionStyle, type ViewUpdate } from "@codemirror/view";
 import { deleteBracketPair } from "@codemirror/autocomplete";
 import { editingPolicyRegistry } from "./editingPolicies/registry";
 
@@ -135,6 +135,195 @@ export const graphemeSelectionBoundaryFilter: Extension = EditorState.transactio
   };
 });
 
+/**
+ * Resolves pointer placement from the rendered edges of shaped Khmer
+ * graphemes. Browsers may report the same source offset for clicks at both
+ * visual edges of a Khmer cluster, so the transaction's offset and association
+ * are not always sufficient on their own.
+ */
+export type GraphemePointerDebugEvent = {
+  mouse: { x: number; y: number };
+  resolved: { row: number; utf16Column: number; graphemeColumn: number; position: number; assoc: -1 | 1 };
+  visualLine: { from: number; to: number; startX: number | null; endX: number | null };
+  candidates: Array<{ from: number; to: number; startX: number; endX: number }>;
+  caret: { row: number; utf16Column: number; graphemeColumn: number; position: number };
+  reason: "visual-line-trailing" | "visual-grapheme-start" | "visual-grapheme-end" | "codemirror-fallback";
+};
+
+export function graphemePointerSelection(
+  onDebug?: (event: GraphemePointerDebugEvent) => void
+): Extension {
+  return EditorView.mouseSelectionStyle.of((view, event) => {
+  if (event.button !== 0 || event.detail !== 1 || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) {
+    return null;
+  }
+
+  const initial = pointerSelectionAtCoordinates(view, event, onDebug);
+  if (!initial) return null;
+  let start: { pos: number; assoc: -1 | 1 } = initial;
+
+  const style: MouseSelectionStyle = {
+    get(currentEvent) {
+      const current = pointerSelectionAtCoordinates(view, currentEvent, onDebug) ?? start;
+      return start.pos === current.pos
+        ? EditorSelection.create([EditorSelection.cursor(current.pos, current.assoc)])
+        : EditorSelection.create([EditorSelection.range(start.pos, current.pos, current.assoc)]);
+    },
+    update(update: ViewUpdate) {
+      if (update.docChanged) start = { ...start, pos: update.changes.mapPos(start.pos) };
+    }
+  };
+  return style;
+  });
+}
+
+function pointerSelectionAtCoordinates(
+  view: EditorView,
+  event: MouseEvent,
+  onDebug?: (event: GraphemePointerDebugEvent) => void
+): { pos: number; assoc: -1 | 1 } | null {
+  const resolved = view.posAndSideAtCoords({ x: event.clientX, y: event.clientY });
+  if (!resolved) return null;
+  const line = view.state.doc.lineAt(resolved.pos);
+  const local = resolved.pos - line.from;
+  const temporaryBoundary = getTemporaryEditingBoundary(view.state);
+  const localTemporaryBoundary = temporaryBoundary === null ? null : temporaryBoundary - line.from;
+  const boundaries = graphemeBoundaries(line.text, localTemporaryBoundary);
+  const cursor = EditorSelection.cursor(resolved.pos, resolved.assoc);
+  const visualStart = view.moveToLineBoundary(cursor, false, true);
+  const visualEnd = view.moveToLineBoundary(cursor, true, true);
+  const visualStartCoords = view.coordsAtPos(visualStart.head, visualStart.assoc || 1);
+  const visualEndCoords = view.coordsAtPos(visualEnd.head, visualEnd.assoc || -1);
+  const candidates: GraphemePointerDebugEvent["candidates"] = [];
+
+  const finish = (
+    pos: number,
+    assoc: -1 | 1,
+    reason: GraphemePointerDebugEvent["reason"]
+  ): { pos: number; assoc: -1 | 1 } => {
+    if (onDebug) {
+      const caretLine = view.state.doc.lineAt(pos);
+      onDebug({
+        mouse: { x: roundPointerMetric(event.clientX), y: roundPointerMetric(event.clientY) },
+        resolved: {
+          row: line.number,
+          utf16Column: local + 1,
+          graphemeColumn: graphemeColumnAt(line.text, local),
+          position: resolved.pos,
+          assoc: resolved.assoc
+        },
+        visualLine: {
+          from: visualStart.head,
+          to: visualEnd.head,
+          startX: visualStartCoords ? roundPointerMetric(visualStartCoords.left) : null,
+          endX: visualEndCoords ? roundPointerMetric(visualEndCoords.left) : null
+        },
+        candidates,
+        caret: {
+          row: caretLine.number,
+          utf16Column: pos - caretLine.from + 1,
+          graphemeColumn: graphemeColumnAt(caretLine.text, pos - caretLine.from),
+          position: pos
+        },
+        reason
+      });
+    }
+    return { pos, assoc };
+  };
+
+  // Chromium can resolve the empty area after a Khmer run to the source
+  // boundary before its final shaped cluster. Compare the pointer with the
+  // actual visual-line edges and honor a click beyond the trailing edge. Use
+  // CodeMirror's visual boundary operation so wrapped lines remain local to
+  // the displayed row rather than jumping to the logical line end.
+  if (/[\u1780-\u17ff]/u.test(line.text)) {
+    if (visualStartCoords && visualEndCoords) {
+      const endIsRight = visualEndCoords.left >= visualStartCoords.left;
+      const beyondTrailingEdge = endIsRight
+        ? event.clientX > visualEndCoords.left + 2
+        : event.clientX < visualEndCoords.left - 2;
+      if (beyondTrailingEdge) {
+        const localVisualEnd = visualEnd.head - line.from;
+        // CodeMirror can place the visual line edge inside a shaped Khmer
+        // grapheme. Advance to the source-safe end so the transaction filter
+        // cannot snap the trailing-area click back to its start.
+        const safeVisualEnd = line.from + completeTrailingGraphemeBoundary(
+          line.text,
+          localVisualEnd,
+          localTemporaryBoundary
+        );
+        return finish(
+          safeVisualEnd,
+          visualEnd.assoc < 0 ? -1 : 1,
+          "visual-line-trailing"
+        );
+      }
+    }
+  }
+
+  let best: {
+    pos: number;
+    distance: number;
+    reason: "visual-grapheme-start" | "visual-grapheme-end";
+  } | null = null;
+  for (const boundary of boundaries) {
+    if (local < boundary.from || local > boundary.to) continue;
+    const cluster = line.text.slice(boundary.from, boundary.to);
+    if (boundary.to - boundary.from < 2 || !/[\u1780-\u17ff]/u.test(cluster)) continue;
+
+    const absoluteFrom = line.from + boundary.from;
+    const absoluteTo = line.from + boundary.to;
+    const startCoords = view.coordsAtPos(absoluteFrom, 1);
+    const endCoords = view.coordsAtPos(absoluteTo, -1);
+    if (!startCoords || !endCoords) continue;
+    candidates.push({
+      from: absoluteFrom,
+      to: absoluteTo,
+      startX: roundPointerMetric(startCoords.left),
+      endX: roundPointerMetric(endCoords.left)
+    });
+
+    const left = Math.min(startCoords.left, endCoords.left);
+    const right = Math.max(startCoords.left, endCoords.left);
+    // Only reinterpret a source-boundary result when the pointer is actually
+    // over the rendered cluster. This prevents nearby whitespace and the true
+    // beginning of a line from being pulled into the first Khmer grapheme.
+    if (event.clientX < left - 2 || event.clientX > right + 2) continue;
+
+    const startDistance = Math.abs(event.clientX - startCoords.left);
+    const endDistance = Math.abs(event.clientX - endCoords.left);
+    const candidate = startDistance <= endDistance
+      ? { pos: absoluteFrom, distance: startDistance, reason: "visual-grapheme-start" as const }
+      : { pos: absoluteTo, distance: endDistance, reason: "visual-grapheme-end" as const };
+    if (!best || candidate.distance < best.distance) best = candidate;
+  }
+
+  return best
+    ? finish(best.pos, resolved.assoc, best.reason)
+    : finish(resolved.pos, resolved.assoc, "codemirror-fallback");
+}
+
+export function completeTrailingGraphemeBoundary(
+  text: string,
+  position: number,
+  temporaryBoundary: number | null = null
+): number {
+  const clamped = Math.max(0, Math.min(position, text.length));
+  for (const boundary of graphemeBoundaries(text, temporaryBoundary)) {
+    if (boundary.from < clamped && clamped < boundary.to) return boundary.to;
+  }
+  return clamped;
+}
+
+function graphemeColumnAt(text: string, offset: number): number {
+  const clamped = Math.max(0, Math.min(offset, text.length));
+  return graphemeBoundaries(text).filter(boundary => boundary.to <= clamped).length + 1;
+}
+
+function roundPointerMetric(value: number): number {
+  return Math.round(value * 10) / 10;
+}
+
 export function snapSelectionToGraphemeBoundaries(
   doc: Text,
   selection: EditorSelection,
@@ -160,9 +349,12 @@ export function snapSelectionToGraphemeBoundaries(
         ? EditorSelection.cursor(anchor, range.assoc, range.bidiLevel ?? undefined, range.goalColumn)
         : EditorSelection.range(anchor, head, range.goalColumn, range.bidiLevel ?? undefined, range.assoc);
     }
-    const snap = pointerSelection ? snapPointerPositionToGraphemeBoundary : snapPositionToGraphemeBoundary;
-    const anchor = snap(doc, range.anchor, temporaryBoundary);
-    const head = snap(doc, range.head, temporaryBoundary);
+    const anchor = pointerSelection
+      ? snapPointerPositionToGraphemeBoundary(doc, range.anchor, range.assoc, temporaryBoundary)
+      : snapPositionToGraphemeBoundary(doc, range.anchor, temporaryBoundary);
+    const head = pointerSelection
+      ? snapPointerPositionToGraphemeBoundary(doc, range.head, range.assoc, temporaryBoundary)
+      : snapPositionToGraphemeBoundary(doc, range.head, temporaryBoundary);
     return anchor === head
       ? EditorSelection.cursor(anchor, range.assoc, range.bidiLevel ?? undefined, range.goalColumn)
       : EditorSelection.range(anchor, head, range.goalColumn, range.bidiLevel ?? undefined, range.assoc);
@@ -173,16 +365,29 @@ export function snapSelectionToGraphemeBoundaries(
 function snapPointerPositionToGraphemeBoundary(
   doc: Text,
   position: number,
+  association: number,
   temporaryBoundary: number | null = null
 ): number {
   const line = doc.lineAt(Math.max(0, Math.min(position, doc.length)));
   const local = position - line.from;
   const localTemporaryBoundary = temporaryBoundary === null ? null : temporaryBoundary - line.from;
   for (const boundary of graphemeBoundaries(line.text, localTemporaryBoundary)) {
-    if (boundary.from < local && local < boundary.to
-      && boundary.from === 0
-      && line.text.slice(boundary.from, boundary.to).includes("\u17D2")) {
-      return line.from;
+    if (boundary.from < local && local < boundary.to) {
+      // CodeMirror resolves pointer coordinates to both a document offset and
+      // an association describing which visual side of that offset was
+      // clicked. Khmer shaping can map clicks near either edge of a cluster to
+      // the same internal UTF-16 offset, so the offset midpoint alone is not a
+      // reliable indication of the intended caret side.
+      if (association < 0) return line.from + boundary.from;
+      if (association > 0) return line.from + boundary.to;
+
+      // Some browsers do not provide a side association. Preserve the
+      // line-leading COENG safeguard in that case so words such as ឲ្យ and ឱ្យ
+      // can still place the caret at the true start of the line.
+      if (boundary.from === 0
+        && line.text.slice(boundary.from, boundary.to).includes("\u17D2")) {
+        return line.from;
+      }
     }
   }
   return snapPositionToGraphemeBoundary(doc, position, temporaryBoundary);

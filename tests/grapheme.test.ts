@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { EditorSelection, EditorState, Text } from "@codemirror/state";
 import { closeBrackets } from "@codemirror/autocomplete";
 import type { EditorView } from "@codemirror/view";
-import { codePointDeletionRange, deletionRangesForSelection, deletePreviousGraphemeOrPair, graphemeBoundaries, graphemeSelectionBoundaryFilter, moveSelectionByGrapheme, nextGraphemeBoundary, previousGraphemeBoundary, snapPositionToGraphemeBoundary, snapSelectionToGraphemeBoundaries } from "../src/editor/grapheme";
+import { codePointDeletionRange, completeTrailingGraphemeBoundary, deletionRangesForSelection, deletePreviousGraphemeOrPair, graphemeBoundaries, graphemeSelectionBoundaryFilter, moveSelectionByGrapheme, nextGraphemeBoundary, previousGraphemeBoundary, snapPositionToGraphemeBoundary, snapSelectionToGraphemeBoundaries } from "../src/editor/grapheme";
 import { getTemporaryKhmerBoundary, khmerCompositionBoundaryState } from "../src/editor/editingPolicies/khmer/composition";
 
 describe("editor grapheme navigation", () => {
@@ -56,15 +56,50 @@ describe("editor grapheme navigation", () => {
     expect(selection.main.head).toBe(0);
   });
 
-  test("maps pointer placement inside a line-leading COENG cluster to its start", () => {
+  test("uses the pointer side when placing a caret in a line-leading COENG cluster", () => {
     const state = EditorState.create({
       doc: "\u17B1\u17D2\u1799 text",
       extensions: [graphemeSelectionBoundaryFilter]
     });
     const pointer = state.update({ selection: { anchor: 2 }, userEvent: "select.pointer" }).state;
     expect(pointer.selection.main.head).toBe(0);
+    const pointerAtStart = state.update({
+      selection: EditorSelection.create([EditorSelection.cursor(2, -1)]),
+      userEvent: "select.pointer"
+    }).state;
+    expect(pointerAtStart.selection.main.head).toBe(0);
+    const pointerAtEnd = state.update({
+      selection: EditorSelection.create([EditorSelection.cursor(2, 1)]),
+      userEvent: "select.pointer"
+    }).state;
+    expect(pointerAtEnd.selection.main.head).toBe(3);
     const keyboard = state.update({ selection: { anchor: 2 }, userEvent: "select" }).state;
     expect(keyboard.selection.main.head).toBe(3);
+  });
+
+  test("uses the pointer side to reach either edge of a shaped Khmer cluster", () => {
+    const doc = Text.of(["A\u1781\u17D2\u1798\u17C2B"]);
+    const atStart = snapSelectionToGraphemeBoundaries(
+      doc,
+      EditorSelection.create([EditorSelection.cursor(3, -1)]),
+      null,
+      true
+    );
+    expect(atStart.main.head).toBe(1);
+    const atEnd = snapSelectionToGraphemeBoundaries(
+      doc,
+      EditorSelection.create([EditorSelection.cursor(3, 1)]),
+      null,
+      true
+    );
+    expect(atEnd.main.head).toBe(5);
+  });
+
+  test("advances a visual line end out of the final Khmer grapheme", () => {
+    const text = "text \u178E\u17C8";
+    expect(completeTrailingGraphemeBoundary(text, text.length - 1)).toBe(text.length);
+    expect(completeTrailingGraphemeBoundary(text, 0)).toBe(0);
+    expect(completeTrailingGraphemeBoundary(text, 4)).toBe(4);
   });
 
   test("expands Khmer word selection at line start to the full cluster", () => {

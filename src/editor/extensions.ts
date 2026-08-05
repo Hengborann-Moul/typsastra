@@ -49,7 +49,7 @@ import { bracketColorizer } from "./bracketColorizer";
 import { createHoverTooltip } from "./hover";
 import type { TinymistLspClient } from "../compiler/lsp";
 import { typstFunctionFoldService } from "./folding";
-import { deleteNextGrapheme, deletePreviousGraphemeOrPair, graphemeSelectionBoundaryFilter, moveNextGrapheme, movePreviousGrapheme, selectNextGrapheme, selectPreviousGrapheme } from "./grapheme";
+import { deleteNextGrapheme, deletePreviousGraphemeOrPair, graphemePointerSelection, graphemeSelectionBoundaryFilter, moveNextGrapheme, movePreviousGrapheme, selectNextGrapheme, selectPreviousGrapheme, type GraphemePointerDebugEvent } from "./grapheme";
 import { editingPolicyRegistry } from "./editingPolicies/registry";
 import { showInvisibleCharacters } from "./invisibles";
 import { TYPSASTRA_GREEN, TYPSASTRA_GREEN_GLOW } from "../ui/brandColors";
@@ -672,11 +672,13 @@ export function getEditorExtensions(
   getUri: () => string,
   flushLspSync: () => void | Promise<void>,
   onNavigateToDefinition?: (uri: string, line: number, character: number) => void,
-  getProviders?: () => ProviderCapabilities[]
+  getProviders?: () => ProviderCapabilities[],
+  onGraphemePointerDebug?: (event: GraphemePointerDebugEvent) => void
 ): Extension[] {
   return [
     ctrlClickLinkPlugin,
     ...editingPolicyRegistry.editorExtensions(),
+    graphemePointerSelection(onGraphemePointerDebug),
     graphemeSelectionBoundaryFilter,
     showZwsCompartment.of(showZeroWidthSpaces),
     preventEscapedBracketAutoClose,

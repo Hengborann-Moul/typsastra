@@ -1443,7 +1443,12 @@ export class TypsastraWorkspaceController {
         () => this.getActiveLspUri(),
         () => this.flushPendingLspSync(),
         (uri, line, character) => void this.navigateToLspLocation(uri, line, character),
-        () => this.spellcheckController.getProviders()
+        () => this.spellcheckController.getProviders(),
+        event => this.appendDeveloperLog({
+          kind: "info",
+          source: "grapheme pointer",
+          message: JSON.stringify(event)
+        })
       ),
       this.spellcheckController.extension(),
       EditorView.updateListener.of((update) => {
