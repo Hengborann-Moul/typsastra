@@ -17,6 +17,15 @@ export const baseEditorLayoutTheme = EditorView.theme({
       color: "var(--ui-text, #333333) !important",
       WebkitTextFillColor: "currentColor"
   },
+  ".cm-content::after": {
+      content: '\"\"',
+      display: "block",
+      height: "var(--typsastra-scroll-past-end-height, 0px)",
+      backgroundColor: "color-mix(in srgb, var(--ui-accent-color) 8%, var(--ui-bg))",
+      borderTop: "1px solid color-mix(in srgb, var(--ui-accent-color) 24%, transparent)",
+      boxSizing: "border-box",
+      pointerEvents: "none"
+  },
   ".cm-line, .cm-line *": {
       WebkitTextFillColor: "currentColor"
   },

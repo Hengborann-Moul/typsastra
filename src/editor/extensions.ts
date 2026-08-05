@@ -88,6 +88,50 @@ export function visibleIndentationMarkers(): Extension {
   });
 }
 
+/**
+ * Keeps one viewport of non-document space after the final line. A CSS
+ * pseudo-element provides the space, so CodeMirror does not create a line,
+ * line number, or editable document content for it.
+ */
+export function scrollPastDocumentEnd(): Extension {
+  return ViewPlugin.fromClass(class {
+    private readonly resizeObserver: ResizeObserver;
+
+    constructor(private readonly view: EditorView) {
+      this.resizeObserver = new ResizeObserver(() => this.updateHeight());
+      this.resizeObserver.observe(view.scrollDOM);
+      this.updateHeight();
+    }
+
+    destroy(): void {
+      this.resizeObserver.disconnect();
+      this.view.contentDOM.style.removeProperty("--typsastra-scroll-past-end-height");
+    }
+
+    private updateHeight(): void {
+      // Reserve five visible lines for the final document line and the cursor
+      // when the user reaches the end, while still providing almost a full
+      // viewport of breathing room below the document. Short editor panes
+      // still retain five blank lines rather than collapsing the spacer.
+      // `defaultLineHeight` can retain CodeMirror's unstyled metric while
+      // Typsastra applies its own CSS line-height. Read the rendered metric so
+      // the visual spacer is measured in actual displayed lines.
+      const renderedLineHeight = Number.parseFloat(
+        getComputedStyle(this.view.contentDOM).lineHeight
+      );
+      const lineHeight = Number.isFinite(renderedLineHeight) && renderedLineHeight > 0
+        ? renderedLineHeight
+        : this.view.defaultLineHeight;
+      const reservedLinesHeight = lineHeight * 5;
+      const height = Math.max(
+        reservedLinesHeight,
+        this.view.scrollDOM.clientHeight - reservedLinesHeight
+      );
+      this.view.contentDOM.style.setProperty("--typsastra-scroll-past-end-height", `${height}px`);
+    }
+  });
+}
+
 const completionNavigationHandler = Prec.highest(EditorView.domEventHandlers({
   keydown(event, view) {
     let handled = false;
@@ -695,6 +739,7 @@ export function getEditorExtensions(
     drawSelection(), selectionStateClass, dropCursor(), history(),
     languageCompartment.of(typstLanguage),
     baseEditorLayoutTheme,
+    scrollPastDocumentEnd(),
     wrappedLineIndentation,
     codeFolding({
       preparePlaceholder: foldedTypstPlaceholderSuffix,
