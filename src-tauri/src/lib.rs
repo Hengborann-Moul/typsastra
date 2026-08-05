@@ -1690,6 +1690,40 @@ fn reveal_in_explorer(path: String) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+fn open_directory_in_explorer(path: String) -> Result<(), String> {
+    let directory = std::path::Path::new(&path);
+    if !directory.is_dir() {
+        return Err(format!(
+            "Project folder does not exist: {}",
+            directory.display()
+        ));
+    }
+
+    #[cfg(windows)]
+    {
+        std::process::Command::new("explorer")
+            .arg(directory)
+            .spawn()
+            .map_err(|e| format!("Failed to open explorer: {}", e))?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(directory)
+            .spawn()
+            .map_err(|e| format!("Failed to open finder: {}", e))?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(directory)
+            .spawn()
+            .map_err(|e| format!("Failed to open file manager: {}", e))?;
+    }
+    Ok(())
+}
+
 #[derive(serde::Serialize, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 struct PreviewTarget {
@@ -4140,6 +4174,7 @@ pub fn run() {
             read_workspace_dir,
             move_to_trash,
             reveal_in_explorer,
+            open_directory_in_explorer,
             resolve_preview_main,
             typst_preview_source_stats,
             typst_preview_image_profile,

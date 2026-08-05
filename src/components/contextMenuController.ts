@@ -224,6 +224,8 @@ export class ContextMenuController {
       case "ctx-fs-reveal": if (this.targetPath) await invoke("reveal_in_explorer", { path: this.targetPath }); return;
       case "ctx-fs-copy-rel-path": return this.copyRelativePath();
       case "ctx-fs-copy-abs-path": if (this.targetPath) await writeText(this.targetPath); return;
+      case "ctx-project-reveal": return this.revealProjectFolder();
+      case "ctx-project-copy-abs-path": return this.copyProjectAbsolutePath();
       case "ctx-preview-open-external": return this.openPreviewPdf();
       case "ctx-preview-undock": document.getElementById("undock-preview-btn")?.click(); return;
       case "ctx-preview-forward-sync": document.getElementById("preview-forward-sync-btn")?.click(); return;
@@ -445,6 +447,16 @@ export class ContextMenuController {
     await writeText(relative);
   }
 
+  private async revealProjectFolder(): Promise<void> {
+    const workspace = this.dependencies.getWorkspaceRoot();
+    if (workspace) await invoke("open_directory_in_explorer", { path: workspace });
+  }
+
+  private async copyProjectAbsolutePath(): Promise<void> {
+    const workspace = this.dependencies.getWorkspaceRoot();
+    if (workspace) await writeText(workspace);
+  }
+
   private async openPreviewPdf(): Promise<void> {
     const activeFile = this.dependencies.getActiveFile();
     if (!activeFile) return;
@@ -584,7 +596,7 @@ export class ContextMenuController {
   }
 
   private explorerBackgroundItems(): string {
-    return `<div class="dropdown-item" id="ctx-new-file">New File <span class="hotkey">Ctrl+N</span></div><div class="dropdown-item" id="ctx-fs-new-folder">New Folder</div>${this.copiedFilePath ? '<div class="dropdown-separator"></div><div class="dropdown-item" id="ctx-fs-paste">Paste File <span class="hotkey">Ctrl+V</span></div>' : ""}<div class="dropdown-separator"></div><div class="dropdown-item" id="ctx-fs-reveal">Reveal Project in Explorer</div><div class="dropdown-separator"></div><div class="dropdown-item" id="ctx-open-project">Open Project <span class="hotkey">Ctrl+O</span></div><div class="dropdown-separator"></div><div class="dropdown-item" id="ctx-restart-workspace">Reload Project</div>`;
+    return `<div class="dropdown-item" id="ctx-new-file">New File <span class="hotkey">Ctrl+N</span></div><div class="dropdown-item" id="ctx-fs-new-folder">New Folder</div>${this.copiedFilePath ? '<div class="dropdown-separator"></div><div class="dropdown-item" id="ctx-fs-paste">Paste File <span class="hotkey">Ctrl+V</span></div>' : ""}<div class="dropdown-separator"></div><div class="dropdown-item" id="ctx-project-reveal">Reveal Project in Explorer</div><div class="dropdown-item" id="ctx-project-copy-abs-path">Copy Project Absolute Path</div><div class="dropdown-separator"></div><div class="dropdown-item" id="ctx-open-project">Open Project <span class="hotkey">Ctrl+O</span></div><div class="dropdown-separator"></div><div class="dropdown-item" id="ctx-restart-workspace">Reload Project</div>`;
   }
 
   private tabItems(): string {
