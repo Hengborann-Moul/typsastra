@@ -40,6 +40,11 @@ import {
 } from "../src/editor/autocomplete";
 
 describe("language word completion context", () => {
+  test("sends the personal dictionary to language completion", async () => {
+    const source = await Bun.file(new URL("../src/editor/autocomplete.ts", import.meta.url)).text();
+    expect(source).toContain("userDictionary: [...getUserDictionary()]");
+  });
+
   test("mounts editor tooltips above preview overlays", async () => {
     const source = await Bun.file(new URL("../src/editor/extensions.ts", import.meta.url)).text();
     const css = await Bun.file(new URL("../src/style.css", import.meta.url)).text();

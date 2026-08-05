@@ -847,6 +847,7 @@ export function createTypstAutocomplete(
   getLanguageCompletionGeneration?: () => number,
   onLanguageCompletionPerformance?: (milliseconds: number) => void,
   onTypstCompletionTrace?: (message: string) => void,
+  getUserDictionary: () => readonly string[] = () => [],
 ) {
   return autocompletion({
     override: [
@@ -886,7 +887,8 @@ export function createTypstAutocomplete(
                   provider: provider.id,
                   text: match.word.text,
                   cursorUtf16: match.word.text.length,
-                  limit: 10
+                  limit: 10,
+                  userDictionary: [...getUserDictionary()]
                 }
               });
               onLanguageCompletionPerformance?.(performance.now() - languageCompletionStartedAt);

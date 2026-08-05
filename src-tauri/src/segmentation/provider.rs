@@ -100,6 +100,8 @@ pub struct CompletionRequest {
     pub text: String,
     pub cursor_utf16: usize,
     pub limit: usize,
+    #[serde(default)]
+    pub user_dictionary: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]

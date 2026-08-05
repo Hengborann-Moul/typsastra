@@ -2371,11 +2371,29 @@ fn complete_with_provider(
             .map(|token| token.text.as_str())
             .collect::<String>();
         let limit = request.limit.min(50);
-        let mut options = provider.autocomplete(&prefix, limit);
+        let mut options = request
+            .user_dictionary
+            .iter()
+            .map(|word| word.trim())
+            .filter(|word| !word.is_empty() && provider.supports(word) && word.starts_with(&prefix))
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        options.sort_by(|left, right| {
+            left.encode_utf16()
+                .count()
+                .cmp(&right.encode_utf16().count())
+                .then_with(|| left.cmp(right))
+        });
+        options.dedup();
+        for option in provider.autocomplete(&prefix, limit) {
+            if !options.iter().any(|candidate| candidate == &option) {
+                options.push(option);
+            }
+        }
         if provider.is_known_word(&prefix) && !options.iter().any(|option| option == &prefix) {
             options.insert(0, prefix);
-            options.truncate(limit);
         }
+        options.truncate(limit);
         if !options.is_empty() {
             return Ok(Some(CompletionResponse {
                 provider: provider.id().to_owned(),
@@ -2539,6 +2557,7 @@ mod tests {
                 text: "😀ພາ".to_string(),
                 cursor_utf16: 4,
                 limit: 10,
+                user_dictionary: Vec::new(),
             },
         )
         .expect("Lao completion")
@@ -2693,6 +2712,7 @@ mod tests {
                     text: example.input,
                     cursor_utf16: example.cursor,
                     limit: 10,
+                    user_dictionary: Vec::new(),
                 },
             )
             .unwrap_or_else(|error| panic!("{}: {error}", example.name))
@@ -2740,6 +2760,7 @@ mod tests {
                     text: prefix.into(),
                     cursor_utf16: prefix.encode_utf16().count(),
                     limit: 10,
+                    user_dictionary: Vec::new(),
                 },
             )
             .unwrap()
@@ -2757,6 +2778,7 @@ mod tests {
                 text: "សាលា".into(),
                 cursor_utf16: "សាលា".encode_utf16().count(),
                 limit: 10,
+                user_dictionary: Vec::new(),
             },
         )
         .unwrap()
@@ -2770,6 +2792,7 @@ mod tests {
                 text: "សាលារ".into(),
                 cursor_utf16: "សាលារ".encode_utf16().count(),
                 limit: 10,
+                user_dictionary: Vec::new(),
             },
         )
         .unwrap()
@@ -2793,12 +2816,34 @@ mod tests {
                 text: word.into(),
                 cursor_utf16: word.encode_utf16().count(),
                 limit: 10,
+                user_dictionary: Vec::new(),
             },
         )
         .unwrap()
         .expect("known word completion");
         assert_eq!(response.from, 0);
         assert_eq!(response.to, word.encode_utf16().count());
+        assert_eq!(response.options.first().map(String::as_str), Some(word));
+    }
+
+    #[test]
+    fn includes_a_khmer_user_dictionary_word_in_completion() {
+        let provider = KhmerProvider::new().unwrap();
+        let word = "កខគ";
+        assert!(!provider.is_known_word(word));
+        let response = complete_with_provider(
+            &provider,
+            &CompletionRequest {
+                provider: "khmer-segmenter".to_string(),
+                text: "កខ".into(),
+                cursor_utf16: "កខ".encode_utf16().count(),
+                limit: 10,
+                user_dictionary: vec![word.to_string()],
+            },
+        )
+        .unwrap()
+        .expect("personal Khmer completion");
+        assert_eq!(response.from, 0);
         assert_eq!(response.options.first().map(String::as_str), Some(word));
     }
 
@@ -3161,6 +3206,7 @@ mod tests {
                 text: "I went to schoo".to_string(),
                 cursor_utf16: "I went to schoo".encode_utf16().count(),
                 limit: 10,
+                user_dictionary: Vec::new(),
             },
         )
         .expect("completion")
@@ -3267,6 +3313,7 @@ mod tests {
                 text: "hel".to_string(),
                 cursor_utf16: 3,
                 limit: 10,
+                user_dictionary: Vec::new(),
             },
         )
         .expect("English UK completion")

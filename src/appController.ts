@@ -1285,6 +1285,7 @@ export class TypsastraWorkspaceController {
         () => this.documentLanguageService.currentGeneration(),
         milliseconds => this.performanceDiagnostics.record({ name: "language.completion", milliseconds }),
         message => this.appendDeveloperLog({ kind: "info", source: "lsp autocomplete", message }),
+        () => this.settingsController.value.editor.userDictionary,
       ))
     ];
   }
@@ -1305,6 +1306,7 @@ export class TypsastraWorkspaceController {
         () => this.documentLanguageService.currentGeneration(),
         milliseconds => this.performanceDiagnostics.record({ name: "language.completion", milliseconds }),
         message => this.appendDeveloperLog({ kind: "info", source: "lsp autocomplete", message }),
+        () => this.settingsController.value.editor.userDictionary,
       ))
     });
   }
