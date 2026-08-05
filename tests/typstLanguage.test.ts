@@ -75,6 +75,15 @@ describe("Typst stream language", () => {
     expect(tokenName(tokens, "x")).toBeUndefined();
   });
 
+  test("returns to markup between context expressions on the same line", () => {
+    const tokens = parseTokens("#context counter(page).display() #context counter(page).display()");
+    const hashTokens = tokens.filter(token => token.text === "#").map(token => token.name);
+    const contextTokens = tokens.filter(token => token.text === "context").map(token => token.name);
+
+    expect(hashTokens).toEqual(["hashKeyword", "hashKeyword"]);
+    expect(contextTokens).toEqual(["keyword", "keyword"]);
+  });
+
   test("tokenizes plain, unit, percentage, and scientific numbers consistently", () => {
     const tokens = parseTokens("#let x = 1\n#let y = 1em\n#let z = 50%\n#let n = 1e5\n#let m = 1.2e-3");
 

@@ -28,8 +28,11 @@ type TypstParserState = {
 // Unicode-aware identifier regex (Unicode Standard Annex #31 with underscore/hyphen extensions)
 const identifierRegex = /^[\p{L}_][\p{L}\p{N}_-]*/u;
 
-// Statement keywords that extend until semicolon or newline
-const statementKeywords = /^(?:let|set|show|import|include|if|else|for|in|while|break|continue|return|context|as)$/;
+// Statement keywords that extend until semicolon or newline. `context` is a
+// keyword, but its expression can finish inline and return to markup before
+// another `#` expression on the same line.
+const statementKeywords = /^(?:let|set|show|import|include|if|else|for|in|while|break|continue|return|as)$/;
+const hashKeywordWords = /^(?:let|set|show|import|include|if|else|for|in|while|break|continue|return|context|as)$/;
 const atomWords = /^(?:none|auto|true|false)$/;
 
 // Code mode keyword pattern
@@ -39,7 +42,7 @@ function classifyHashToken(rest: string): string {
   const nextWordMatch = rest.match(identifierRegex);
   if (nextWordMatch) {
     const word = nextWordMatch[0];
-    if (statementKeywords.test(word)) return "hashKeyword";
+    if (hashKeywordWords.test(word)) return "hashKeyword";
     if (atomWords.test(word)) return "hashAtom";
     if (/^\s*(?:\(|\[)/.test(rest.slice(word.length))) return "hashFunction";
     return "hashVariable";
