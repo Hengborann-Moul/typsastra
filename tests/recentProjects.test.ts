@@ -57,6 +57,22 @@ describe("recent project shortcuts", () => {
     expect(filterRecentProjects(projects, "  ")).toEqual(projects);
   });
 
+  test("ranks exact and prefix project names before substring and fuzzy matches", () => {
+    const projects = [
+      "C:\\Work\\Paragraph Notes",
+      "C:\\Work\\Par",
+      "C:\\Work\\My Par Archive",
+      "C:\\Work\\Project Architecture",
+    ];
+
+    expect(filterRecentProjects(projects, "par")).toEqual([
+      projects[1],
+      projects[0],
+      projects[2],
+      projects[3],
+    ]);
+  });
+
   test("moves the fuzzy-result selection without leaving the list", () => {
     expect(recentProjectNavigationIndex(0, 4, "ArrowDown")).toBe(1);
     expect(recentProjectNavigationIndex(3, 4, "ArrowDown")).toBe(3);

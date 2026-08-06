@@ -11,6 +11,7 @@ import type { SpellingIssue } from "../editor/spellcheck";
 import {
   filterSurroundWithOptions,
   surroundEditorRange,
+  SURROUND_WITH_OPTIONS,
   type SurroundWithOption,
 } from "../editor/surroundWith";
 
@@ -39,6 +40,7 @@ export type ContextMenuDependencies = {
   getPinnedMainFile: () => string | null;
   canRevealCursorInPreview: () => boolean;
   revealCursorInPreview: () => void;
+  getSurroundWithOptions?: () => readonly SurroundWithOption[];
 };
 
 export function explorerKeyboardAction(event: Pick<KeyboardEvent, "key" | "ctrlKey" | "metaKey" | "altKey" | "shiftKey">): "copy" | "paste" | "delete" | "rename" | null {
@@ -757,7 +759,10 @@ export class ContextMenuController {
 
   private renderSurroundWithOptions(): void {
     if (!this.surroundList) return;
-    const options = filterSurroundWithOptions(this.surroundSearch?.value ?? "");
+    const options = filterSurroundWithOptions(
+      this.surroundSearch?.value ?? "",
+      this.dependencies.getSurroundWithOptions?.() ?? SURROUND_WITH_OPTIONS,
+    );
     this.surroundList.replaceChildren();
     if (!options.length) {
       const empty = document.createElement("p");

@@ -13,6 +13,12 @@ import { closeBrackets, completionStatus } from "@codemirror/autocomplete";
 import { getEditorExtensions, themeCompartment, getThemeExtension, applyUIThemeVariables, wrapCompartment, lineNumbersCompartment, activeLineCompartment, closeBracketsCompartment, indentationGuidesCompartment, tabSizeCompartment, completionCompartment, languageCompartment, showZwsCompartment, showZeroWidthSpaces, visibleIndentationMarkers } from "./editor/extensions";
 import { typstLanguage } from "./editor/typstLanguage";
 import { createTypstAutocomplete } from "./editor/autocomplete";
+import {
+  mergeDiscoveredSurroundWithOptions,
+  SURROUND_WITH_OPTIONS,
+  type SurroundWithCompletionItem,
+  type SurroundWithOption,
+} from "./editor/surroundWith";
 import { cursorRowColumn } from "./editor/verticalCursor";
 import { isForwardSyncContentPosition } from "./editor/forwardSyncEligibility";
 import type { EditorFoldRange } from "./editor/folding";
@@ -609,6 +615,8 @@ export class TypsastraWorkspaceController {
   );
   private explorer!: WorkspaceExplorer;
   private lspClient!: TinymistLspClient;
+  private surroundWithOptions: readonly SurroundWithOption[] = SURROUND_WITH_OPTIONS;
+  private surroundWithDiscoveryGeneration = 0;
 
   private codePane = document.getElementById("code-editor-pane")!;
   private editorTabBar = document.getElementById("editor-tab-bar")!;
@@ -814,7 +822,8 @@ export class TypsastraWorkspaceController {
         this.editorInstance.state,
         this.editorInstance.state.selection.main.head
       ),
-    revealCursorInPreview: () => this.revealCursorInPreviewManually()
+    revealCursorInPreview: () => this.revealCursorInPreviewManually(),
+    getSurroundWithOptions: () => this.surroundWithOptions,
   });
   private readonly documentOutlineController = new DocumentOutlineController(
     document.getElementById("document-outline-tree")!,
@@ -3011,6 +3020,7 @@ export class TypsastraWorkspaceController {
     try {
       await this.lspClient.connect();
       this.lspReady = true;
+      void this.discoverSurroundWithOptions();
       this.pdfSyncPreviewTaskKey = null;
       this.pdfSyncRegisteredTaskId = null;
       this.pdfSourceMapStartup = null;
@@ -3025,6 +3035,50 @@ export class TypsastraWorkspaceController {
     }
   }
 
+  private async discoverSurroundWithOptions(): Promise<void> {
+    const client = this.lspClient;
+    const workspaceRoot = this.workspaceRootPath;
+    const generation = ++this.surroundWithDiscoveryGeneration;
+    this.surroundWithOptions = SURROUND_WITH_OPTIONS;
+    if (!client || !workspaceRoot || !this.lspReady) return;
+
+    const source = "#none";
+    const virtualPath = await join(
+      workspaceRoot,
+      ".typsastra",
+      "cache",
+      "surround-with-discovery.typ",
+    );
+    const uri = filePathToUri(virtualPath);
+    try {
+      await client.openTextDocument(uri, source, generation);
+      const response = await client.request<
+        SurroundWithCompletionItem[] | { items?: SurroundWithCompletionItem[] } | null
+      >("textDocument/completion", {
+        textDocument: { uri },
+        position: { line: 0, character: 1 },
+        context: { triggerKind: 1 },
+      }, 5000);
+      if (generation !== this.surroundWithDiscoveryGeneration || client !== this.lspClient) return;
+      const items = Array.isArray(response) ? response : response?.items ?? [];
+      this.surroundWithOptions = mergeDiscoveredSurroundWithOptions(items);
+      this.appendDeveloperLog({
+        kind: "info",
+        source: "lsp autocomplete",
+        message: `Discovered ${this.surroundWithOptions.length - SURROUND_WITH_OPTIONS.length} additional bracket-capable Surround With function(s).`,
+      });
+    } catch (error) {
+      if (generation !== this.surroundWithDiscoveryGeneration) return;
+      this.appendDeveloperLog({
+        kind: "warning",
+        source: "lsp autocomplete",
+        message: `Using built-in Surround With functions because Tinymist discovery failed: ${String(error)}`,
+      });
+    } finally {
+      await client.closeTextDocument(uri).catch(() => {});
+    }
+  }
+
   private queueTinymistLifecycle(operation: () => Promise<void>): Promise<void> {
     const next = this.tinymistLifecycleQueue.then(operation, operation);
     this.tinymistLifecycleQueue = next.catch(() => {});
@@ -3032,6 +3086,8 @@ export class TypsastraWorkspaceController {
   }
 
   private resetTinymistSessionState(): void {
+    this.surroundWithDiscoveryGeneration += 1;
+    this.surroundWithOptions = SURROUND_WITH_OPTIONS;
     this.lspReady = false;
     this.pinnedLspMainPath = null;
     this.openedDocumentUris.clear();
@@ -3086,6 +3142,7 @@ export class TypsastraWorkspaceController {
       }
       await this.lspClient.restart();
       this.lspReady = true;
+      void this.discoverSurroundWithOptions();
       this.appendDeveloperLog({
         kind: "info",
         source: "lsp lifecycle",

@@ -99,10 +99,14 @@ function fuzzyTextScore(text: string, tokens: readonly string[]): number | null 
 
 function fuzzyTokenScore(text: string, token: string): number | null {
   if (text === token) return 0;
+  if (text.startsWith(token)) {
+    return 10 + Math.max(0, text.length - token.length) * 0.01;
+  }
   const contiguousIndex = text.indexOf(token);
   if (contiguousIndex >= 0) {
-    const boundaryBonus = contiguousIndex === 0 || /[/\\\s._-]/u.test(text[contiguousIndex - 1]) ? -20 : 0;
-    return 20 + contiguousIndex + boundaryBonus + Math.max(0, text.length - token.length) * 0.01;
+    const startsAtBoundary = /[/\\\s._-]/u.test(text[contiguousIndex - 1] ?? "");
+    return (startsAtBoundary ? 20 : 40) + contiguousIndex
+      + Math.max(0, text.length - token.length) * 0.01;
   }
 
   const textCharacters = Array.from(text);
