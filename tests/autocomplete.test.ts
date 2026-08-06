@@ -11,6 +11,7 @@ import {
   effectiveTypstCompletionSyntax,
   fontCompletionValueStart,
   isEmptyTypstFunctionCallAt,
+  innermostTypstFunctionName,
   isDirectMemberCompletion,
   isInsideTypstFunctionArgumentsAt,
   isNamedArgumentCompletion,
@@ -30,6 +31,7 @@ import {
   quotedCompletionEditOffsets,
   readTypstCompletionPreferences,
   recordTypstCompletionPreference,
+  typstArgumentDefaultSnippet,
   typstCompletionPreferenceBoost,
   typstCompletionRequestPosition,
   typstCompletionSyntax,
@@ -91,6 +93,38 @@ describe("language word completion context", () => {
 });
 
 describe("LSP autocomplete edits", () => {
+  test("adds editable defaults to named fields across Typst functions", () => {
+    const direct = Text.of(["#par(", "  ", ")[Text]"]);
+    const setRule = Text.of(["#set par(", "  ", ")"]);
+
+    expect(innermostTypstFunctionName(direct, direct.line(2).to)).toBe("par");
+    expect(innermostTypstFunctionName(setRule, setRule.line(2).to)).toBe("par");
+    expect(typstArgumentDefaultSnippet("par", "leading")).toBe("leading: ${0.65em}");
+    expect(typstArgumentDefaultSnippet("par", "justification-limits")).toBe(
+      [
+        "justification-limits: (",
+        "  spacing: (min: ${85%}, max: ${115%}),",
+        "  tracking: (min: ${-0.8pt}, max: ${0pt}),",
+        ")"
+      ].join("\n")
+    );
+    expect(typstArgumentDefaultSnippet("figure", "fit", "str")).toBe(
+      'fit: "${contain}"'
+    );
+    expect(typstArgumentDefaultSnippet("grid", "columns", "array")).toBe(
+      "columns: (${1fr},)"
+    );
+    expect(typstArgumentDefaultSnippet("custom", "entries", "array")).toBe(
+      "entries: (${item},)"
+    );
+    expect(typstArgumentDefaultSnippet("custom", "metadata", "dictionary")).toBe(
+      "metadata: (${key}: ${value})"
+    );
+    expect(typstArgumentDefaultSnippet("custom", "unknown")).toBe(
+      "unknown: ${value}"
+    );
+  });
+
   test("presents Tinymist syntax variants as Typst source forms", () => {
     expect(typstCompletionSyntax("figure")).toEqual({
       family: "figure",

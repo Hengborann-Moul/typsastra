@@ -345,6 +345,113 @@ function innermostTypstFunctionArgumentStart(
     : null;
 }
 
+export function innermostTypstFunctionName(
+  doc: Text,
+  cursorPosition: number
+): string | null {
+  const argumentStart = innermostTypstFunctionArgumentStart(doc, cursorPosition);
+  if (argumentStart === null) return null;
+  const before = doc.sliceString(0, argumentStart).trimEnd();
+  const match = /(?:#(?:set|show)\s+|#)?([\p{L}_][\p{L}\p{M}\p{N}_.-]*)$/u.exec(before);
+  return match?.[1] ?? null;
+}
+
+const TYPST_ARGUMENT_DEFAULT_SNIPPETS: Readonly<
+  Record<string, Readonly<Record<string, string>>>
+> = {
+  par: {
+    justify: "justify: ${true}",
+    leading: "leading: ${0.65em}",
+    spacing: "spacing: ${1.2em}",
+    linebreaks: 'linebreaks: "${optimized}"',
+    "first-line-indent": "first-line-indent: ${1em}",
+    "hanging-indent": "hanging-indent: ${1em}",
+    "justification-limits": [
+      "justification-limits: (",
+      "  spacing: (min: ${85%}, max: ${115%}),",
+      "  tracking: (min: ${-0.8pt}, max: ${0pt}),",
+      ")"
+    ].join("\n")
+  }
+};
+
+const TYPST_FIELD_DEFAULT_VALUES: Readonly<Record<string, string>> = {
+  align: "${center}",
+  alignment: "${center}",
+  alt: '"${description}"',
+  columns: "(${1fr},)",
+  fill: "${black}",
+  fit: '"${contain}"',
+  font: '"${font name}"',
+  gutter: "${1em}",
+  height: "${100%}",
+  inset: "${0pt}",
+  language: '"${en}"',
+  margin: "${1em}",
+  numbering: '"${1.}"',
+  outset: "${0pt}",
+  paper: '"${a4}"',
+  radius: "${0pt}",
+  region: '"${US}"',
+  rows: "(${auto},)",
+  size: "${11pt}",
+  spacing: "${1em}",
+  stroke: "${1pt} + ${black}",
+  width: "${100%}"
+};
+
+function typstDefaultValueForType(fieldName: string, typeHint: string): string {
+  const named = TYPST_FIELD_DEFAULT_VALUES[fieldName];
+  if (named) return named;
+
+  const hint = typeHint.toLocaleLowerCase();
+  if (/\b(?:array|tuple)\b/u.test(hint)) return "(${item},)";
+  if (/\b(?:dictionary|dict)\b/u.test(hint)) return "(${key}: ${value})";
+  if (/\bcontent\b/u.test(hint)) return "[${content}]";
+  if (/\b(?:string|str)\b/u.test(hint)) return '"${text}"';
+  if (/\bbool(?:ean)?\b/u.test(hint)) return "${false}";
+  if (/\b(?:integer|int)\b/u.test(hint)) return "${0}";
+  if (/\b(?:float|decimal)\b/u.test(hint)) return "${0.0}";
+  if (/\b(?:number|numeric)\b/u.test(hint)) return "${0}";
+  if (/\bangle\b/u.test(hint)) return "${0deg}";
+  if (/\b(?:length|relative)\b/u.test(hint)) return "${1em}";
+  if (/\bratio\b/u.test(hint)) return "${100%}";
+  if (/\bfraction\b/u.test(hint)) return "${1fr}";
+  if (/\bcolor\b/u.test(hint)) return "${black}";
+  if (/\balignment\b/u.test(hint)) return "${center}";
+  if (/\blabel\b/u.test(hint)) return "<${label}>";
+  if (/\bdatetime\b/u.test(hint)) return "datetime.today()";
+  if (/\bduration\b/u.test(hint)) return "${1s}";
+  if (/\bauto\b/u.test(hint)) return "${auto}";
+  if (/\bnone\b/u.test(hint)) return "${none}";
+  return "${value}";
+}
+
+function completionTypeHint(item: LspCompletionItem): string {
+  return [
+    item.detail,
+    item.labelDetails?.description,
+    item.labelDetails?.detail
+  ].filter((part): part is string => Boolean(part)).join(" ");
+}
+
+function completionHasDefaultValue(item: LspCompletionItem): boolean {
+  const insertion = completionInsertion(item);
+  const value = insertion.slice(insertion.indexOf(":") + 1).trim();
+  if (!value) return false;
+  return !/^\$\{(?:\d*:?)?\}$/u.test(value);
+}
+
+export function typstArgumentDefaultSnippet(
+  functionName: string | null,
+  fieldName: string,
+  typeHint = ""
+): string | null {
+  if (!functionName) return null;
+  return TYPST_ARGUMENT_DEFAULT_SNIPPETS[functionName]?.[fieldName]
+    ?? `${fieldName}: ${typstDefaultValueForType(fieldName, typeHint)}`;
+}
+
 export function isInsideTypstFunctionArgumentsAt(
   doc: Text,
   cursorPosition: number
@@ -1100,9 +1207,24 @@ export function createTypstAutocomplete(
                 detail = undefined;
             }
             
-            const defaultApply = item.insertText ?? label;
-            const textEdit = item.textEdit ?? textEditFromDefault(itemDefaults?.editRange, defaultApply);
-            const insertTextFormat = item.insertTextFormat ?? itemDefaults?.insertTextFormat;
+            const argumentDefaultSnippet = isFunctionArgumentStart
+              && isNamedArgumentCompletion(item)
+              && !completionHasDefaultValue(item)
+              ? typstArgumentDefaultSnippet(
+                innermostTypstFunctionName(context.state.doc, context.pos),
+                item.label,
+                completionTypeHint(item)
+              )
+              : null;
+            const defaultApply = argumentDefaultSnippet ?? item.insertText ?? label;
+            const originalTextEdit = item.textEdit
+              ?? textEditFromDefault(itemDefaults?.editRange, defaultApply);
+            const textEdit = argumentDefaultSnippet && originalTextEdit
+              ? { ...originalTextEdit, newText: argumentDefaultSnippet }
+              : originalTextEdit;
+            const insertTextFormat = argumentDefaultSnippet
+              ? 2
+              : item.insertTextFormat ?? itemDefaults?.insertTextFormat;
             let apply = textEdit?.newText ?? defaultApply;
             
             label = displayLabelForHashPrefix(label, type, isHashPrefix);
@@ -1118,7 +1240,8 @@ export function createTypstAutocomplete(
               item.detail ?? item.labelDetails?.description
             );
             const opensArgumentValueCompletion = isFunctionArgumentStart
-              && isNamedArgumentCompletion(item);
+              && isNamedArgumentCompletion(item)
+              && argumentDefaultSnippet === null;
             if (insertTextFormat === 2 || callableSnippet.opensArguments) {
               const completion = snippetCompletion(callableSnippet.template, {
                 label,

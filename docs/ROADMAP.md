@@ -175,6 +175,23 @@ manageable without changing the portable Typst source model.
   hover overlays, cache behavior, and known layout and retained-memory
   limitations.
 
+## v0.6.4 — autocomplete snippets
+
+Expand the existing Typst autocomplete panel with curated, portable authoring
+snippets instead of introducing a separate snippet popup.
+
+- Add commonly used set rules, functions, paragraph formatting, figures,
+  images, tables, grids, references, and mathematics constructs incrementally.
+- Insert ordinary Typst source with editable tab stops and practical starter
+  values that are clearly distinguished from documented defaults.
+- Keep Tinymist authoritative for available functions and named arguments, then
+  enrich accepted fields with editable, type-aware starter values and Tab stops.
+- Preserve non-empty defaults supplied directly by Tinymist and use curated
+  overrides only where a practical Typst value is known.
+- Keep snippet labels separate from callable forms such as `#par` and `#par[]`
+  so templates never replace or reorder the normal syntax choices.
+- Preserve portability: inserted snippets must not require a Typsastra runtime.
+
 ## v0.7.0 — resource-aware authoring and secondary previews
 
 Make local images, language tools, and non-Typst previews manageable without
@@ -326,5 +343,5 @@ The long-term research tasks and gates are in the [v2 implementation plan](./V2_
 
 Typsastra is beta software. The latest release is v0.6.2; see the
 [release notes](./RELEASE_NOTES_V0.6.2.md). Planned development continues with
-v0.7.0 resource-aware authoring, v0.8.0 portable preview scopes, and v0.9.0
-prerelease RTL hardening.
+v0.6.4 autocomplete snippets, v0.7.0 resource-aware authoring, v0.8.0 portable
+preview scopes, and v0.9.0 prerelease RTL hardening.
