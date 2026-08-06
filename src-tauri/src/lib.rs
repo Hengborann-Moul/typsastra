@@ -1028,6 +1028,68 @@ fn is_preview_generation_path(path: &Path) -> bool {
         && typsastra.file_name().and_then(|name| name.to_str()) == Some(".typsastra")
 }
 
+const MAX_RETAINED_PREVIEW_GENERATIONS: usize = 3;
+const MAX_RETAINED_PREVIEW_GENERATION_BYTES: u64 = 512 * 1024 * 1024;
+
+fn prune_preview_generation_cache(
+    generations: &Path,
+    protected: Option<&Path>,
+) -> Result<(), String> {
+    let entries = match std::fs::read_dir(generations) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(format!(
+                "Failed to inspect preview generation cache: {error}"
+            ));
+        }
+    };
+    let mut files = entries
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.path();
+            let metadata = entry.metadata().ok()?;
+            if !metadata.is_file()
+                || path.extension().and_then(|extension| extension.to_str()) != Some("pdf")
+            {
+                return None;
+            }
+            let modified = metadata
+                .modified()
+                .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+            Some((path, modified, metadata.len()))
+        })
+        .collect::<Vec<_>>();
+    files.sort_by(|left, right| right.1.cmp(&left.1));
+
+    let protected_length = protected.and_then(|protected| {
+        files
+            .iter()
+            .find(|(path, _, _)| path == protected)
+            .map(|(_, _, length)| *length)
+    });
+    let mut retained_count = usize::from(protected_length.is_some());
+    let mut retained_bytes = protected_length.unwrap_or(0);
+    for (path, _, length) in files {
+        let is_protected = protected.is_some_and(|protected| path == protected);
+        if is_protected {
+            continue;
+        }
+        let within_count = retained_count < MAX_RETAINED_PREVIEW_GENERATIONS;
+        let within_bytes = retained_count == 0
+            || retained_bytes.saturating_add(length) <= MAX_RETAINED_PREVIEW_GENERATION_BYTES;
+        if within_count && within_bytes {
+            retained_count += 1;
+            retained_bytes = retained_bytes.saturating_add(length);
+            continue;
+        }
+        // An older generation may still be open briefly in PDF.js. Failure is
+        // harmless and will be retried on the next stage or workspace open.
+        let _ = std::fs::remove_file(path);
+    }
+    Ok(())
+}
+
 #[tauri::command]
 fn stage_pdf_preview_generation(path: String, generation: u64) -> Result<String, String> {
     let source = std::fs::canonicalize(&path).unwrap_or_else(|_| PathBuf::from(&path));
@@ -1065,6 +1127,7 @@ fn stage_pdf_preview_generation(path: String, generation: u64) -> Result<String,
     ));
     std::fs::rename(&source, &target)
         .map_err(|error| format!("Failed to stage compiled PDF preview: {error}"))?;
+    let _ = prune_preview_generation_cache(&generations, Some(&target));
     Ok(target.to_string_lossy().to_string())
 }
 
@@ -1084,7 +1147,8 @@ fn remove_preview_generation_file(path: String) -> Result<(), String> {
 #[cfg(test)]
 mod pdf_preview_generation_tests {
     use super::{
-        is_preview_generation_path, remove_preview_generation_file, stage_pdf_preview_generation,
+        is_preview_generation_path, prune_preview_generation_cache, remove_preview_generation_file,
+        stage_pdf_preview_generation, MAX_RETAINED_PREVIEW_GENERATIONS,
     };
 
     #[test]
@@ -1121,6 +1185,33 @@ mod pdf_preview_generation_tests {
         assert!(stage_pdf_preview_generation(external.to_string_lossy().into_owned(), 1).is_err());
         assert!(remove_preview_generation_file(external.to_string_lossy().into_owned()).is_err());
         assert!(external.exists());
+    }
+
+    #[test]
+    fn bounds_orphaned_preview_generations() {
+        let workspace = tempfile::tempdir().unwrap();
+        let generations = workspace
+            .path()
+            .join(".typsastra/cache/preview/generations");
+        std::fs::create_dir_all(&generations).unwrap();
+        for index in 0..12 {
+            std::fs::write(
+                generations.join(format!("main-1-{index}-{index}.pdf")),
+                format!("%PDF-1.7\n{index}"),
+            )
+            .unwrap();
+        }
+
+        prune_preview_generation_cache(&generations, None).unwrap();
+
+        let retained = std::fs::read_dir(generations)
+            .unwrap()
+            .flatten()
+            .filter(|entry| {
+                entry.path().extension().and_then(|value| value.to_str()) == Some("pdf")
+            })
+            .count();
+        assert_eq!(retained, MAX_RETAINED_PREVIEW_GENERATIONS);
     }
 }
 
@@ -1279,6 +1370,10 @@ fn cleanup_workspace_preview_files(workspace_root_path: String) -> Result<(), St
     // Migrate caches written by versions that linked PDF/image assets back to
     // the project. Plain cache files keep project-folder copies safe.
     remove_cache_symlinks(&cache_root);
+    // Immutable PDF generations normally delete when their range source
+    // closes. Retain a small recovery window for crashes and forced shutdowns
+    // instead of allowing one orphaned file to accumulate per app session.
+    prune_preview_generation_cache(&cache_root.join("preview").join("generations"), None)?;
     Ok(())
 }
 
