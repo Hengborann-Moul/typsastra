@@ -598,6 +598,7 @@ export class TypsastraWorkspaceController {
 
   private editorInstance!: EditorView;
   private editorExtensions: Extension = [];
+  private editorCaretScrollMarker: HTMLElement | null = null;
   private isComposing = false;
   private editorInputSequence = 0;
   private editorInputStartedAt: number | null = null;
@@ -1497,8 +1498,10 @@ export class TypsastraWorkspaceController {
         }
         if (update.selectionSet || update.docChanged) {
           this.updateCursorPositionStatus();
+          this.updateEditorCaretScrollMarker();
         }
         if (update.viewportChanged) {
+          this.updateEditorCaretScrollMarker();
           const topVisiblePosition = update.view.lineBlockAtHeight(update.view.scrollDOM.scrollTop).from;
           this.documentOutlineController.setCursorPosition(topVisiblePosition, this.activeFilePath);
         }
@@ -1527,6 +1530,22 @@ export class TypsastraWorkspaceController {
       }),
       parent: this.codeRenderPane
     });
+
+    const caretScrollMarker = document.createElement("div");
+    caretScrollMarker.className = "editor-caret-scroll-marker";
+    caretScrollMarker.setAttribute("aria-hidden", "true");
+    Object.assign(caretScrollMarker.style, {
+      position: "absolute",
+      right: "1px",
+      width: "14px",
+      height: "2px",
+      background: TYPSASTRA_GREEN,
+      pointerEvents: "none",
+      zIndex: "20"
+    });
+    this.editorInstance.dom.appendChild(caretScrollMarker);
+    this.editorCaretScrollMarker = caretScrollMarker;
+
     listen<DraftThumbnailQueueMetric>("draft-thumbnail-queue-metric", event => {
       const metric = event.payload;
       if (!this.isDeveloperLogEnabled("performance")) return;
@@ -1580,6 +1599,30 @@ export class TypsastraWorkspaceController {
     }, { passive: true });
     this.editorFontManager.updateDocument(initialDocument);
     this.updateCursorPositionStatus();
+    this.updateEditorCaretScrollMarker();
+  }
+
+  private updateEditorCaretScrollMarker(): void {
+    const marker = this.editorCaretScrollMarker;
+    const editor = this.editorInstance;
+    if (!marker || !editor) return;
+
+    const doc = editor.state.doc;
+    if (doc.lines <= 1) {
+      marker.style.display = "none";
+      return;
+    }
+
+    const caret = editor.state.selection.main.head;
+    const caretLine = doc.lineAt(caret).number;
+    const ratio = (caretLine - 1) / Math.max(1, doc.lines - 1);
+    const trackHeight = editor.scrollDOM.clientHeight;
+    const markerHeight = 2;
+    const top = ratio * Math.max(0, trackHeight - markerHeight);
+
+    marker.style.display = "";
+    marker.style.top = `${top}px`;
+    marker.title = `Caret: line ${caretLine}`;
   }
 
   private updateCursorPositionStatus(): void {
@@ -1783,6 +1826,7 @@ export class TypsastraWorkspaceController {
   }
 
   private persistActiveTabState() {
+    if (this.workspaceLoading) return;
     this.flushEditorContentMutation();
     const tab = this.getActiveTab();
     if (!tab || !tab.contentLoaded || !this.editorInstance) return;
@@ -2871,9 +2915,39 @@ export class TypsastraWorkspaceController {
     }
 
     if (tab.scrollTop !== undefined || tab.scrollLeft !== undefined) {
+      const restoredPath = path;
+      const targetScrollTop = tab.scrollTop ?? 0;
+      const targetScrollLeft = tab.scrollLeft ?? 0;
+    
+      const restoreScroll = () => {
+        if (
+          !this.activeFilePath ||
+          filePathKey(this.activeFilePath) !== filePathKey(restoredPath)
+        ) {
+          return;
+        }
+    
+        const scrollDOM = this.editorInstance.scrollDOM;
+    
+        scrollDOM.scrollTop = targetScrollTop;
+        scrollDOM.scrollLeft = targetScrollLeft;
+    
+        this.editorInstance.requestMeasure();
+    
+        this.appendDeveloperLog({
+          kind: "info",
+          source: "editor state",
+          message:
+            `Restored editor scroll: top=${targetScrollTop.toFixed(0)}, `
+            + `left=${targetScrollLeft.toFixed(0)}`
+        });
+      };
+    
+      // CodeMirror has just received a completely new EditorState.
+      // Give it two layout frames so line geometry, folds and the scroll
+      // container are established before restoring the saved position.
       requestAnimationFrame(() => {
-        if (tab.scrollTop !== undefined) this.editorInstance.scrollDOM.scrollTop = tab.scrollTop;
-        if (tab.scrollLeft !== undefined) this.editorInstance.scrollDOM.scrollLeft = tab.scrollLeft;
+        requestAnimationFrame(restoreScroll);
       });
     }
 
@@ -8467,6 +8541,49 @@ export class TypsastraWorkspaceController {
     } finally {
       this.workspaceLoading = false;
       this.updateWorkspaceViewportVisibility();
+
+      // During application startup the active tab is restored while the editor
+      // is hidden behind the workspace loading state. A hidden CodeMirror scroll
+      // container cannot reliably restore a non-zero scrollTop.
+      //
+      // Reapply the persisted viewport after the workspace becomes visible and
+      // CodeMirror has had a chance to measure its final geometry.
+      const activeTab = this.getActiveTab();
+    
+      if (
+        activeTab &&
+        (activeTab.scrollTop !== undefined || activeTab.scrollLeft !== undefined)
+      ) {
+        const activePath = activeTab.path;
+        const targetScrollTop = activeTab.scrollTop ?? 0;
+        const targetScrollLeft = activeTab.scrollLeft ?? 0;
+    
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            if (
+              !this.activeFilePath ||
+              filePathKey(this.activeFilePath) !== filePathKey(activePath)
+            ) {
+              return;
+            }
+    
+            this.editorInstance.requestMeasure();
+    
+            this.editorInstance.scrollDOM.scrollTop = targetScrollTop;
+            this.editorInstance.scrollDOM.scrollLeft = targetScrollLeft;
+    
+            this.updateEditorCaretScrollMarker?.();
+    
+            this.appendDeveloperLog({
+              kind: "info",
+              source: "editor state",
+              message:
+                `Restored startup editor viewport: top=${targetScrollTop.toFixed(0)}, `
+                + `left=${targetScrollLeft.toFixed(0)}`
+            });
+          });
+        });
+      }
     }
     void this.startWorkspaceServices(selected);
   }
