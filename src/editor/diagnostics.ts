@@ -24,6 +24,28 @@ export const setEditorDiagnosticsEffect = StateEffect.define<EditorDiagnostic[]>
   }
 });
 
+export const editorDiagnosticsStateField = StateField.define<readonly EditorDiagnostic[]>({
+  create() {
+    return [];
+  },
+
+  update(value, transaction) {
+    let diagnostics = value.map((diagnostic) => ({
+      ...diagnostic,
+      from: transaction.changes.mapPos(diagnostic.from),
+      to: transaction.changes.mapPos(diagnostic.to)
+    }));
+
+    for (const effect of transaction.effects) {
+      if (effect.is(setEditorDiagnosticsEffect)) {
+        diagnostics = effect.value;
+      }
+    }
+
+    return diagnostics;
+  }
+});
+
 const diagnosticField = StateField.define<DecorationSet>({
   create() {
     return Decoration.none;
@@ -46,7 +68,7 @@ const diagnosticField = StateField.define<DecorationSet>({
   }
 });
 
-export const editorDiagnosticsExtension: Extension = diagnosticField;
+export const editorDiagnosticsExtension: Extension = [editorDiagnosticsStateField, diagnosticField];
 
 function isWordContinuation(text: string): boolean {
   return /^[\p{L}\p{N}_-]$/u.test(text);
