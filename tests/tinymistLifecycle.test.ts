@@ -71,6 +71,7 @@ describe("Tinymist workspace lifecycle", () => {
 
   test("uses one cached compiler root for on-save and on-type sessions", async () => {
     const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
+    const normalizedSource = source.replace(/\r\n/g, "\n");
     const preparation = source.indexOf("private async prepareRenderProjectIfNeeded");
     const preparationEnd = source.indexOf("\n  private ", preparation + 10);
     const method = source.slice(preparation, preparationEnd);
@@ -79,7 +80,7 @@ describe("Tinymist workspace lifecycle", () => {
     expect(method).not.toContain('renderMode !== "on-type"');
     expect(source).toContain("await this.updatePinnedMain(previewLspMainPath(target))");
     expect(source).not.toContain("cachedPreviewCompilerPath");
-    expect(source).toContain("await this.prepareRenderProjectIfNeeded();\n        await this.restartTinymistSession");
+    expect(normalizedSource).toContain("await this.prepareRenderProjectIfNeeded();\n        await this.restartTinymistSession");
   });
 
   test("corrects unsupported compiler-font scales after reporting them", async () => {

@@ -6,6 +6,17 @@ export type ReleaseSummary = {
 };
 
 const releaseSummaries: Record<string, ReleaseSummary> = {
+  "0.6.3": {
+    version: "0.6.3",
+    title: "Refined multilingual authoring",
+    highlights: [
+      "Context-aware Typst completion now learns preferred forms, supplies editable argument defaults, and recovers safely after Tinymist restarts.",
+      "Khmer editing and language tools gain improved segmentation, AltGr input, corrected caret placement, and immediate user-dictionary completion.",
+      "Diacritic-aware search, Surround With, auto-save, extra scroll space, and persistent window state streamline everyday editing.",
+      "Workspace font directories, additional scaled fonts, dependency guardrails, and bounded preview generations make projects safer to maintain."
+    ],
+    detailsUrl: "https://github.com/Sovichea/typsastra/releases/tag/v0.6.3"
+  },
   "0.6.1": {
     version: "0.6.1",
     title: "Lower-memory PDF loading",
