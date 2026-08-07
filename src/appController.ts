@@ -605,6 +605,7 @@ export class TypsastraWorkspaceController {
   private editorInputType = "unknown";
   private editorLastInputAt = 0;
   private editorLongTaskObserver: PerformanceObserver | null = null;
+  private readonly editorInputKeysHeld = new Set<string>();
   private readonly performanceSummaryCounts = new Map<PerformanceMetric["name"], number>();
   private readonly performanceDiagnostics = new PerformanceDiagnostics(metric => this.publishPerformanceMetric(metric));
   private readonly editorFontManager = new EditorFontManager(() => this.editorInstance);
@@ -1570,6 +1571,23 @@ export class TypsastraWorkspaceController {
       this.editorLastInputAt = this.editorInputStartedAt;
       this.editorInputType = event.inputType || "unknown";
     }, { capture: true });
+
+    this.editorInstance.contentDOM.addEventListener("keydown", event => {
+      if (!this.isEditorMutationKey(event)) return;
+      this.editorInputKeysHeld.add(event.code || event.key);
+    }, { capture: true });
+    
+    this.editorInstance.contentDOM.addEventListener("keyup", event => {
+      if (!this.isEditorMutationKey(event)) return;
+      this.editorInputKeysHeld.delete(event.code || event.key);
+      if (this.editorInputKeysHeld.size === 0 && this.pendingEditorMutation) this.restartEditorMutationTimer();
+    }, { capture: true });
+    
+    window.addEventListener("blur", () => {
+      this.editorInputKeysHeld.clear();
+      if (this.pendingEditorMutation) this.restartEditorMutationTimer();
+    });
+    
     this.initializeEditorLongTaskObserver();
     this.editorInstance.dom.addEventListener("pointerup", event => {
       if (!(event instanceof PointerEvent) || event.button !== 0) return;
@@ -2018,6 +2036,32 @@ export class TypsastraWorkspaceController {
     }
   }
 
+  private isEditorMutationKey(event: KeyboardEvent): boolean {
+    if (event.ctrlKey || event.metaKey) return false;
+    if (event.altKey && !isAltGraphKeyboardEvent(event)) return false;
+    return event.key.length === 1
+      || event.key === "Backspace"
+      || event.key === "Delete"
+      || event.key === "Enter"
+      || event.key === "Tab";
+  }
+  
+  private restartEditorMutationTimer(): void {
+    if (this.pendingEditorMutationTimer !== null) window.clearTimeout(this.pendingEditorMutationTimer);
+  
+    const delay = this.effectivePreviewRenderMode === "on-type"
+      ? Math.min(300, this.settingsController.value.preview.syncDebounceMs)
+      : 300;
+  
+    this.pendingEditorMutationTimer = window.setTimeout(() => {
+      this.pendingEditorMutationTimer = null;
+  
+      if (this.editorInputKeysHeld.size > 0) return;
+  
+      this.flushEditorContentMutation(delay);
+    }, delay);
+  }
+
   private scheduleEditorContentMutation(doc: Text): void {
     if (!this.activeFilePath) return;
     const startsTypingSequence = this.pendingEditorMutation === null;
@@ -2036,20 +2080,7 @@ export class TypsastraWorkspaceController {
       this.invalidatePreviewWork("editor input");
     }
     this.pendingEditorMutation = { path: this.activeFilePath, doc };
-    if (this.pendingEditorMutationTimer !== null) {
-      window.clearTimeout(this.pendingEditorMutationTimer);
-    }
-    // Keep the CodeMirror document as the in-memory source of truth while the
-    // user is typing. For on-type preview, copy one settled snapshot to
-    // Tinymist at the configured preview debounce boundary rather than after
-    // every input transaction.
-    const delay = this.effectivePreviewRenderMode === "on-type"
-      ? Math.min(300, this.settingsController.value.preview.syncDebounceMs)
-      : 300;
-    this.pendingEditorMutationTimer = window.setTimeout(() => {
-      this.pendingEditorMutationTimer = null;
-      this.flushEditorContentMutation(delay);
-    }, delay);
+    this.restartEditorMutationTimer();
   }
 
   private flushEditorContentMutation(previewDebounceElapsedMs = 0): void {

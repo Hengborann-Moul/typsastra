@@ -68,6 +68,9 @@ lto = true # Enables link-time optimizations
 opt-level = "s" # Optimize for binary size
 strip = true # Automatically strip symbols from the binary
 
+[profile.dev]
+opt-level = 2
+
 [profile.dev.package.khmer_segmenter]
 opt-level = 3
 
