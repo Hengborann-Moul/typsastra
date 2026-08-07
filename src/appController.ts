@@ -897,6 +897,7 @@ export class TypsastraWorkspaceController {
     this.timeStartupSync("initialize CodeMirror", () => this.initCodeMirror());
     this.timeStartupSync("initialize document outline", () => this.documentOutlineController.initialize());
     this.timeStartupSync("apply settings to runtime", () => this.applySettingsToRuntime(this.settingsController.value));
+    await this.timeStartup("load editor fonts", () => this.editorFontManager.ready());
     this.timeStartupSync("initialize explorer", () => this.initExplorer());
     this.timeStartupSync("initialize editor toolbar", () => this.editorToolbarController.initialize());
     this.timeStartupSync("initialize tab strip", () => this.tabStripController.initialize());
@@ -8539,6 +8540,7 @@ export class TypsastraWorkspaceController {
       await message(String(error), { title: "Unable to Open Project", kind: "error" });
       return;
     } finally {
+      await this.editorFontManager.ready();
       this.workspaceLoading = false;
       this.updateWorkspaceViewportVisibility();
 

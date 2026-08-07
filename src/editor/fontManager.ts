@@ -67,6 +67,19 @@ export class EditorFontManager {
     this.refresh();
   }
 
+  public async ready(): Promise<void> {
+    const families = [
+      this.codeFont,
+      ...this.configuredFamilies()
+    ];
+  
+    await Promise.allSettled(
+      families
+        .filter(family => family !== "auto" && family !== "none")
+        .map(family => document.fonts.load(`16px "${family}"`))
+    );
+  }
+
   public updateDocument(text: string): void {
     const effect = this.prepareDocument(text);
     if (effect) this.getEditorView()?.dispatch({ effects: effect });
