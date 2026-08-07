@@ -367,24 +367,60 @@ export class TypsastraSearchPanel implements Panel {
     this.dom = document.createElement("div");
     this.dom.className = "cm-search";
     this.dom.addEventListener("keydown", event => this.keydown(event));
-    this.dom.append(
+    const searchRow = document.createElement("div");
+    searchRow.className = "cm-search-row";
+    searchRow.append(
       this.searchField,
       button("next", "next", () => findNext(view)),
       button("prev", "previous", () => findPrevious(view)),
       button("select", "all", () => selectMatches(view)),
       checkboxLabel(this.caseField, "match case"),
-      checkboxLabel(this.regexpField, "regexp"),
-      checkboxLabel(this.wordField, "by word"),
-      checkboxLabel(this.diacriticsField, "match diacritics")
+      checkboxLabel(this.regexpField, "regexp")
     );
+    
+    const replaceRow = document.createElement("div");
+    replaceRow.className = "cm-search-row";
+    
     if (!view.state.readOnly) {
-      this.dom.append(
-        document.createElement("br"),
+      replaceRow.append(
         this.replaceField,
         button("replace", "replace", () => replaceNext(view)),
         button("replaceAll", "replace all", () => replaceAll(view))
       );
     }
+    
+    const optionsRow = document.createElement("div");
+    optionsRow.className = "cm-search-options";
+    optionsRow.append(
+      checkboxLabel(this.wordField, "by word"),
+      checkboxLabel(this.diacriticsField, "match diacritics")
+    );
+
+    Object.assign(searchRow.style, {
+      display: "flex",
+      alignItems: "center",
+      gap: "12px"
+    });
+    
+    Object.assign(replaceRow.style, {
+      display: "flex",
+      alignItems: "center",
+      gap: "12px"
+    });
+    
+    Object.assign(optionsRow.style, {
+      display: "flex",
+      alignItems: "center",
+      gap: "20px"
+    });
+    
+    this.searchField.style.width = "280px";
+    this.replaceField.style.width = "280px";
+    
+    this.dom.append(searchRow);
+    if (!view.state.readOnly) this.dom.append(replaceRow);
+    this.dom.append(optionsRow);
+    
     const close = button("close", "\u00d7", () => closeSearchPanel(view));
     close.setAttribute("aria-label", "close");
     this.dom.append(close);
