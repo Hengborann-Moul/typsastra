@@ -3142,7 +3142,19 @@ export class TypsastraWorkspaceController {
       }
       await this.lspClient.restart();
       this.lspReady = true;
-      void this.discoverSurroundWithOptions();
+      // Do not run Surround With discovery immediately after a restart.
+      // It opens a temporary Typst document and requests completion while
+      // the real workspace document is still being restored.
+      //
+      // Built-in Surround With options remain available from
+      // SURROUND_WITH_OPTIONS.
+      this.surroundWithOptions = SURROUND_WITH_OPTIONS;
+      
+      this.appendDeveloperLog({
+        kind: "info",
+        source: "lsp lifecycle",
+        message: `Tinymist restart ${sequence} completed.`
+      });
       this.appendDeveloperLog({
         kind: "info",
         source: "lsp lifecycle",
@@ -4230,20 +4242,78 @@ export class TypsastraWorkspaceController {
 
   private async recheckActiveDocumentAfterPin(text: string): Promise<void> {
     if (!this.activeFilePath || !this.lspReady || !this.lspClient) return;
-
+  
     this.clearDiagnostics();
-    const version = ++this.currentVersion;
-    this.latestDocumentVersion = version;
-    const activeTab = this.getActiveTab();
-    if (activeTab && activeTab.path === this.activeFilePath) {
-      activeTab.version = version;
-      activeTab.latestVersion = version;
-    }
-    const lspRes = await this.getLspUriAndContent(this.activeFilePath, text);
+  
+    const activePath = this.activeFilePath;
+    const lspRes = await this.getLspUriAndContent(activePath, text);
+  
     if (!lspRes) return;
+  
     const { uri: lspUri, content: lspContent } = lspRes;
-    await this.openDocumentIfNeeded(lspUri, lspContent, version);
-    await this.lspClient.notifyTextChange(lspUri, lspContent, version);
+  
+    const activeTab = this.getActiveTab();
+  
+    //
+    // After a Tinymist restart openedDocumentUris is cleared, so the
+    // document must be registered with didOpen again.
+    //
+    if (!this.openedDocumentUris.has(lspUri)) {
+      const openVersion = ++this.currentVersion;
+  
+      this.latestDocumentVersion = openVersion;
+  
+      if (activeTab && activeTab.path === activePath) {
+        activeTab.version = openVersion;
+        activeTab.latestVersion = openVersion;
+      }
+  
+      await this.lspClient.openTextDocument(
+        lspUri,
+        lspContent,
+        openVersion
+      );
+  
+      this.openedDocumentUris.add(lspUri);
+  
+      this.appendDeveloperLog({
+        kind: "info",
+        source: "lsp lifecycle",
+        message:
+          `Reopened Tinymist document after restart: `
+          + `${lspUri}; version=${openVersion}`
+      });
+  
+      // didOpen already contains the complete current document.
+      // Do not immediately send an identical didChange.
+      return;
+    }
+  
+    //
+    // Document was already open, so this really is a change.
+    //
+    const changeVersion = ++this.currentVersion;
+  
+    this.latestDocumentVersion = changeVersion;
+  
+    if (activeTab && activeTab.path === activePath) {
+      activeTab.version = changeVersion;
+      activeTab.latestVersion = changeVersion;
+    }
+  
+    await this.lspClient.notifyTextChange(
+      lspUri,
+      lspContent,
+      changeVersion
+    );
+  
+    this.appendDeveloperLog({
+      kind: "info",
+      source: "lsp lifecycle",
+      message:
+        `Resynchronized open Tinymist document: `
+        + `${lspUri}; version=${changeVersion}`
+    });
   }
 
   private async renderPdfPreview(contents: string, force = false): Promise<void> {
@@ -5325,12 +5395,92 @@ export class TypsastraWorkspaceController {
     await this.lspClient.notifyTextChange(lspUri, lspContent, version);
   }
 
-  private async restoreActiveDocumentAfterTinymistRestart(forcePreview = true): Promise<void> {
-    if (!this.activeFilePath) return;
-    await this.refreshActivePreviewRoot(forcePreview);
+  private async restoreActiveDocumentAfterTinymistRestart(
+    forcePreview = true
+  ): Promise<void> {
+    if (
+      !this.activeFilePath ||
+      !this.workspaceRootPath ||
+      !this.lspReady ||
+      !this.lspClient
+    ) {
+      return;
+    }
+  
+    const activePath = this.activeFilePath;
     const tab = this.getActiveTab();
-    if (!tab?.contentLoaded || !isTypstDocumentPath(tab.path)) return;
-    await this.recheckActiveDocumentAfterPin(this.editorInstance.state.doc.toString());
+  
+    if (!tab?.contentLoaded || !isTypstDocumentPath(tab.path)) {
+      return;
+    }
+  
+    const contents = this.editorInstance.state.doc.toString();
+  
+    try {
+      //
+      // IMPORTANT:
+      // A Tinymist restart clears pinnedLspMainPath. Restore the project's
+      // main-file context explicitly before reopening the active document.
+      //
+      let target = await invoke<PreviewTarget>("resolve_preview_main", {
+        filePath: activePath,
+        workspaceRootPath: this.workspaceRootPath,
+        fileContents: contents,
+        pinnedMainPath: this.pinnedMainFilePath
+      });
+  
+      target = await this.prepareTemplateAwarePreview(
+        target,
+        activePath,
+        contents
+      );
+  
+      if (!target.disabled) {
+        const mainPath = previewLspMainPath(target);
+  
+        await this.updatePinnedMain(
+          mainPath,
+          true
+        );
+  
+        this.appendDeveloperLog({
+          kind: "info",
+          source: "lsp lifecycle",
+          message:
+            `Restored Tinymist main-file context after restart: `
+            + `${mainPath ?? "none"}`
+        });
+      }
+  
+      //
+      // Re-register the active editor document only after Tinymist knows
+      // which main document owns the project context.
+      //
+      await this.recheckActiveDocumentAfterPin(contents);
+  
+      //
+      // Preview restoration is intentionally last. Completion should not
+      // depend on PDF-preview initialization finishing first.
+      //
+      await this.refreshActivePreviewRoot(forcePreview);
+  
+      this.appendDeveloperLog({
+        kind: "info",
+        source: "lsp lifecycle",
+        message:
+          `Restored Tinymist document context after restart: ${activePath}`
+      });
+    } catch (error) {
+      this.appendDeveloperLog({
+        kind: "error",
+        source: "lsp lifecycle",
+        message:
+          `Failed to restore Tinymist document context after restart: `
+          + String(error)
+      });
+  
+      throw error;
+    }
   }
 
 
