@@ -630,7 +630,9 @@ const showZeroWidthSpacesPlugin = ViewPlugin.fromClass(class {
 
       for (let i = 0; i < text.length; i++) {
         const char = text[i];
-        if (char === "\u200b" || char === "\u200c") {
+        if (char === "\u200b") {
+          ranges.push({ from: from + i + 1, to: from + i + 2, deco: zwsMark });
+        } else if (char === "\u200c") {
           ranges.push({ from: from + i, to: from + i + 1, deco: zwsMark });
         } else if (char === "\u00ad" || char === "\u200d" || char === "\u200e" || char === "\u200f" || char === "\u2060") {
           ranges.push({ from: from + i, to: from + i + 1, deco: invisibleBlockMark });
