@@ -3274,7 +3274,6 @@ body.typsastra-resizing #input-container-wrapper::after {
 
 .workspace-explorer-section:focus-within,
 .outline-section:focus-within,
-#input-container-wrapper:focus-within,
 #preview-container-wrapper:focus-within,
 #log-console:focus-within {
   outline: 1px solid color-mix(in srgb, var(--ui-accent-color) 42%, transparent);
