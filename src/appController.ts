@@ -22,7 +22,7 @@ import {
 import { cursorRowColumn } from "./editor/verticalCursor";
 import { isForwardSyncContentPosition } from "./editor/forwardSyncEligibility";
 import type { EditorFoldRange } from "./editor/folding";
-import { looksLikeStalePrefixDiagnostic, setEditorDiagnosticsEffect } from "./editor/diagnostics";
+import { editorDiagnosticsStateField, looksLikeStalePrefixDiagnostic, setEditorDiagnosticsEffect } from "./editor/diagnostics";
 import type { EditorDiagnostic, EditorDiagnosticSeverity } from "./editor/diagnostics";
 import { WorkspaceExplorer } from "./components/explorer";
 import { TinymistLspClient } from "./compiler/lsp";
@@ -106,7 +106,7 @@ import { AppUpdateController } from "./appUpdateController";
 import { releaseSummaryForVersion, shouldShowReleaseSummary } from "./releaseNotes";
 import { WebviewStorageController } from "./webviewStorageController";
 import { SystemResumeMonitor } from "./platform/systemResume";
-import { setImageOptimizationWarningsEffect, type ImageOptimizationWarning } from "./editor/imageWarnings";
+import { imageOptimizationWarningField, setImageOptimizationWarningsEffect, type ImageOptimizationWarning } from "./editor/imageWarnings";
 import {
   captureEditorUndoHistory,
   createTabEditorState,
@@ -123,9 +123,6 @@ import {
   templatePreviewSource,
   templateTypographyEdit
 } from "./editor/templateTypography";
-
-import { editorDiagnosticsExtension, editorDiagnosticsStateField, setEditorDiagnosticsEffect } from "./editor/diagnostics";
-import { imageOptimizationWarningField, setImageOptimizationWarningsEffect } from "./editor/imageWarnings";
 
 type EditorMode = "CODE" | "WYSIWYM";
 
@@ -410,21 +407,6 @@ function normalizeEditorText(text: string): string {
   return text.replace(/\r\n?/g, "\n");
 }
 
-function isScrollbarPointerEvent(element: HTMLElement, event: PointerEvent): boolean {
-  const rect = element.getBoundingClientRect();
-  const canScrollVertically = element.scrollHeight > element.clientHeight;
-  const canScrollHorizontally = element.scrollWidth > element.clientWidth;
-  const verticalScrollbarWidth = canScrollVertically
-    ? Math.max(12, element.offsetWidth - element.clientWidth)
-    : 0;
-  const horizontalScrollbarHeight = canScrollHorizontally
-    ? Math.max(12, element.offsetHeight - element.clientHeight)
-    : 0;
-  const inVerticalScrollbar = canScrollVertically && event.clientX >= rect.right - verticalScrollbarWidth;
-  const inHorizontalScrollbar = canScrollHorizontally && event.clientY >= rect.bottom - horizontalScrollbarHeight;
-  return inVerticalScrollbar || inHorizontalScrollbar;
-}
-
 function ensureEditorCaretRippleStyle(): void {
   if (document.getElementById("typsastra-editor-caret-ripple-style")) return;
   const style = document.createElement("style");
@@ -459,6 +441,7 @@ export class TypsastraWorkspaceController {
   private workspaceRootPath: string | null = null;
   private workspaceMetadata: WorkspaceMetadata | null = null;
   private workspaceLoading = false;
+  private systemResumeRecoveryActive = false;
   private workspaceServicesDeferredForLargeFile = false;
   private readonly approvedLargePreviewRoots = new Set<string>();
   private readonly inspectedPreviewRoots = new Set<string>();
@@ -850,7 +833,7 @@ export class TypsastraWorkspaceController {
     || this.appUpdateController.isInstalling
   );
   private readonly systemResumeMonitor = new SystemResumeMonitor(suspendedMs => {
-    this.recoverAfterSystemResume(suspendedMs);
+    void this.recoverAfterSystemResume(suspendedMs);
   });
   private readonly windowStateController = new WindowStateController(getCurrentWindow());
   private lspStatus = document.getElementById("lsp-status")!;
@@ -3739,7 +3722,19 @@ export class TypsastraWorkspaceController {
     this.previewFrame.resumeResizeLayout();
   }
 
-  private recoverAfterSystemResume(suspendedMs: number): void {
+  private async recoverAfterSystemResume(suspendedMs: number): Promise<void> {
+    if (this.systemResumeRecoveryActive) {
+      this.appendDeveloperLog({
+        kind: "log",
+        source: "workspace",
+        message: "Ignored a duplicate system-resume recovery while the workspace was already being restored."
+      });
+      return;
+    }
+    this.systemResumeRecoveryActive = true;
+    const showRecoveryCover = !!this.workspaceRootPath && !!this.activeFilePath;
+    if (showRecoveryCover) document.body.classList.add("typsastra-resume-recovering");
+
     const interruptedResize = this.layoutController.recoverInterruptedResize();
     if (this.horizontalPaneResizeActive) this.endHorizontalPaneResize();
 
@@ -3754,19 +3749,70 @@ export class TypsastraWorkspaceController {
     this.pdfSyncSocket = null;
     this.pdfSyncSocketUrl = "";
 
-    this.refreshEditorLayout("system resume");
-    if (
-      this.lspReady
-      && this.previewFrame.currentUrl
-      && this.pdfPreviewGeneration > 0
-      && !this.pdfPreviewRunning
-    ) {
-      this.schedulePdfSourceMapWarmup(this.pdfPreviewGeneration);
+    try {
+      // WebView2 can discard font and layout resources while Windows is
+      // suspended. Startup and workspace opening wait for these fonts before
+      // exposing the editor, so resume must restore the same invariant.
+      await this.editorFontManager.ready();
+      if (this.editorInstance) {
+        this.editorFontManager.updateDocument(this.editorInstance.state.doc.toString());
+      }
+
+      this.previewFrame.resumeResizeLayout();
+      this.previewFrame.syncTheme();
+      if (this.workspaceRootPath) this.applySidebarVisibility();
+      this.layoutController.reconcileDockedPaneWidths();
+
+      // The first post-resume frame can still use the pre-suspend display
+      // metrics. Measure once after two paints, then again after WebView2 has
+      // delivered delayed monitor/DPI resize notifications.
+      await this.waitForResumeLayoutFrames();
+      this.remeasureWorkspaceAfterResume("system resume");
+      await new Promise<void>(resolve => window.setTimeout(resolve, 160));
+      await this.waitForResumeLayoutFrames();
+      this.remeasureWorkspaceAfterResume("system resume settling");
+
+      if (
+        this.lspReady
+        && this.previewFrame.currentUrl
+        && this.pdfPreviewGeneration > 0
+        && !this.pdfPreviewRunning
+      ) {
+        this.schedulePdfSourceMapWarmup(this.pdfPreviewGeneration);
+      }
+      this.appendDeveloperLog({
+        kind: "info",
+        source: "workspace",
+        message: `Recovered after system resume (${Math.round(suspendedMs / 1000)}s suspended); interruptedResize=${interruptedResize}.`
+      });
+    } catch (error) {
+      this.appendDeveloperLog({
+        kind: "error",
+        source: "workspace",
+        message: `System-resume workspace recovery failed: ${String(error)}`
+      });
+    } finally {
+      document.body.classList.remove("typsastra-resume-recovering");
+      this.systemResumeRecoveryActive = false;
     }
+  }
+
+  private waitForResumeLayoutFrames(): Promise<void> {
+    return new Promise(resolve => {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+    });
+  }
+
+  private remeasureWorkspaceAfterResume(reason: string): void {
+    this.layoutController.reconcileDockedPaneWidths();
+    this.editorInstance?.requestMeasure();
+    this.updateEditorCaretScrollMarker();
+    this.updateEditorDiagnosticScrollMarkers();
+    this.previewFrame.syncTheme();
     this.appendDeveloperLog({
-      kind: "info",
-      source: "workspace",
-      message: `Recovered after system resume (${Math.round(suspendedMs / 1000)}s suspended); interruptedResize=${interruptedResize}.`
+      kind: "log",
+      source: "editor layout",
+      message: `Rehydrated workspace layout after ${reason}.`
     });
   }
 

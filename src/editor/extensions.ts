@@ -106,7 +106,7 @@ export function scrollPastDocumentEnd(): Extension {
     destroy(): void {
       this.resizeObserver.disconnect();
       this.view.contentDOM.style.removeProperty("--typsastra-scroll-past-end-height");
-      this.view.contentDOM.syyle.removeProperty("--typsastra-gutter-width");
+      this.view.dom.style.removeProperty("--typsastra-gutter-width");
     }
 
     private updateHeight(): void {

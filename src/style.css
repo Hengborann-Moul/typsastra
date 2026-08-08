@@ -4085,6 +4085,19 @@ button.welcome-item:disabled {
 
 @keyframes workspace-loading-spin { to { transform: rotate(360deg); } }
 
+body.typsastra-resume-recovering #workspace-viewport::after {
+  content: "Restoring workspace\2026";
+  position: absolute;
+  inset: 0;
+  z-index: 2147483645;
+  display: grid;
+  place-items: center;
+  color: var(--ui-header-text);
+  background: var(--ui-bg);
+  font: 12px var(--font-family-sans);
+  pointer-events: all;
+}
+
 .preview-only-mode #preview-recompile-btn,
 .preview-only-mode #preview-forward-sync-btn {
   display: none;

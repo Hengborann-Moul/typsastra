@@ -38,7 +38,11 @@ describe("UI responsiveness safeguards", () => {
     const layoutSource = await Bun.file(new URL("../src/layout/layoutController.ts", import.meta.url)).text();
     expect(appSource).toContain("recoverAfterSystemResume");
     expect(appSource).toContain("this.layoutController.recoverInterruptedResize()");
-    expect(appSource).toContain('this.refreshEditorLayout("system resume")');
+    expect(appSource).toContain("await this.editorFontManager.ready()");
+    expect(appSource).toContain('this.remeasureWorkspaceAfterResume("system resume settling")');
+    expect(appSource).toContain('document.body.classList.add("typsastra-resume-recovering")');
+    expect(appSource).toContain('document.body.classList.remove("typsastra-resume-recovering")');
+    expect(appSource).toContain("this.previewFrame.syncTheme()");
     expect(layoutSource).toContain("recoverInterruptedResize");
     expect(layoutSource).toContain('document.body.classList.remove("typsastra-resizing")');
   });
