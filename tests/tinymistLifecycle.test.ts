@@ -98,11 +98,19 @@ describe("Tinymist workspace lifecycle", () => {
     const manualRestart = source.indexOf('document.getElementById("action-restart-lsp")');
     const restartClear = source.indexOf("this.logConsoleController.clearAllLogs();", manualRestart);
     const restartCall = source.indexOf('restartTinymistSession("Restarting LSP..."', manualRestart);
+    const restartRestore = source.indexOf(
+      "await this.restoreActiveDocumentAfterTinymistRestart();",
+      restartCall
+    );
+    const nextAction = source.indexOf('document.getElementById("action-docs-typsastra")', restartCall);
     expect(closeClear).toBeGreaterThan(closeProject);
     expect(closeConsole).toBeGreaterThan(closeClear);
     expect(closeConsole).toBeLessThan(manualRestart);
     expect(restartClear).toBeGreaterThan(manualRestart);
     expect(restartClear).toBeLessThan(restartCall);
+    expect(restartRestore).toBeGreaterThan(restartCall);
+    expect(restartRestore).toBeLessThan(nextAction);
+    expect(source.slice(manualRestart, nextAction)).not.toContain("activateEditorTab");
   });
 
   test("restarts and requeues a preview interrupted by an unexpected Tinymist stop", async () => {

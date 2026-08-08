@@ -3866,12 +3866,20 @@ button.welcome-item:disabled {
 
 .cm-warningGutter .cm-gutterElement {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
   width: 28px;
   min-width: 28px;
   padding: 0 5px;
   box-sizing: border-box;
+}
+
+.cm-warningGutter .cm-image-optimization-marker,
+.cm-warningGutter .cm-lsp-error-marker {
+  flex: 0 0 18px;
+  width: 18px;
+  height: 18px;
+  margin-top: max(0px, calc((var(--editor-line-height-px, 23.8px) - 18px) / 2));
 }
 
 .preview-preserved-message-overlay {

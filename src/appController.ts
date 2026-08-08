@@ -9935,7 +9935,6 @@ export class TypsastraWorkspaceController {
     });
 
     document.getElementById("action-restart-lsp")?.addEventListener("click", async () => {
-      const activePath = this.activeFilePath;
       this.tinymistPreviewRecoveryAttempts = 0;
       this.logConsoleController.clearAllLogs();
       this.previewFrame.clear();
@@ -9946,10 +9945,10 @@ export class TypsastraWorkspaceController {
         this.setLspStatus({ kind: "error", message: `LSP restart failed: ${String(error)}` });
         return;
       }
-      if (activePath && this.openTabs.some(tab => filePathKey(tab.path) === filePathKey(activePath))) {
-        this.activeFilePath = null;
-        await this.activateEditorTab(activePath, false);
-      }
+      // Re-register the existing in-memory document with Tinymist without
+      // replacing CodeMirror's EditorState. The editor parser, selection,
+      // viewport, and undo history are independent of the LSP lifecycle.
+      await this.restoreActiveDocumentAfterTinymistRestart();
     });
 
     document.getElementById("action-docs-typsastra")?.addEventListener("click", () => {

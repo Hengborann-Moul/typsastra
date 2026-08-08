@@ -107,6 +107,12 @@ describe("theme-aware application accents", () => {
     expect(style).toMatch(
       /\.cm-warningGutter \.cm-gutterElement\s*\{[^}]*width:\s*28px[^}]*padding:\s*0 5px/s
     );
+    expect(style).toMatch(
+      /\.cm-warningGutter \.cm-gutterElement\s*\{[^}]*align-items:\s*flex-start/s
+    );
+    expect(style).toMatch(
+      /\.cm-warningGutter \.cm-lsp-error-marker\s*\{[^}]*height:\s*18px[^}]*margin-top:/s
+    );
     expect(editorThemes).toMatch(
       /\.cm-foldGutter \.cm-gutterElement"[\s\S]*?width:\s*"28px"[\s\S]*?padding:\s*"0 5px !important"/
     );

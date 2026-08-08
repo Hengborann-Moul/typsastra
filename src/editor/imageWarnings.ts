@@ -62,7 +62,6 @@ class LspErrorMarker extends GutterMarker {
       display: "inline-flex",
       alignItems: "center",
       justifyContent: "center",
-      height: "100%",
       verticalAlign: "middle",
       color: "#f14c4c"
     });
