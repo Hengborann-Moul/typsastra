@@ -26,6 +26,7 @@
     "@babel/runtime": "^8.0.0",
     "@codemirror/autocomplete": "^6.20.3",
     "@codemirror/commands": "^6.6.0",
+    "@codemirror/lang-markdown": "^6.5.2",
     "@codemirror/language": "^6.10.0",
     "@codemirror/search": "^6.7.1",
     "@codemirror/state": "^6.4.1",
@@ -41,7 +42,9 @@
     "@tauri-apps/plugin-updater": "^2.10.1",
     "@uiw/codemirror-themes": "^4.25.10",
     "@uiw/codemirror-themes-all": "^4.25.10",
+    "dompurify": "^3.4.13",
     "lucide": "^1.0.0",
+    "marked": "^18.0.9",
     "pdfjs-dist": "^6.1.200",
     "tinymist": "^0.12.16"
   },

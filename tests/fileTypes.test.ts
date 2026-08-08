@@ -1,12 +1,20 @@
 import { describe, expect, test } from "bun:test";
-import { fileExtension, isBinaryImagePath, isSupportedInAppPath, isTypstDocumentPath } from "../src/platform/fileTypes";
+import {
+  fileExtension,
+  isBinaryImagePath,
+  isMarkdownDocumentPath,
+  isSupportedInAppPath,
+  isTypstDocumentPath,
+} from "../src/platform/fileTypes";
 
 describe("file types", () => {
-  test("switches non-Typst text files to the plain-text editor mode", async () => {
+  test("routes Typst, Markdown, and plain-text files to separate editor modes", async () => {
     const extensions = await Bun.file(new URL("../src/editor/extensions.ts", import.meta.url)).text();
     const controller = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
     expect(extensions).toContain("languageCompartment.of(typstLanguage)");
-    expect(controller).toContain("languageCompartment.reconfigure(isTypstDocument ? typstLanguage : [])");
+    expect(controller).toContain("private editorLanguageForPath(path: string): Extension");
+    expect(controller).toContain("if (isMarkdownDocumentPath(path)) return this.markdownEditorLanguage");
+    expect(controller).toContain("languageCompartment.reconfigure(this.editorLanguageForPath(path))");
   });
 
   test("recognizes supported editor and image formats case-insensitively", () => {
@@ -26,7 +34,7 @@ describe("file types", () => {
     const controller = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
     expect(controller).toContain('invoke<boolean>("is_probably_plain_text_file", { path })');
     expect(controller).toContain("this.detectedPlainTextPaths.add(key)");
-    expect(controller).toContain("languageCompartment.reconfigure(isTypstDocument ? typstLanguage : [])");
+    expect(controller).toContain("return [];");
   });
 
   test("extracts only a file-name extension", () => {
@@ -37,5 +45,11 @@ describe("file types", () => {
     expect(isTypstDocumentPath("C:\\docs\\main.TYP")).toBe(true);
     expect(isTypstDocumentPath("/docs/notes.md")).toBe(false);
     expect(isTypstDocumentPath("/docs/notes.txt")).toBe(false);
+  });
+
+  test("recognizes Markdown documents without treating them as Typst", () => {
+    expect(isMarkdownDocumentPath("C:\\docs\\README.MD")).toBe(true);
+    expect(isMarkdownDocumentPath("/docs/guide.markdown")).toBe(true);
+    expect(isMarkdownDocumentPath("/docs/main.typ")).toBe(false);
   });
 });

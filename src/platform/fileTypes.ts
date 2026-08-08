@@ -23,6 +23,11 @@ export function isTypstDocumentPath(path: string): boolean {
   return fileExtension(path) === "typ";
 }
 
+export function isMarkdownDocumentPath(path: string): boolean {
+  const extension = fileExtension(path);
+  return extension === "md" || extension === "markdown";
+}
+
 export function isSupportedInAppPath(path: string): boolean {
   const extension = fileExtension(path);
   return IMAGE_EXTENSIONS.has(extension) || TEXT_EXTENSIONS.has(extension) || extension === "pdf";

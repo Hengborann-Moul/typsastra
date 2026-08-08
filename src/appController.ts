@@ -10,6 +10,7 @@ import { EditorView, highlightActiveLine, highlightActiveLineGutter, lineNumbers
 import { undo, redo, undoDepth } from "@codemirror/commands";
 import { foldAll, foldEffect, foldedRanges, indentUnit, unfoldAll, unfoldEffect } from "@codemirror/language";
 import { closeBrackets, completionStatus } from "@codemirror/autocomplete";
+import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { getEditorExtensions, themeCompartment, getThemeExtension, applyUIThemeVariables, wrapCompartment, lineNumbersCompartment, activeLineCompartment, closeBracketsCompartment, indentationGuidesCompartment, tabSizeCompartment, completionCompartment, languageCompartment, showZwsCompartment, showZeroWidthSpaces, visibleIndentationMarkers } from "./editor/extensions";
 import { typstLanguage } from "./editor/typstLanguage";
 import { createTypstAutocomplete } from "./editor/autocomplete";
@@ -38,9 +39,10 @@ import {
 import type { AppSettings, DeveloperLogCategory, PreviewRenderMode, ThemeName } from "./settings";
 import { SettingsController } from "./settingsController";
 import { fileNameFromPath, filePathFromUri, filePathKey, filePathToUri, nativeFilePath, relativeFilePath, remapFilePath } from "./platform/paths";
-import { isBinaryImagePath, isSupportedInAppPath, isTypstDocumentPath, fileExtension } from "./platform/fileTypes";
+import { isBinaryImagePath, isMarkdownDocumentPath, isSupportedInAppPath, isTypstDocumentPath, fileExtension } from "./platform/fileTypes";
 import { WysiwymAdapter } from "./wysiwym/adapter";
 import { PreviewFrame, type PreviewClickPoint, type PreviewInteractionStatus, type PreviewPageStatus, type PreviewSurface } from "./preview/previewFrame";
+import { MarkdownPreviewFrame, type MarkdownResource } from "./preview/markdownPreviewFrame";
 import { PreviewSyncController } from "./preview/previewSyncController";
 import {
   tinymistDataPlaneFrameConfirmsSourceMap,
@@ -596,6 +598,7 @@ export class TypsastraWorkspaceController {
   private readonly performanceSummaryCounts = new Map<PerformanceMetric["name"], number>();
   private readonly performanceDiagnostics = new PerformanceDiagnostics(metric => this.publishPerformanceMetric(metric));
   private readonly editorFontManager = new EditorFontManager(() => this.editorInstance);
+  private readonly markdownEditorLanguage = markdown({ base: markdownLanguage });
   private readonly spellcheckController = new SpellcheckController(
     () => this.editorInstance,
     issues => this.updateSpellcheckLog(issues),
@@ -650,6 +653,10 @@ export class TypsastraWorkspaceController {
     // preview-only controller.
     if (isPreviewOnlyWindow()) return;
     return this.logMemoryDiagnostics(`PDF ${stage}`, detail);
+  });
+  private readonly markdownPreviewFrame = new MarkdownPreviewFrame(this.previewPane, {
+    resolveImage: (documentPath, source) => this.resolveMarkdownImage(documentPath, source),
+    openLink: (documentPath, href) => this.openMarkdownLink(documentPath, href),
   });
   private readonly previewSyncController = new PreviewSyncController({
     getEditor: () => this.editorInstance,
@@ -1274,39 +1281,16 @@ export class TypsastraWorkspaceController {
       indentationGuidesCompartment.reconfigure(editor.indentationGuides ? visibleIndentationMarkers() : []),
       tabSizeCompartment.reconfigure([EditorState.tabSize.of(editor.tabSize), indentUnit.of(indentation)]),
       showZwsCompartment.reconfigure(editor.showZws ? showZeroWidthSpaces : []),
-      completionCompartment.reconfigure(createTypstAutocomplete(
-        () => this.lspClient,
-        () => this.getActiveLspUri(),
-        () => this.flushPendingLspSync(),
-        editor.wordCompletion,
-        () => this.spellcheckController.getProviders(),
-        providers => this.documentLanguageService.completionProvider(providers),
-        () => this.documentLanguageService.currentGeneration(),
-        milliseconds => this.performanceDiagnostics.record({ name: "language.completion", milliseconds }),
-        message => this.appendDeveloperLog({ kind: "info", source: "lsp autocomplete", message }),
-        () => this.settingsController.value.editor.userDictionary,
-      ))
+      completionCompartment.reconfigure(this.editorCompletionForPath(this.activeFilePath ?? ""))
     ];
   }
 
   private handleLanguageProvidersChanged(providers: Parameters<SpellcheckController["setProviders"]>[0]): void {
     this.spellcheckController.setProviders(providers);
     document.dispatchEvent(new CustomEvent("typsastra:language-providers-changed"));
-    const editor = this.settingsController.value.editor;
     if (!this.editorInstance) return;
     this.editorInstance.dispatch({
-      effects: completionCompartment.reconfigure(createTypstAutocomplete(
-        () => this.lspClient,
-        () => this.getActiveLspUri(),
-        () => this.flushPendingLspSync(),
-        editor.wordCompletion,
-        () => this.spellcheckController.getProviders(),
-        providers => this.documentLanguageService.completionProvider(providers),
-        () => this.documentLanguageService.currentGeneration(),
-        milliseconds => this.performanceDiagnostics.record({ name: "language.completion", milliseconds }),
-        message => this.appendDeveloperLog({ kind: "info", source: "lsp autocomplete", message }),
-        () => this.settingsController.value.editor.userDictionary,
-      ))
+      effects: completionCompartment.reconfigure(this.editorCompletionForPath(this.activeFilePath ?? ""))
     });
   }
 
@@ -2852,6 +2836,81 @@ export class TypsastraWorkspaceController {
     return isSupportedInAppPath(path) || this.detectedPlainTextPaths.has(filePathKey(path));
   }
 
+  private editorLanguageForPath(path: string): Extension {
+    if (isTypstDocumentPath(path)) return typstLanguage;
+    if (isMarkdownDocumentPath(path)) return this.markdownEditorLanguage;
+    return [];
+  }
+
+  private editorCompletionForPath(path: string): Extension {
+    if (!isTypstDocumentPath(path)) return [];
+    const editor = this.settingsController.value.editor;
+    return createTypstAutocomplete(
+      () => this.lspClient,
+      () => this.getActiveLspUri(),
+      () => this.flushPendingLspSync(),
+      editor.wordCompletion,
+      () => this.spellcheckController.getProviders(),
+      providers => this.documentLanguageService.completionProvider(providers),
+      () => this.documentLanguageService.currentGeneration(),
+      milliseconds => this.performanceDiagnostics.record({ name: "language.completion", milliseconds }),
+      message => this.appendDeveloperLog({ kind: "info", source: "lsp autocomplete", message }),
+      () => this.settingsController.value.editor.userDictionary,
+    );
+  }
+
+  private async resolveMarkdownWorkspacePath(documentPath: string, reference: string): Promise<string | null> {
+    if (!this.workspaceRootPath || !reference || reference.startsWith("#")) return null;
+    if (/^(?:data:|https?:|mailto:)/iu.test(reference)) return null;
+    const pathOnly = reference.split(/[?#]/u, 1)[0];
+    if (!pathOnly) return null;
+    let decoded = pathOnly;
+    try {
+      decoded = decodeURIComponent(pathOnly);
+    } catch {
+      return null;
+    }
+    const absolute = /^(?:[A-Za-z]:[\\/]|\\\\|\/)/u.test(decoded)
+      ? decoded
+      : await join(await dirname(documentPath), decoded);
+    return relativeFilePath(this.workspaceRootPath, absolute) === null ? null : absolute;
+  }
+
+  private async resolveMarkdownImage(documentPath: string, source: string): Promise<MarkdownResource | null> {
+    const path = await this.resolveMarkdownWorkspacePath(documentPath, source);
+    if (!path || (!isBinaryImagePath(path) && fileExtension(path) !== "svg")) return null;
+    const mimeType = ({
+      png: "image/png",
+      jpg: "image/jpeg",
+      jpeg: "image/jpeg",
+      gif: "image/gif",
+      webp: "image/webp",
+      avif: "image/avif",
+      bmp: "image/bmp",
+      ico: "image/x-icon",
+      svg: "image/svg+xml",
+    } as Record<string, string>)[fileExtension(path)];
+    if (!mimeType) return null;
+    const base64 = await invoke<string>("read_workspace_file_as_base64", { path });
+    return {
+      source: `data:${mimeType};base64,${base64}`,
+      alt: fileNameFromPath(path),
+    };
+  }
+
+  private async openMarkdownLink(documentPath: string, href: string): Promise<void> {
+    if (/^(?:https?:|mailto:)/iu.test(href)) {
+      await openUrl(href);
+      return;
+    }
+    const path = await this.resolveMarkdownWorkspacePath(documentPath, href);
+    if (path) await this.loadFile(path);
+  }
+
+  private setMarkdownPreviewActive(active: boolean): void {
+    document.getElementById("preview-container-wrapper")?.classList.toggle("markdown-preview-active", active);
+  }
+
   private async classifyUnknownTextPath(path: string): Promise<boolean> {
     if (isSupportedInAppPath(path)) return true;
     const key = filePathKey(path);
@@ -2898,6 +2957,11 @@ export class TypsastraWorkspaceController {
       this.editorInstance.state.doc.toString() === tab.content
     );
     if (sameActivePath && tab && activeEditorMatchesTab && !options.largeFileConfirmed) {
+      if (isMarkdownDocumentPath(tab.path)) {
+        this.setMarkdownPreviewActive(true);
+        this.markdownPreviewFrame.activate(tab.path, tab.content);
+        this.updatePreviewActionsToolbar(tab.path);
+      }
       if (persistCurrent) {
         this.persistActiveTabState();
         this.renderEditorTabs();
@@ -2929,6 +2993,11 @@ export class TypsastraWorkspaceController {
 
     path = tab.path;
     const isTypstDocument = isTypstDocumentPath(path);
+    const isMarkdownDocument = isMarkdownDocumentPath(path);
+    if (!isMarkdownDocument) {
+      this.markdownPreviewFrame.deactivate();
+      this.setMarkdownPreviewActive(false);
+    }
     this.acceptedTypographyScales.set(
       filePathKey(path),
       this.documentTypographyFromText(tab.content)?.fonts.map(font => ({ ...font })) ?? []
@@ -3007,7 +3076,10 @@ export class TypsastraWorkspaceController {
           this.editorToolbarController.setDisabled(false);
         } else {
           this.editorToolbarController.setDisabled(true);
-          if (ext === "svg") {
+          if (ext === "md" || ext === "markdown") {
+            // Markdown owns an overlay renderer. Leave the persistent PDF
+            // presentation underneath untouched so returning to Typst is instant.
+          } else if (ext === "svg") {
             this.previewFrame.setMessageOverlay(
               `<div style="display:flex;align-items:center;justify-content:center;height:100%;width:100%;background:var(--ui-bg);box-sizing:border-box;padding:20px;overflow:auto;">` +
               tab.content +
@@ -3041,7 +3113,8 @@ export class TypsastraWorkspaceController {
         effects: [
           ...this.currentEditorSettingsEffects(),
           ...(editorFontEffect ? [editorFontEffect] : []),
-          languageCompartment.reconfigure(isTypstDocument ? typstLanguage : [])
+          languageCompartment.reconfigure(this.editorLanguageForPath(path)),
+          completionCompartment.reconfigure(this.editorCompletionForPath(path)),
         ]
       });
     } finally {
@@ -3051,6 +3124,10 @@ export class TypsastraWorkspaceController {
     // Commit the visible tab selection before resolving typography through a
     // potentially unloaded template file.
     this.activeFilePath = path;
+    if (isMarkdownDocument) {
+      this.setMarkdownPreviewActive(true);
+      this.markdownPreviewFrame.activate(path, tab.content);
+    }
     this.publishImageOptimizationWarnings();
     this.renderEditorTabs();
     const activeTypography = await this.effectiveDocumentTypography(path, tab.content);
@@ -3146,11 +3223,11 @@ export class TypsastraWorkspaceController {
     // Resolve dependency ownership before activating language tools. Included
     // chapters, templates, and libraries inherit the main document's script
     // languages; unrelated files use only their own directive.
-    this.activateSpellcheckDocument(path);
+    this.activateSpellcheckDocument(isMarkdownDocument ? null : path);
     this.clearPendingLspSync();
     this.previewSyncController.clearForward();
     this.renderEditorTabs();
-    this.spellcheckController.schedule();
+    if (!isMarkdownDocument) this.spellcheckController.schedule();
     if (path.toLowerCase().endsWith(".typ")) {
       this.scheduleDocumentOutlineUpdate(path, 0);
       this.documentOutlineController.setCursorPosition(this.editorInstance.state.selection.main.head, this.activeFilePath);
@@ -3997,7 +4074,8 @@ export class TypsastraWorkspaceController {
             effects: [
               ...this.currentEditorSettingsEffects(),
               ...(editorFontEffect ? [editorFontEffect] : []),
-              languageCompartment.reconfigure(isTypstDocumentPath(path) ? typstLanguage : []),
+              languageCompartment.reconfigure(this.editorLanguageForPath(path)),
+              completionCompartment.reconfigure(this.editorCompletionForPath(path)),
             ]
           });
         } finally {
@@ -5384,6 +5462,9 @@ export class TypsastraWorkspaceController {
     if (!this.isLoadingFile) {
       this.updateActiveTabContent(rawText);
       this.scheduleManualTypographyScaleCheck();
+      if (this.activeFilePath && isMarkdownDocumentPath(this.activeFilePath)) {
+        this.markdownPreviewFrame.schedule(this.activeFilePath, rawText);
+      }
     }
 
     if (!this.isLoadingFile && this.activeFilePath && isTypstDocumentPath(this.activeFilePath) && this.lspReady && this.lspClient) {
@@ -6736,12 +6817,16 @@ export class TypsastraWorkspaceController {
 
     if (!path) {
       previewActions.classList.add("hidden");
+      previewActions.classList.remove("markdown-preview-toolbar");
+      this.markdownPreviewFrame.deactivate();
+      this.setMarkdownPreviewActive(false);
       return;
     }
 
     const ext = fileExtension(path);
     const isImage = isBinaryImagePath(path);
     const isPdf = ext === "pdf";
+    const isMarkdown = isMarkdownDocumentPath(path);
     const isUnsupported = !this.isInternallySupportedPath(path);
 
     if (isUnsupported && !isImage && !isPdf) {
@@ -6750,15 +6835,16 @@ export class TypsastraWorkspaceController {
     }
 
     previewActions.classList.remove("hidden");
+    previewActions.classList.toggle("markdown-preview-toolbar", isMarkdown);
 
-    const showTypstOnly = !isImage && !isPdf;
+    const showTypstOnly = isTypstDocumentPath(path);
     const contentModeToggle = document.getElementById("preview-content-mode-toggle");
 
     const syncBtn = document.getElementById("preview-forward-sync-btn");
     const recompileBtn = document.getElementById("preview-recompile-btn");
     const menuBtn = document.getElementById("preview-menu-btn");
     const imageWarningBtn = document.getElementById("preview-image-warning-btn");
-    document.querySelector<HTMLElement>(".preview-page-controls")?.classList.toggle("hidden", isImage);
+    document.querySelector<HTMLElement>(".preview-page-controls")?.classList.toggle("hidden", isImage || isMarkdown);
 
     if (syncBtn) {
       if (showTypstOnly) syncBtn.classList.remove("hidden");
@@ -8104,7 +8190,8 @@ export class TypsastraWorkspaceController {
         effects: [
           ...this.currentEditorSettingsEffects(),
           ...(editorFontEffect ? [editorFontEffect] : []),
-          languageCompartment.reconfigure(isTypstDocumentPath(tab.path) ? typstLanguage : []),
+          languageCompartment.reconfigure(this.editorLanguageForPath(tab.path)),
+          completionCompartment.reconfigure(this.editorCompletionForPath(tab.path)),
         ]
       });
     } finally {
