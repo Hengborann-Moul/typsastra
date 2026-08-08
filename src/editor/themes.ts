@@ -15,16 +15,21 @@ export const baseEditorLayoutTheme = EditorView.theme({
   },
   ".cm-content": {
       color: "var(--ui-text, #333333) !important",
-      WebkitTextFillColor: "currentColor"
+      WebkitTextFillColor: "currentColor",
+      paddingBottom: "0 !important"
   },
   ".cm-content::after": {
       content: '\"\"',
       display: "block",
+      position: "relative",
+      left: "calc(-1 * var(--typsastra-gutter-width, 0px))",
+      width: "calc(100% + var(--typsastra-gutter-width, 0px))",
       height: "var(--typsastra-scroll-past-end-height, 0px)",
-      backgroundColor: "color-mix(in srgb, var(--ui-accent-color) 8%, var(--ui-bg))",
+      backgroundColor: "color-mix(in srgb, var(--ui-accent-color) 0%, var(--ui-bg))",
       borderTop: "1px solid color-mix(in srgb, var(--ui-accent-color) 24%, transparent)",
       boxSizing: "border-box",
-      pointerEvents: "none"
+      pointerEvents: "none",
+      zIndex: "10"
   },
   ".cm-line, .cm-line *": {
       WebkitTextFillColor: "currentColor"

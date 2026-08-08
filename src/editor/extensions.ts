@@ -106,6 +106,7 @@ export function scrollPastDocumentEnd(): Extension {
     destroy(): void {
       this.resizeObserver.disconnect();
       this.view.contentDOM.style.removeProperty("--typsastra-scroll-past-end-height");
+      this.view.contentDOM.syyle.removeProperty("--typsastra-gutter-width");
     }
 
     private updateHeight(): void {
@@ -127,7 +128,9 @@ export function scrollPastDocumentEnd(): Extension {
         reservedLinesHeight,
         this.view.scrollDOM.clientHeight - reservedLinesHeight
       );
+      const gutterWidth = this.view.dom.querySelector<HTMLElement>(".cm-gutters")?.getBoundingClientRect().width ?? 0;
       this.view.contentDOM.style.setProperty("--typsastra-scroll-past-end-height", `${height}px`);
+      this.view.dom.style.setProperty("--typsastra-gutter-width", `${gutterWidth}px`);
     }
   });
 }
