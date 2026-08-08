@@ -1552,8 +1552,8 @@ export class TypsastraWorkspaceController {
     caretScrollMarker.setAttribute("aria-hidden", "true");
     Object.assign(caretScrollMarker.style, {
       position: "absolute",
-      right: "1px",
-      width: "14px",
+      right: "0px",
+      width: "15px",
       height: "2px",
       background: TYPSASTRA_GREEN,
       pointerEvents: "none",
@@ -1569,8 +1569,8 @@ export class TypsastraWorkspaceController {
     Object.assign(diagnosticScrollMarkerLayer.style, {
       position: "absolute",
       top: "0",
-      right: "1px",
-      width: "7px",
+      right: "2px",
+      width: "5px",
       height: "100%",
       pointerEvents: "none",
       zIndex: "19"
@@ -1718,7 +1718,7 @@ export class TypsastraWorkspaceController {
     const imageWarnings = editor.state.field(imageOptimizationWarningField, false);
     const doc = editor.state.doc;
     const trackHeight = editor.scrollDOM.clientHeight;
-    const markerHeight = 4;
+    const markerHeight = 5;
     const documentHeight = Math.max(0, editor.contentHeight - editor.defaultLineHeight);
     const scrollHeight = editor.scrollDOM.scrollHeight;
     const documentTrackRatio = documentHeight / Math.max(1, scrollHeight);
@@ -1763,7 +1763,7 @@ export class TypsastraWorkspaceController {
         position: "absolute",
         right: "0",
         top: `${top}px`,
-        width: "7px",
+        width: "5px",
         height: `${markerHeight}px`,
         backgroundColor: severity === "error" ? "#f14c4c" : "#cca700",
         pointerEvents: "none"
