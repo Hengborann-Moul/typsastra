@@ -1634,39 +1634,9 @@ export class TypsastraWorkspaceController {
     }, true);
     this.editorInstance.scrollDOM.addEventListener("pointerdown", event => {
       if (!(event instanceof PointerEvent) || event.button !== 0) return;
-    
-      const scrollDOM = this.editorInstance.scrollDOM;
-      const rect = scrollDOM.getBoundingClientRect();
-      const scrollbarWidth = Math.max(12, scrollDOM.offsetWidth - scrollDOM.clientWidth);
-      const inVerticalScrollbar = scrollDOM.scrollHeight > scrollDOM.clientHeight
-        && event.clientX >= rect.right - scrollbarWidth;
-    
-      if (!inVerticalScrollbar) return;
-    
-      event.preventDefault();
-      event.stopPropagation();
-    
+      if (!isScrollbarPointerEvent(this.editorInstance.scrollDOM, event)) return;
       this.editorScrollbarPointerActive = true;
       this.previewSyncController.suppressForwardFor(1000);
-    
-      const trackHeight = scrollDOM.clientHeight;
-      const maxScrollTop = Math.max(0, scrollDOM.scrollHeight - trackHeight);
-    
-      const thumbHeight = Math.max(
-        20,
-        trackHeight * (trackHeight / scrollDOM.scrollHeight)
-      );
-    
-      const pointerY = event.clientY - rect.top;
-      const thumbCenterY = Math.max(
-        thumbHeight / 2,
-        Math.min(trackHeight - thumbHeight / 2, pointerY)
-      );
-    
-      const thumbTravel = Math.max(1, trackHeight - thumbHeight);
-      const ratio = (thumbCenterY - thumbHeight / 2) / thumbTravel;
-    
-      scrollDOM.scrollTop = ratio * maxScrollTop;
     }, true);
     window.addEventListener("pointerup", () => {
       if (!this.editorScrollbarPointerActive) return;
@@ -1687,23 +1657,20 @@ export class TypsastraWorkspaceController {
     const marker = this.editorCaretScrollMarker;
     const editor = this.editorInstance;
     if (!marker || !editor) return;
-  
+
     const doc = editor.state.doc;
     if (doc.lines <= 1) {
       marker.style.display = "none";
       return;
     }
-  
+
     const caret = editor.state.selection.main.head;
     const caretLine = doc.lineAt(caret).number;
-    const documentRatio = (caretLine - 1) / Math.max(1, doc.lines - 1);
-    const documentHeight = Math.max(0, editor.contentHeight - editor.defaultLineHeight);
-    const scrollHeight = editor.scrollDOM.scrollHeight;
-    const ratio = documentRatio * (documentHeight / Math.max(1, scrollHeight));
+    const ratio = (caretLine - 1) / Math.max(1, doc.lines - 1);
     const trackHeight = editor.scrollDOM.clientHeight;
     const markerHeight = 2;
     const top = ratio * Math.max(0, trackHeight - markerHeight);
-  
+
     marker.style.display = "";
     marker.style.top = `${top}px`;
     marker.title = `Caret: line ${caretLine}`;
@@ -1719,9 +1686,6 @@ export class TypsastraWorkspaceController {
     const doc = editor.state.doc;
     const trackHeight = editor.scrollDOM.clientHeight;
     const markerHeight = 4;
-    const documentHeight = Math.max(0, editor.contentHeight - editor.defaultLineHeight);
-    const scrollHeight = editor.scrollDOM.scrollHeight;
-    const documentTrackRatio = documentHeight / Math.max(1, scrollHeight);
   
     layer.style.height = `${trackHeight}px`;
     layer.replaceChildren();
@@ -1752,8 +1716,7 @@ export class TypsastraWorkspaceController {
     });
   
     for (const [line, severity] of lineMarkers) {
-      const documentRatio = (line - 1) / Math.max(1, doc.lines - 1);
-      const ratio = documentRatio * documentTrackRatio;
+      const ratio = (line - 1) / Math.max(1, doc.lines - 1);
       const top = ratio * Math.max(0, trackHeight - markerHeight);
   
       const marker = document.createElement("div");
