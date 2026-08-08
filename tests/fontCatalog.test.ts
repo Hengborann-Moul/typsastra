@@ -19,10 +19,26 @@ describe("editor font catalog", () => {
       .toContain("...(editorFontEffect ? [editorFontEffect] : [])");
   });
 
-  test("defaults to bundled Fira Mono and contains no UI fonts", () => {
+  test("defaults to bundled Fira Mono while accepting proportional editor fonts", () => {
     expect(codeEditorFonts[0].id).toBe("Fira Mono");
     expect(codeEditorFonts.every(font => font.fontFamily !== "MiSans Latin")).toBe(true);
     expect(codeEditorFontStack("fira-mono").startsWith('"Fira Mono"')).toBe(true);
+    expect(codeEditorFontStack("MiSans Latin").startsWith('"MiSans Latin"')).toBe(true);
+  });
+
+  test("lists every installed family for the editor and propagates it through CodeMirror", async () => {
+    const settings = await Bun.file(new URL("../src/settingsController.ts", import.meta.url)).text();
+    const themes = await Bun.file(new URL("../src/editor/themes.ts", import.meta.url)).text();
+    const css = await Bun.file(new URL("../src/style.css", import.meta.url)).text();
+    const hover = await Bun.file(new URL("../src/editor/hover.ts", import.meta.url)).text();
+
+    expect(settings).toContain("...this.systemFonts.all");
+    expect(settings).not.toContain("const codeFamilies = new Set(this.systemFonts.monospace)");
+    expect(themes).toContain('fontFamily: "var(--editor-code-font) !important"');
+    expect(themes).toContain('"--editor-indent-font": codeEditorFontStack("fira-mono")');
+    expect(themes).toContain('fontFamily: "var(--editor-indent-font) !important"');
+    expect(css).toMatch(/\.cm-panel\.cm-search input\[type="text"\][\s\S]*?font-family:\s*var\(--editor-code-font\)/);
+    expect(hover).toContain('dom.style.fontFamily = "var(--editor-code-font)"');
   });
 
   test("recommends registered Unicode fonts for matching scripts", () => {

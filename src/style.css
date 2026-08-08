@@ -3459,7 +3459,7 @@ button.welcome-item:disabled {
   border: 1px solid var(--ui-border) !important;
   border-top: none !important;
   padding: 8px 12px 12px 12px !important;
-  font-family: var(--font-family-sans) !important;
+  font-family: var(--editor-code-font) !important;
   display: flex !important;
   flex-wrap: wrap !important;
   align-items: center !important;
@@ -3481,7 +3481,7 @@ button.welcome-item:disabled {
   border-radius: 3px !important;
   padding: 4px 6px !important;
   font-size: 12px !important;
-  font-family: var(--font-family-sans) !important;
+  font-family: var(--editor-code-font) !important;
   outline: none !important;
   width: 140px !important;
 }
@@ -3499,7 +3499,7 @@ button.welcome-item:disabled {
   border-radius: 3px !important;
   padding: 4px 8px !important;
   font-size: 12px !important;
-  font-family: var(--font-family-sans) !important;
+  font-family: var(--editor-code-font) !important;
   cursor: pointer !important;
   background-image: none !important;
   text-transform: capitalize !important;
@@ -3512,7 +3512,7 @@ button.welcome-item:disabled {
 
 .cm-panel.cm-search label {
   font-size: 12px !important;
-  font-family: var(--font-family-sans) !important;
+  font-family: var(--editor-code-font) !important;
   display: inline-flex !important;
   align-items: center !important;
   gap: 4px !important;
@@ -3528,7 +3528,7 @@ button.welcome-item:disabled {
 .cm-panel.cm-search .cm-search-match-count {
   min-width: 34px;
   color: var(--ui-header-text);
-  font: 11px var(--font-family-sans);
+  font: 11px var(--editor-code-font);
   text-align: center;
   white-space: nowrap;
 }
@@ -3663,7 +3663,7 @@ button.welcome-item:disabled {
 .cm-tooltip.cm-completionInfo,
 .cm-tooltip-autocomplete .cm-completionInfo {
   padding: 8px 12px;
-  font-family: var(--font-family-sans);
+  font-family: var(--editor-code-font);
   background: var(--ui-bg) !important;
   color: var(--ui-text) !important;
   border: 1px solid var(--ui-border) !important;

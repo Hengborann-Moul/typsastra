@@ -166,7 +166,9 @@ export function editorFontTheme(fontFamily: string = codeEditorFontStack("fira-m
   return EditorView.theme({
     "&": {
       height: "100%",
-      "--editor-code-font": fontFamily
+      "--editor-code-font": fontFamily,
+      "--editor-indent-font": codeEditorFontStack("fira-mono"),
+      fontFamily: "var(--editor-code-font) !important"
     },
     ".cm-content": {
       fontFamily: "var(--editor-code-font) !important"
@@ -228,5 +230,6 @@ export const typstFontHighlighting = HighlightStyle.define([
   { tag: tags.string, fontFamily: "var(--editor-code-font) !important" },
   { tag: tags.content, fontFamily: "var(--editor-code-font) !important" },
   { tag: [tags.literal, tags.monospace], fontFamily: "var(--editor-code-font) !important", color: "var(--ui-monospace-color) !important" },
+  { tag: tags.special(tags.monospace), fontFamily: "var(--editor-indent-font) !important" },
   { tag: [tags.strong, tags.emphasis, tags.list, tags.link, tags.url], fontFamily: "var(--editor-code-font) !important" }
 ]);

@@ -27,6 +27,14 @@ function tokenName(tokens: ParsedToken[], text: string): string | undefined {
 }
 
 describe("Typst stream language", () => {
+  test("tags only line-leading whitespace as fixed-width indentation", () => {
+    const tokens = parseTokens("  #image(\n    width: 100%,\n  )\nPlain prose keeps spaces");
+
+    expect(tokens.filter(token => token.name === "indentation").map(token => token.text))
+      .toEqual(["  ", "    ", "  "]);
+    expect(tokenName(tokens, " ")).toBeUndefined();
+  });
+
   test("applies heading, strong, and emphasis tags to their content", () => {
     const tokens = parseTokens("= Heading *bold* _italic_");
 

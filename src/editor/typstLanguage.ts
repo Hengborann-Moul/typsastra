@@ -177,6 +177,7 @@ const typstParser: StreamParser<TypstParserState> = {
     strong: tags.strong,
     emphasis: tags.emphasis,
     monospace: tags.monospace,
+    indentation: tags.special(tags.monospace),
     escape: tags.escape,
     link: tags.link,
     content: tags.content,
@@ -230,7 +231,10 @@ function readToken(stream: StringStream, state: TypstParserState): string | null
       return "monospace";
     }
 
-    // Skip white space
+    // Keep line-leading indentation on the fixed monospace metrics even when
+    // the user selects a proportional editor font. Ordinary prose spacing
+    // remains untagged and therefore inherits the selected editor family.
+    const isLeadingWhitespace = stream.sol();
     if (stream.eatSpace()) {
       if (state.inCodeExpression && !state.isStatement && state.bracketStack.length <= state.expressionBracketDepth) {
         state.expressionSawWhitespace = true;
@@ -245,7 +249,7 @@ function readToken(stream: StringStream, state: TypstParserState): string | null
         return "heading";
       }
 
-      return null;
+      return isLeadingWhitespace ? "indentation" : null;
     }
 
     // Check for comments

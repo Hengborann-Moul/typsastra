@@ -10,6 +10,7 @@ import {
   type ThemeName
 } from "./settings";
 import {
+  codeEditorFonts,
   unicodeEditorFonts,
   unicodeFontPreferenceOptions,
 } from "./editor/fontCatalog";
@@ -515,7 +516,10 @@ export class SettingsController {
       }));
     };
 
-    const codeFamilies = new Set(this.systemFonts.monospace);
+    const codeFamilies = new Set([
+      ...codeEditorFonts.map(font => font.fontFamily),
+      ...this.systemFonts.all
+    ]);
     codeFamilies.add(this.settings.editor.codeFont);
     const fallbackFamilies = new Set(this.systemFonts.all);
     if (this.settings.editor.unicodeFont !== "auto" && this.settings.editor.unicodeFont !== "none") {
@@ -973,9 +977,9 @@ export class SettingsController {
       this.systemFonts = await invoke<SystemFontCatalog>("list_system_fonts");
       this.recordTiming("frontend startup", "native list_system_fonts", nativeFontStart);
       const selectedCodeFont = this.settings.editor.codeFont.toLocaleLowerCase();
-      if (!this.systemFonts.monospace.some(family => family.toLocaleLowerCase() === selectedCodeFont)) {
-        this.settings.editor.codeFont = this.systemFonts.monospace.find(family => family === "Fira Mono")
-          ?? this.systemFonts.monospace[0]
+      if (!this.systemFonts.all.some(family => family.toLocaleLowerCase() === selectedCodeFont)
+        && selectedCodeFont !== "fira mono") {
+        this.settings.editor.codeFont = this.systemFonts.all.find(family => family === "Fira Mono")
           ?? "Fira Mono";
         this.scheduleSave();
       }

@@ -71,7 +71,6 @@ const complexScriptFallbackFonts = [
 
 export function normalizeCodeEditorFont(value: unknown): CodeEditorFontId {
   if (!validFamily(value)) return "Fira Mono";
-  if (value === "MiSans Latin") return "Fira Mono";
   return legacyCodeFonts[value] ?? value;
 }
 

@@ -44,7 +44,7 @@ export function createHoverTooltip(getClient: () => TinymistLspClient | undefine
       dom.style.fontSize = "13px";
       dom.style.whiteSpace = "normal";
       dom.style.wordBreak = "break-word";
-      dom.style.fontFamily = "var(--font-family-sans)";
+      dom.style.fontFamily = "var(--editor-code-font)";
       
       dom.innerHTML = parseMarkdown(markdown);
 
@@ -240,24 +240,24 @@ function parseMarkdown(md: string): string {
     // Handle headings
     if (trimmed.startsWith("# ")) {
       const text = parseInlineStyles(trimmed.slice(2));
-      html += `<h1 style="font-size: 14px; font-weight: bold; margin: 14px 0 6px 0; border-bottom: 1px solid var(--ui-border); padding-bottom: 3px; font-family: var(--font-family-sans); color: var(--ui-text);">${text}</h1>`;
+      html += `<h1 style="font-size: 14px; font-weight: bold; margin: 14px 0 6px 0; border-bottom: 1px solid var(--ui-border); padding-bottom: 3px; font-family: var(--editor-code-font); color: var(--ui-text);">${text}</h1>`;
       continue;
     }
     if (trimmed.startsWith("## ")) {
       const text = parseInlineStyles(trimmed.slice(3));
-      html += `<h2 style="font-size: 13px; font-weight: bold; margin: 12px 0 4px 0; color: var(--ui-header-text); font-family: var(--font-family-sans);">${text}</h2>`;
+      html += `<h2 style="font-size: 13px; font-weight: bold; margin: 12px 0 4px 0; color: var(--ui-header-text); font-family: var(--editor-code-font);">${text}</h2>`;
       continue;
     }
     if (trimmed.startsWith("### ")) {
       const text = parseInlineStyles(trimmed.slice(4));
-      html += `<h3 style="font-size: 12px; font-weight: bold; margin: 10px 0 4px 0; color: var(--ui-text); font-family: var(--font-family-sans);">${text}</h3>`;
+      html += `<h3 style="font-size: 12px; font-weight: bold; margin: 10px 0 4px 0; color: var(--ui-text); font-family: var(--editor-code-font);">${text}</h3>`;
       continue;
     }
 
     // Handle lists
     if (trimmed.startsWith("- ")) {
       const text = parseInlineStyles(trimmed.slice(2));
-      html += `<div style="margin-left: 12px; margin-bottom: 4px; display: list-item; list-style-type: disc; font-family: var(--font-family-sans); color: var(--ui-text);">${text}</div>`;
+      html += `<div style="margin-left: 12px; margin-bottom: 4px; display: list-item; list-style-type: disc; font-family: var(--editor-code-font); color: var(--ui-text);">${text}</div>`;
       continue;
     }
 
@@ -269,7 +269,7 @@ function parseMarkdown(md: string): string {
 
     // Normal paragraph text
     const parsedText = parseInlineStyles(line);
-    html += `<p style="margin: 0 0 6px 0; line-height: 1.5; font-family: var(--font-family-sans); color: var(--ui-text);">${parsedText}</p>`;
+    html += `<p style="margin: 0 0 6px 0; line-height: 1.5; font-family: var(--editor-code-font); color: var(--ui-text);">${parsedText}</p>`;
   }
 
   if (inCodeBlock && codeBlockContent.length > 0) {

@@ -48,7 +48,7 @@ describe("application settings", () => {
     expect(settings.appearance.editorFontSize).toBe(32);
     expect(settings.appearance.editorLineHeight).toBe(1.2);
     expect(settings.editor.tabSize).toBe(2);
-    expect(settings.editor.codeFont).toBe("Fira Mono");
+    expect(settings.editor.codeFont).toBe("MiSans Latin");
     expect(settings.editor.unicodeFont).toBe("unknown-font");
     expect(settings.editor.formatOnSave).toBe(false);
     expect(settings.editor.autoSaveIntervalSeconds).toBe(30);
