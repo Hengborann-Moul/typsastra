@@ -124,6 +124,9 @@ import {
   templateTypographyEdit
 } from "./editor/templateTypography";
 
+import { editorDiagnosticsExtension, editorDiagnosticsStateField, setEditorDiagnosticsEffect } from "./editor/diagnostics";
+import { imageOptimizationWarningField, setImageOptimizationWarningsEffect } from "./editor/imageWarnings";
+
 type EditorMode = "CODE" | "WYSIWYM";
 
 type StartupTimingEntry = {
@@ -599,6 +602,7 @@ export class TypsastraWorkspaceController {
   private editorInstance!: EditorView;
   private editorExtensions: Extension = [];
   private editorCaretScrollMarker: HTMLElement | null = null;
+  private editorDiagnosticScrollMarkerLayer: HTMLElement | null = null;
   private isComposing = false;
   private editorInputSequence = 0;
   private editorInputStartedAt: number | null = null;
@@ -1507,6 +1511,16 @@ export class TypsastraWorkspaceController {
           const topVisiblePosition = update.view.lineBlockAtHeight(update.view.scrollDOM.scrollTop).from;
           this.documentOutlineController.setCursorPosition(topVisiblePosition, this.activeFilePath);
         }
+        const diagnosticsChanged = update.transactions.some(transaction =>
+          transaction.effects.some(effect =>
+            effect.is(setEditorDiagnosticsEffect)
+            || effect.is(setImageOptimizationWarningsEffect)
+          )
+        );
+        
+        if (update.docChanged || update.geometryChanged || diagnosticsChanged) {
+          this.updateEditorDiagnosticScrollMarkers();
+        }
         if (!this.suppressFoldStatePersistence && update.transactions.some(transaction =>
           transaction.effects.some(effect => effect.is(foldEffect) || effect.is(unfoldEffect))
         )) {
@@ -1547,6 +1561,23 @@ export class TypsastraWorkspaceController {
     });
     this.editorInstance.dom.appendChild(caretScrollMarker);
     this.editorCaretScrollMarker = caretScrollMarker;
+
+    const diagnosticScrollMarkerLayer = document.createElement("div");
+    diagnosticScrollMarkerLayer.className = "editor-diagnostic-scroll-marker-layer";
+    diagnosticScrollMarkerLayer.setAttribute("aria-hidden", "true");
+    
+    Object.assign(diagnosticScrollMarkerLayer.style, {
+      position: "absolute",
+      top: "0",
+      right: "1px",
+      width: "7px",
+      height: "100%",
+      pointerEvents: "none",
+      zIndex: "19"
+    });
+    
+    this.editorInstance.dom.appendChild(diagnosticScrollMarkerLayer);
+    this.editorDiagnosticScrollMarkerLayer = diagnosticScrollMarkerLayer;
 
     listen<DraftThumbnailQueueMetric>("draft-thumbnail-queue-metric", event => {
       const metric = event.payload;
@@ -1619,6 +1650,7 @@ export class TypsastraWorkspaceController {
     this.editorFontManager.updateDocument(initialDocument);
     this.updateCursorPositionStatus();
     this.updateEditorCaretScrollMarker();
+    this.updateEditorDiagnosticScrollMarkers();
   }
 
   private updateEditorCaretScrollMarker(): void {
@@ -1642,6 +1674,66 @@ export class TypsastraWorkspaceController {
     marker.style.display = "";
     marker.style.top = `${top}px`;
     marker.title = `Caret: line ${caretLine}`;
+  }
+
+  private updateEditorDiagnosticScrollMarkers(): void {
+    const layer = this.editorDiagnosticScrollMarkerLayer;
+    const editor = this.editorInstance;
+    if (!layer || !editor) return;
+  
+    const diagnostics = editor.state.field(editorDiagnosticsStateField, false) ?? [];
+    const imageWarnings = editor.state.field(imageOptimizationWarningField, false);
+    const doc = editor.state.doc;
+    const trackHeight = editor.scrollDOM.clientHeight;
+    const markerHeight = 4;
+  
+    layer.style.height = `${trackHeight}px`;
+    layer.replaceChildren();
+  
+    if (doc.lines <= 1) return;
+  
+    const lineMarkers = new Map<number, "error" | "warning">();
+  
+    for (const diagnostic of diagnostics) {
+      if (diagnostic.severity !== "error" && diagnostic.severity !== "warning") continue;
+  
+      const position = Math.max(0, Math.min(diagnostic.from, doc.length));
+      const line = doc.lineAt(position).number;
+      const existing = lineMarkers.get(line);
+  
+      if (!existing || diagnostic.severity === "error") {
+        lineMarkers.set(line, diagnostic.severity);
+      }
+    }
+  
+    imageWarnings?.between(0, doc.length, (from) => {
+      const position = Math.max(0, Math.min(from, doc.length));
+      const line = doc.lineAt(position).number;
+  
+      if (!lineMarkers.has(line)) {
+        lineMarkers.set(line, "warning");
+      }
+    });
+  
+    for (const [line, severity] of lineMarkers) {
+      const ratio = (line - 1) / Math.max(1, doc.lines - 1);
+      const top = ratio * Math.max(0, trackHeight - markerHeight);
+  
+      const marker = document.createElement("div");
+      marker.className = `editor-diagnostic-scroll-marker editor-diagnostic-scroll-marker-${severity}`;
+  
+      Object.assign(marker.style, {
+        position: "absolute",
+        right: "0",
+        top: `${top}px`,
+        width: "7px",
+        height: `${markerHeight}px`,
+        backgroundColor: severity === "error" ? "#f14c4c" : "#cca700",
+        pointerEvents: "none"
+      });
+  
+      layer.appendChild(marker);
+    }
   }
 
   private updateCursorPositionStatus(): void {

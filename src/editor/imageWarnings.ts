@@ -82,7 +82,7 @@ class ImageOptimizationSpacerMarker extends GutterMarker {
   }
 }
 
-const imageOptimizationWarningField = StateField.define<RangeSet<GutterMarker>>({
+export const imageOptimizationWarningField = StateField.define<RangeSet<GutterMarker>>({
   create() {
     return RangeSet.empty;
   },
