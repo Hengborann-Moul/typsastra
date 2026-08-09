@@ -26,6 +26,7 @@ import type { EditorFoldRange } from "./editor/folding";
 import { editorDiagnosticsStateField, looksLikeStalePrefixDiagnostic, setEditorDiagnosticsEffect } from "./editor/diagnostics";
 import type { EditorDiagnostic, EditorDiagnosticSeverity } from "./editor/diagnostics";
 import { WorkspaceExplorer } from "./components/explorer";
+import { ImageToolsController, type ProjectImageReference } from "./components/imageTools";
 import { TinymistLspClient } from "./compiler/lsp";
 import { isTinymistStoppedRequestError, type EditorTextEdit, type LspDiagnostic, type LspInverseSyncResult, type LspLogEntry, type LspSourcePosition, type LspStatus, type PreviewDocumentPosition } from "./compiler/lsp";
 import {
@@ -428,6 +429,7 @@ export class TypsastraWorkspaceController {
   private readonly startupTimings: StartupTimingEntry[] = [];
   private readonly loggedNativeStartupTimings = new Set<string>();
   private sidebarVisible = true;
+  private activeSidebarTool: "explorer" | "images" = "explorer";
   private activeMode: EditorMode = "CODE";
   private activeFilePath: string | null = null;
   private previewRootPath: string | null = null;
@@ -561,6 +563,7 @@ export class TypsastraWorkspaceController {
   private readonly externalConflictPaths = new Set<string>();
   private externalPreviewRefreshPending = false;
   private readonly managedPreviewPdfPathKeys = new Set<string>();
+  private readonly managedImageToolPathKeys = new Set<string>();
   private tinymistRestartSequence = 0;
   private readonly settingsController = new SettingsController(
     settings => this.applySettingsToRuntime(settings),
@@ -626,6 +629,14 @@ export class TypsastraWorkspaceController {
   private wysiwymContainer = this.wysiwymPane?.querySelector<HTMLElement>(".wysiwym-container") ?? document.createElement("div");
   private readonly wysiwymAdapter = new WysiwymAdapter(this.wysiwymContainer);
   private previewPane = document.getElementById("preview-render-pane")!;
+  private readonly imageToolsController = new ImageToolsController(
+    document.getElementById("image-tools-sidebar")!,
+    document.getElementById("image-tools-inspector")!,
+    document.getElementById("image-tools-comparison")!,
+    reference => void this.navigateToImageReference(reference),
+    (source, imagePath) => this.renderImageToolPreview(source, imagePath),
+    (paths, phase) => this.handleImageToolFilesWritten(paths, phase),
+  );
   private readonly previewFrame = new PreviewFrame(this.previewPane, point => {
     void this.handlePdfPreviewClick(point);
   }, status => {
@@ -1140,6 +1151,90 @@ export class TypsastraWorkspaceController {
     this.sidebarVisible = !this.sidebarVisible;
     this.applySidebarVisibility();
     void this.saveWorkspaceState();
+  }
+
+  private setSidebarTool(tool: "explorer" | "images", persist = true): void {
+    if (!this.workspaceRootPath) return;
+    const toolChanged = this.activeSidebarTool !== tool;
+    this.activeSidebarTool = tool;
+    this.sidebarVisible = true;
+
+    const showingImages = tool === "images";
+    document.body.classList.toggle("image-tools-active", showingImages);
+    document.getElementById("explorer-sidebar-content")?.classList.toggle("hidden", showingImages);
+    document.getElementById("image-tools-sidebar-content")?.classList.toggle("hidden", !showingImages);
+    const explorerButton = document.getElementById("sidebar-explorer-button") as HTMLButtonElement | null;
+    const imagesButton = document.getElementById("sidebar-images-button") as HTMLButtonElement | null;
+    explorerButton?.classList.toggle("active", !showingImages);
+    imagesButton?.classList.toggle("active", showingImages);
+    explorerButton?.setAttribute("aria-pressed", String(!showingImages));
+    imagesButton?.setAttribute("aria-pressed", String(showingImages));
+
+    this.codeRenderPane.classList.toggle("hidden", showingImages);
+    document.getElementById("image-viewer-pane")?.classList.add("hidden");
+    this.previewPane.classList.remove("hidden");
+    if (showingImages) {
+      if (toolChanged) this.invalidatePreviewWork("switched to Image Tools");
+      this.imageToolsController.show();
+    } else {
+      this.imageToolsController.hide();
+      const path = this.activeFilePath;
+      const nonTextSurface = !!path && (
+        !this.isInternallySupportedPath(path)
+        || isBinaryImagePath(path)
+        || fileExtension(path) === "pdf"
+      );
+      this.codeRenderPane.classList.toggle("hidden", nonTextSurface);
+      document.getElementById("image-viewer-pane")?.classList.toggle("hidden", !nonTextSurface);
+      if (toolChanged) {
+        this.previewFrame.setMessage(
+          `<div class="preview-disabled-placeholder"><div class="guardrail-placeholder-content">` +
+          `<div class="preview-disabled-title preview-accent-title">Restoring Preview</div>` +
+          `<div class="preview-disabled-msg">Preparing the active document preview.</div>` +
+          `</div></div>`
+        );
+      }
+      void this.refreshActivePreviewRoot(false);
+    }
+    this.applySidebarVisibility();
+    if (persist) void this.saveWorkspaceState();
+  }
+
+  private async navigateToImageReference(reference: ProjectImageReference): Promise<void> {
+    this.setSidebarTool("explorer");
+    if (filePathKey(reference.sourcePath) !== filePathKey(this.activeFilePath ?? "")) {
+      await this.loadFile(reference.sourcePath, { focusEditor: false });
+    }
+    if (!this.getActiveTab()?.contentLoaded) return;
+    const from = Math.max(0, Math.min(reference.fromUtf16, this.editorInstance.state.doc.length));
+    const to = Math.max(from, Math.min(reference.toUtf16, this.editorInstance.state.doc.length));
+    this.editorInstance.dispatch({
+      selection: { anchor: from, head: to },
+      effects: EditorView.scrollIntoView(from, { y: "center" }),
+    });
+  }
+
+  private async navigateToImageTool(imagePath: string): Promise<void> {
+    this.setSidebarTool("images");
+    await this.imageToolsController.selectImage(imagePath);
+  }
+
+  private async handleImageToolFilesWritten(
+    paths: readonly string[],
+    phase: "before" | "after",
+  ): Promise<void> {
+    const keys = paths.map(filePathKey);
+    keys.forEach(key => this.managedImageToolPathKeys.add(key));
+    window.setTimeout(() => {
+      keys.forEach(key => this.managedImageToolPathKeys.delete(key));
+    }, phase === "before" ? 10000 : 3000);
+    if (phase === "before") return;
+
+    const openFilesChanged = await this.reloadOpenFilesFromDisk(false);
+    if (this.workspaceRootPath) await this.explorer.loadWorkspace(this.workspaceRootPath);
+    if (openFilesChanged && this.activeFilePath && isTypstDocumentPath(this.activeFilePath)) {
+      await this.refreshActivePreviewRoot(true);
+    }
   }
 
   private restoreDefaultLayout(): void {
@@ -2585,7 +2680,8 @@ export class TypsastraWorkspaceController {
         warnings.push({
           from: reference.fromUtf16,
           to: reference.toUtf16,
-          message
+          message,
+          imagePath: image.path,
         });
       }
     }
@@ -2742,7 +2838,10 @@ export class TypsastraWorkspaceController {
       cancelAction: "close"
     });
     if (action === "view-images") {
-      this.logConsoleController.showChannel("images");
+      this.setSidebarTool("images");
+      if (optimizationCandidates[0]) {
+        await this.imageToolsController.selectImage(optimizationCandidates[0].path);
+      }
       return;
     }
     if (action === "use-draft") {
@@ -7603,7 +7702,8 @@ export class TypsastraWorkspaceController {
         layout: {
           inputContainerWidthPct: this.layoutController.getDockedInputWidthPct(),
           explorerSidebarWidthPx: explorerSidebar?.style.width ? parseInt(explorerSidebar.style.width, 10) : DEFAULT_EXPLORER_WIDTH_PX,
-          sidebarVisible: this.sidebarVisible
+          sidebarVisible: this.sidebarVisible,
+          activeSidebarTool: this.activeSidebarTool
         },
         selectedToolchain: this.selectedWorkspaceToolchain,
         previewContentMode: this.previewContentMode,
@@ -7633,7 +7733,8 @@ export class TypsastraWorkspaceController {
     metadata.workspace.layout = {
       inputContainerWidthPct: legacy.inputContainerWidthPct,
       explorerSidebarWidthPx: legacy.explorerSidebarWidthPx,
-      sidebarVisible: true
+      sidebarVisible: true,
+      activeSidebarTool: "explorer"
     };
     metadata.workspace.selectedToolchain = legacy.selectedToolchain;
     return metadata;
@@ -7667,6 +7768,7 @@ export class TypsastraWorkspaceController {
       inputContainer!.style.width = `${state.layout.inputContainerWidthPct}%`;
       if (previewContainerWrapper) previewContainerWrapper.style.width = `${100 - state.layout.inputContainerWidthPct}%`;
       this.sidebarVisible = state.layout.sidebarVisible;
+      this.activeSidebarTool = state.layout.activeSidebarTool;
       const pinnedMainFilePath = await this.absoluteWorkspacePath(workspacePath, project.mainFile);
       this.pinnedMainFilePath = pinnedMainFilePath
         && await invoke<boolean>("workspace_path_exists", { path: pinnedMainFilePath })
@@ -7681,6 +7783,7 @@ export class TypsastraWorkspaceController {
       if (project.mainFile && !this.pinnedMainFilePath) metadata.project.mainFile = null;
       const explorerSidebar = document.getElementById("explorer-sidebar");
       if (explorerSidebar) explorerSidebar.style.width = `${state.layout.explorerSidebarWidthPx}px`;
+      this.setSidebarTool(this.activeSidebarTool, false);
 
       const restoredTabs = await Promise.all(state.openTabs.map(async tabInfo => ({
         tabInfo,
@@ -7771,10 +7874,14 @@ export class TypsastraWorkspaceController {
       const cleanRel = relPath.replace(/^[/\\]+/, "").replace(/\\/g, "/");
       return !cleanRel.startsWith(".typsastra");
     });
+    const managedWorkspacePaths = new Set([
+      ...this.managedPreviewPdfPathKeys,
+      ...this.managedImageToolPathKeys,
+    ]);
     const externalPaths = excludeManagedWorkspacePaths(
       nonCachePaths,
       filePathKey,
-      this.managedPreviewPdfPathKeys
+      managedWorkspacePaths
     );
     
     if (externalPaths.length === 0) {
@@ -7782,7 +7889,7 @@ export class TypsastraWorkspaceController {
         this.appendDeveloperLog({
           kind: "info",
           source: "workspace",
-          message: `Suppressed ${nonCachePaths.length} application-managed preview PDF change${nonCachePaths.length === 1 ? "" : "s"}.`
+          message: `Suppressed ${nonCachePaths.length} application-managed workspace change${nonCachePaths.length === 1 ? "" : "s"}.`
         });
       }
       return;
@@ -7852,6 +7959,9 @@ export class TypsastraWorkspaceController {
         await this.lspClient.notifyWorkspaceFilesChanged(changes);
       }
       await this.explorer.loadWorkspace(workspaceRoot);
+      if (this.activeSidebarTool === "images") {
+        void this.imageToolsController.refresh();
+      }
       if (this.workspaceRootPath !== workspaceRoot) return;
       await this.refreshActivePreviewRoot(true);
       await this.waitForExternalPreviewRefresh();
@@ -8504,8 +8614,29 @@ export class TypsastraWorkspaceController {
     }
   }
 
-  private renderInteractiveImageViewer(src: string) {
-    this.updatePreviewActionsToolbar(this.activeFilePath);
+  private renderImageToolPreview(source: string | null, imagePath?: string): void {
+    if (this.activeSidebarTool !== "images") return;
+    if (!source) {
+      this.imageZoomIn = null;
+      this.imageZoomOut = null;
+      this.imageZoomToFit = null;
+      this.imageZoomPercent = null;
+      this.imageIsFit = null;
+      this.updatePreviewActionsToolbar(imagePath ?? "image-tools.png");
+      this.previewFrame.setMessage(
+        `<div class="preview-disabled-placeholder">` +
+        `<div class="guardrail-placeholder-content">` +
+        `<div class="preview-disabled-title preview-accent-title">Image Preview</div>` +
+        `<div class="preview-disabled-msg">${imagePath ? "Loading the selected image preview." : "Select an image in the sidebar to preview it."}</div>` +
+        `</div></div>`
+      );
+      return;
+    }
+    this.renderInteractiveImageViewer(source, imagePath);
+  }
+
+  private renderInteractiveImageViewer(src: string, previewPath = this.activeFilePath ?? "preview.png") {
+    this.updatePreviewActionsToolbar(previewPath);
 
     this.previewFrame.setMessage(
       `<div id="interactive-image-container" style="position:relative;width:100%;height:100%;background:var(--ui-bg);overflow:hidden;display:flex;align-items:center;justify-content:center;user-select:none;box-sizing:border-box;">` +
@@ -8633,6 +8764,7 @@ export class TypsastraWorkspaceController {
   }
 
   private async refreshActivePreviewRoot(forceRender = false): Promise<void> {
+    if (this.activeSidebarTool === "images") return;
     if (!this.activeFilePath) return;
     const path = this.activeFilePath;
     const ext = fileExtension(path);
@@ -8733,7 +8865,10 @@ export class TypsastraWorkspaceController {
     if (!activeTab) return;
     this.applyPreviewTargetToTab(activeTab, target);
     this.configureDocumentLanguageTools(contents);
-    if (unchanged && !forceRender) return;
+    // A tool surface can temporarily replace and unmount the preview without
+    // changing the underlying document session. Only reuse an unchanged
+    // session while its preview is still mounted; otherwise restore it.
+    if (unchanged && !forceRender && this.previewFrame.currentUrl) return;
 
     if (!target.rootPath) {
       this.previewPane.innerHTML = `<div style="padding: 20px; color: var(--ui-header-text); font-family: var(--font-family-sans);">No preview root found for this library/template file. Diagnostics are still active.</div>`;
@@ -8814,6 +8949,8 @@ export class TypsastraWorkspaceController {
       )).filter((path): path is string => !!path);
       await this.explorer.loadWorkspace(selected, expandedDirectories);
       await this.restoreWorkspaceState(selected, this.workspaceMetadata);
+      await this.imageToolsController.setWorkspace(selected, this.pinnedMainFilePath);
+      if (this.activeSidebarTool === "images") this.imageToolsController.show();
       if (this.activeFilePath) await this.explorer.revealPath(this.activeFilePath);
       await this.saveWorkspaceState();
       await this.explorer.loadWorkspace(selected);
@@ -9302,6 +9439,11 @@ export class TypsastraWorkspaceController {
       && this.activeFilePath !== null
       && filePathKey(path) === filePathKey(this.activeFilePath);
     this.pinnedMainFilePath = path;
+    if (this.workspaceRootPath) {
+      void this.imageToolsController.setWorkspace(this.workspaceRootPath, path).then(() => {
+        if (this.activeSidebarTool === "images") this.imageToolsController.show();
+      });
+    }
     if (!path) {
       // The confirmation host is replaced by the no-main preview below. Drop
       // its pending identity as well so selecting the same main can create a
@@ -9460,6 +9602,9 @@ export class TypsastraWorkspaceController {
     this.queuedManualForwardSync = null;
 
     this.workspaceRootPath = null;
+    this.activeSidebarTool = "explorer";
+    document.body.classList.remove("image-tools-active");
+    void this.imageToolsController.setWorkspace(null, null);
     this.workspaceMetadata = null;
     this.settingsController.setWorkspacePreviewRenderMode(null);
     this.lastPreviewRenderMode = this.settingsController.value.preview.renderMode;
@@ -9483,6 +9628,7 @@ export class TypsastraWorkspaceController {
     this.pdfPreviewSourceMapTaskId = null;
     this.pdfPreviewGeneratedFiles.clear();
     this.managedPreviewPdfPathKeys.clear();
+    this.managedImageToolPathKeys.clear();
     this.pdfSyncPreviewTaskKey = null;
     this.pdfSyncRegisteredTaskId = null;
     this.pdfSourceMapStartup = null;
@@ -9541,6 +9687,10 @@ export class TypsastraWorkspaceController {
 
   private bindGlobalEvents() {
     installModalFocusTrap();
+    window.addEventListener("typsastra-open-image-tool", event => {
+      const imagePath = (event as CustomEvent<{ imagePath?: string }>).detail?.imagePath;
+      if (imagePath) void this.navigateToImageTool(imagePath);
+    });
     import("@tauri-apps/api/event").then(({ listen, emit }) => {
       listen("preview-window-ready", () => {
         if (this.lastPdfPath) {
@@ -10011,6 +10161,14 @@ export class TypsastraWorkspaceController {
 
     document.getElementById("sidebar-toggle-button")?.addEventListener("click", () => {
       this.toggleSidebar();
+    });
+
+    document.getElementById("sidebar-explorer-button")?.addEventListener("click", () => {
+      this.setSidebarTool("explorer");
+    });
+
+    document.getElementById("sidebar-images-button")?.addEventListener("click", () => {
+      this.setSidebarTool("images");
     });
 
     document.getElementById("action-restore-default-layout")?.addEventListener("click", () => {

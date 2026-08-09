@@ -8,6 +8,7 @@ export type ImageOptimizationWarning = {
   from: number;
   to: number;
   message: string;
+  imagePath?: string;
 };
 
 export const setImageOptimizationWarningsEffect = StateEffect.define<ImageOptimizationWarning[]>({
@@ -21,12 +22,14 @@ export const setImageOptimizationWarningsEffect = StateEffect.define<ImageOptimi
 });
 
 class ImageOptimizationMarker extends GutterMarker {
-  constructor(readonly message: string) {
+  constructor(readonly message: string, readonly imagePath?: string) {
     super();
   }
 
   eq(other: GutterMarker): boolean {
-    return other instanceof ImageOptimizationMarker && other.message === this.message;
+    return other instanceof ImageOptimizationMarker
+      && other.message === this.message
+      && other.imagePath === this.imagePath;
   }
 
   toDOM(): HTMLElement {
@@ -35,6 +38,17 @@ class ImageOptimizationMarker extends GutterMarker {
     marker.appendChild(createAppIcon("triangleAlert", { size: 17 }));
     marker.title = this.message;
     marker.setAttribute("aria-label", this.message);
+    if (this.imagePath) {
+      marker.classList.add("clickable");
+      marker.title = `${this.message}\n\nClick to open this image in Image Tools.`;
+      marker.addEventListener("click", event => {
+        event.preventDefault();
+        event.stopPropagation();
+        window.dispatchEvent(new CustomEvent("typsastra-open-image-tool", {
+          detail: { imagePath: this.imagePath },
+        }));
+      });
+    }
     return marker;
   }
 }
@@ -92,20 +106,21 @@ export const imageOptimizationWarningField = StateField.define<RangeSet<GutterMa
     for (const effect of transaction.effects) {
       if (!effect.is(setImageOptimizationWarningsEffect)) continue;
 
-      const byLine = new Map<number, string[]>();
+      const byLine = new Map<number, { messages: string[]; imagePath?: string }>();
 
       for (const warning of effect.value) {
         const position = Math.max(0, Math.min(warning.from, transaction.state.doc.length));
         const line = transaction.state.doc.lineAt(position);
-        const messages = byLine.get(line.from) ?? [];
-        if (!messages.includes(warning.message)) messages.push(warning.message);
-        byLine.set(line.from, messages);
+        const entry = byLine.get(line.from) ?? { messages: [], imagePath: warning.imagePath };
+        if (!entry.messages.includes(warning.message)) entry.messages.push(warning.message);
+        entry.imagePath ??= warning.imagePath;
+        byLine.set(line.from, entry);
       }
 
       const builder = new RangeSetBuilder<GutterMarker>();
 
-      for (const [lineFrom, messages] of [...byLine].sort((left, right) => left[0] - right[0])) {
-        builder.add(lineFrom, lineFrom, new ImageOptimizationMarker(messages.join("\n\n")));
+      for (const [lineFrom, entry] of [...byLine].sort((left, right) => left[0] - right[0])) {
+        builder.add(lineFrom, lineFrom, new ImageOptimizationMarker(entry.messages.join("\n\n"), entry.imagePath));
       }
 
       next = builder.finish();
@@ -122,11 +137,11 @@ const sharedWarningGutter = gutter({
     const imageMarkers = view.state.field(imageOptimizationWarningField);
     const diagnostics = view.state.field(editorDiagnosticsStateField, false) ?? [];
 
-    const byLine = new Map<number, { severity: "error" | "image"; message: string }>();
+    const byLine = new Map<number, { severity: "error" | "image"; message: string; imagePath?: string }>();
 
     imageMarkers.between(0, view.state.doc.length, (from, _to, marker) => {
       if (marker instanceof ImageOptimizationMarker) {
-        byLine.set(from, { severity: "image", message: marker.message });
+        byLine.set(from, { severity: "image", message: marker.message, imagePath: marker.imagePath });
       }
     });
 
@@ -157,7 +172,7 @@ const sharedWarningGutter = gutter({
         lineFrom,
         marker.severity === "error"
           ? new LspErrorMarker(marker.message)
-          : new ImageOptimizationMarker(marker.message)
+          : new ImageOptimizationMarker(marker.message, marker.imagePath)
       );
     }
 

@@ -1344,6 +1344,12 @@ fn remove_cache_symlinks(dir: &std::path::Path) {
         return;
     };
     for entry in entries.flatten() {
+        if entry
+            .file_type()
+            .is_ok_and(|file_type| file_type.is_symlink())
+        {
+            continue;
+        }
         let path = entry.path();
         let Ok(metadata) = std::fs::symlink_metadata(&path) else {
             continue;
@@ -1995,6 +2001,8 @@ fn local_typst_dependencies(contents: &str, parent: &std::path::Path) -> Vec<std
 struct StaticTypstImageReference {
     path: std::path::PathBuf,
     from_byte: usize,
+    path_from_byte: usize,
+    path_to_byte: usize,
     from_utf16: usize,
     to_utf16: usize,
 }
@@ -2107,6 +2115,8 @@ fn local_typst_images(contents: &str, parent: &std::path::Path) -> Vec<StaticTyp
                     images.push(StaticTypstImageReference {
                         path: normalized_existing_path(&parent.join(raw)),
                         from_byte: call_start,
+                        path_from_byte: start,
+                        path_to_byte: cursor,
                         from_utf16: contents[..call_start].encode_utf16().count(),
                         to_utf16: contents[..cursor + 1].encode_utf16().count(),
                     });
@@ -2205,7 +2215,42 @@ fn read_raster_dimensions(path: &std::path::Path) -> Option<(u32, u32, &'static 
             cursor += segment_len;
         }
     }
-    None
+    let (width, height) = image::image_dimensions(path).ok()?;
+    let format = match path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some("png") => "PNG",
+        Some("jpg" | "jpeg") => "JPEG",
+        Some("gif") => "GIF",
+        Some("bmp") => "BMP",
+        Some("webp") => "WebP",
+        _ => return None,
+    };
+    Some((width, height, format))
+}
+
+fn read_oriented_raster_dimensions(path: &std::path::Path) -> Option<(u32, u32, &'static str)> {
+    use image::{metadata::Orientation, ImageDecoder, ImageReader};
+
+    let (_, _, format) = read_raster_dimensions(path)?;
+    let reader = ImageReader::open(path).ok()?.with_guessed_format().ok()?;
+    let mut decoder = reader.into_decoder().ok()?;
+    let (width, height) = decoder.dimensions();
+    let orientation = decoder.orientation().unwrap_or(Orientation::NoTransforms);
+    let (width, height) = match orientation {
+        Orientation::Rotate90
+        | Orientation::Rotate270
+        | Orientation::Rotate90FlipH
+        | Orientation::Rotate270FlipH => (height, width),
+        Orientation::NoTransforms
+        | Orientation::Rotate180
+        | Orientation::FlipHorizontal
+        | Orientation::FlipVertical => (width, height),
+    };
+    Some((width, height, format))
 }
 
 #[derive(serde::Serialize, Debug, PartialEq)]
@@ -2239,6 +2284,544 @@ struct PreviewImageProfile {
     reference_count: usize,
     total_source_bytes: u64,
     estimated_total_decoded_bytes: u64,
+}
+
+#[derive(serde::Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct ProjectImageAsset {
+    path: String,
+    width: u32,
+    height: u32,
+    source_bytes: u64,
+    estimated_decoded_bytes: u64,
+    format: String,
+    modified_ms: u64,
+    referenced_by_current_document: bool,
+    references: Vec<PreviewImageReference>,
+}
+
+#[derive(serde::Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct ProjectImageIndex {
+    images: Vec<ProjectImageAsset>,
+    scanned_typst_files: usize,
+}
+
+fn is_image_tool_directory(path: &std::path::Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.starts_with('.') || matches!(name, "node_modules" | "target"))
+}
+
+fn is_indexed_raster_path(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .map(str::to_ascii_lowercase)
+        .is_some_and(|extension| {
+            matches!(
+                extension.as_str(),
+                "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp"
+            )
+        })
+}
+
+fn collect_project_files(
+    root: &std::path::Path,
+    typst_files: &mut Vec<std::path::PathBuf>,
+    image_files: &mut Vec<std::path::PathBuf>,
+) {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if !is_image_tool_directory(&path) {
+                collect_project_files(&path, typst_files, image_files);
+            }
+        } else if path.extension().and_then(|extension| extension.to_str()) == Some("typ") {
+            typst_files.push(normalized_existing_path(&path));
+        } else if is_indexed_raster_path(&path) {
+            image_files.push(normalized_existing_path(&path));
+        }
+    }
+}
+
+fn current_document_sources(
+    main_path: Option<&std::path::Path>,
+) -> std::collections::HashSet<std::path::PathBuf> {
+    use std::collections::{HashSet, VecDeque};
+    let mut visited = HashSet::new();
+    let Some(main_path) = main_path else {
+        return visited;
+    };
+    let mut pending = VecDeque::from([normalized_existing_path(main_path)]);
+    while let Some(path) = pending.pop_front() {
+        if !visited.insert(path.clone()) {
+            continue;
+        }
+        let Ok(contents) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let parent = path.parent().unwrap_or(std::path::Path::new(""));
+        pending.extend(local_typst_dependencies(&contents, parent));
+    }
+    visited
+}
+
+fn project_image_index_blocking(
+    workspace_root_path: String,
+    main_path: Option<String>,
+) -> Result<ProjectImageIndex, String> {
+    use std::collections::HashMap;
+    use std::time::UNIX_EPOCH;
+
+    let root = normalized_existing_path(std::path::Path::new(&workspace_root_path));
+    if !root.is_dir() {
+        return Err("Project folder does not exist".into());
+    }
+    let current_sources = current_document_sources(main_path.as_deref().map(std::path::Path::new));
+    let mut typst_files = Vec::new();
+    let mut image_files = Vec::new();
+    collect_project_files(&root, &mut typst_files, &mut image_files);
+
+    let mut references: HashMap<std::path::PathBuf, Vec<PreviewImageReference>> = HashMap::new();
+    let mut referenced_by_current = std::collections::HashSet::new();
+    for source_path in &typst_files {
+        let Ok(contents) = std::fs::read_to_string(source_path) else {
+            continue;
+        };
+        let parent = source_path.parent().unwrap_or(std::path::Path::new(""));
+        for image_reference in local_typst_images(&contents, parent) {
+            if !image_reference.path.starts_with(&root) {
+                continue;
+            }
+            let source_prefix = &contents[..image_reference.from_byte];
+            let line_start = source_prefix.rfind('\n').map_or(0, |index| index + 1);
+            references
+                .entry(image_reference.path.clone())
+                .or_default()
+                .push(PreviewImageReference {
+                    source_path: source_path.to_string_lossy().to_string(),
+                    from_utf16: image_reference.from_utf16,
+                    to_utf16: image_reference.to_utf16,
+                    line: source_prefix.bytes().filter(|byte| *byte == b'\n').count() + 1,
+                    column: source_prefix[line_start..].encode_utf16().count() + 1,
+                });
+            if current_sources.contains(source_path) {
+                referenced_by_current.insert(image_reference.path);
+            }
+        }
+    }
+
+    let mut images = Vec::new();
+    for path in image_files {
+        let Some((width, height, format)) = read_oriented_raster_dimensions(&path) else {
+            continue;
+        };
+        let Ok(metadata) = std::fs::metadata(&path) else {
+            continue;
+        };
+        let modified_ms = metadata
+            .modified()
+            .ok()
+            .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
+            .map(|value| value.as_millis().min(u128::from(u64::MAX)) as u64)
+            .unwrap_or_default();
+        let image_references = references.remove(&path).unwrap_or_default();
+        images.push(ProjectImageAsset {
+            path: path.to_string_lossy().to_string(),
+            width,
+            height,
+            source_bytes: metadata.len(),
+            estimated_decoded_bytes: u64::from(width)
+                .saturating_mul(u64::from(height))
+                .saturating_mul(4),
+            format: format.into(),
+            modified_ms,
+            referenced_by_current_document: referenced_by_current.contains(&path),
+            references: image_references,
+        });
+    }
+    images.sort_by(|left, right| left.path.cmp(&right.path));
+    Ok(ProjectImageIndex {
+        images,
+        scanned_typst_files: typst_files.len(),
+    })
+}
+
+#[tauri::command]
+async fn project_image_index(
+    workspace_root_path: String,
+    main_path: Option<String>,
+) -> Result<ProjectImageIndex, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        project_image_index_blocking(workspace_root_path, main_path)
+    })
+    .await
+    .map_err(|error| format!("Could not index project images: {error}"))?
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ImageToolPreviewRequest {
+    workspace_root_path: String,
+    source_path: String,
+    width: u32,
+    height: u32,
+    format: String,
+    quality: u8,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ImageToolPreviewResult {
+    path: String,
+    mime_type: String,
+    width: u32,
+    height: u32,
+    output_bytes: u64,
+}
+
+fn image_tool_generate_preview_blocking(
+    request: ImageToolPreviewRequest,
+) -> Result<ImageToolPreviewResult, String> {
+    use image::{
+        codecs::jpeg::JpegEncoder, imageops::FilterType, metadata::Orientation, DynamicImage,
+        ImageDecoder, ImageFormat, ImageReader,
+    };
+    use std::hash::{Hash, Hasher};
+    use std::io::BufWriter;
+
+    let root = normalized_existing_path(std::path::Path::new(&request.workspace_root_path));
+    let source = normalized_existing_path(std::path::Path::new(&request.source_path));
+    if !source.starts_with(&root) || !is_indexed_raster_path(&source) {
+        return Err("Image optimization is restricted to local project raster images".into());
+    }
+    if request.width == 0
+        || request.height == 0
+        || request.width > 32_768
+        || request.height > 32_768
+    {
+        return Err("Target dimensions must be between 1 and 32,768 pixels".into());
+    }
+    if u64::from(request.width).saturating_mul(u64::from(request.height)) > 64 * 1024 * 1024 {
+        return Err("Target dimensions exceed the 64-megapixel optimization limit".into());
+    }
+    let format = request.format.to_ascii_lowercase();
+    if !matches!(format.as_str(), "png" | "jpeg" | "jpg" | "webp") {
+        return Err("Target format must be PNG, JPEG, or WebP".into());
+    }
+    let reader = ImageReader::open(&source)
+        .map_err(|error| format!("Could not open {}: {error}", source.display()))?
+        .with_guessed_format()
+        .map_err(|error| format!("Could not identify {}: {error}", source.display()))?;
+    let mut decoder = reader
+        .into_decoder()
+        .map_err(|error| format!("Could not initialize {}: {error}", source.display()))?;
+    let orientation = decoder.orientation().unwrap_or(Orientation::NoTransforms);
+    let mut decoded = DynamicImage::from_decoder(decoder)
+        .map_err(|error| format!("Could not decode {}: {error}", source.display()))?;
+    decoded.apply_orientation(orientation);
+    let resized = decoded.resize_exact(request.width, request.height, FilterType::Lanczos3);
+    let cache = root.join(".typsastra").join("cache").join("image-tool");
+    std::fs::create_dir_all(&cache)
+        .map_err(|error| format!("Could not prepare image-tool cache: {error}"))?;
+    let extension = if format == "jpg" {
+        "jpeg"
+    } else {
+        format.as_str()
+    };
+    let mut identity = std::collections::hash_map::DefaultHasher::new();
+    source.hash(&mut identity);
+    request.width.hash(&mut identity);
+    request.height.hash(&mut identity);
+    format.hash(&mut identity);
+    request.quality.hash(&mut identity);
+    let destination = cache.join(format!(
+        "preview-{identity:016x}-{request_width}x{request_height}.{extension}",
+        identity = identity.finish(),
+        request_width = request.width,
+        request_height = request.height
+    ));
+    let file = std::fs::File::create(&destination)
+        .map_err(|error| format!("Could not create optimization preview: {error}"))?;
+    let mut writer = BufWriter::new(file);
+    match format.as_str() {
+        "jpeg" | "jpg" => {
+            let rgb = resized.to_rgb8();
+            JpegEncoder::new_with_quality(&mut writer, request.quality.clamp(1, 100))
+                .encode(
+                    &rgb,
+                    request.width,
+                    request.height,
+                    image::ExtendedColorType::Rgb8,
+                )
+                .map_err(|error| format!("Could not encode JPEG preview: {error}"))?;
+        }
+        "png" => resized
+            .write_to(&mut writer, ImageFormat::Png)
+            .map_err(|error| format!("Could not encode PNG preview: {error}"))?,
+        "webp" => resized
+            .write_to(&mut writer, ImageFormat::WebP)
+            .map_err(|error| format!("Could not encode WebP preview: {error}"))?,
+        _ => unreachable!(),
+    }
+    drop(writer);
+    let output_bytes = std::fs::metadata(&destination)
+        .map_err(|error| format!("Could not inspect optimization preview: {error}"))?
+        .len();
+    Ok(ImageToolPreviewResult {
+        path: destination.to_string_lossy().to_string(),
+        mime_type: format!("image/{extension}"),
+        width: request.width,
+        height: request.height,
+        output_bytes,
+    })
+}
+
+#[tauri::command]
+async fn image_tool_generate_preview(
+    request: ImageToolPreviewRequest,
+) -> Result<ImageToolPreviewResult, String> {
+    tauri::async_runtime::spawn_blocking(move || image_tool_generate_preview_blocking(request))
+        .await
+        .map_err(|error| format!("Image optimization task failed: {error}"))?
+}
+
+#[tauri::command]
+fn image_tool_save_copy(
+    workspace_root_path: String,
+    preview_path: String,
+    destination_path: String,
+) -> Result<(), String> {
+    let root = normalized_existing_path(std::path::Path::new(&workspace_root_path));
+    let preview = normalized_existing_path(std::path::Path::new(&preview_path));
+    let expected_cache = root.join(".typsastra").join("cache").join("image-tool");
+    if !preview.starts_with(expected_cache) || !preview.is_file() {
+        return Err("Optimization preview is no longer available".into());
+    }
+    std::fs::copy(&preview, &destination_path)
+        .map(|_| ())
+        .map_err(|error| format!("Could not save optimized image: {error}"))
+}
+
+fn same_path_component(left: &std::ffi::OsStr, right: &std::ffi::OsStr) -> bool {
+    #[cfg(windows)]
+    {
+        left.to_string_lossy()
+            .eq_ignore_ascii_case(&right.to_string_lossy())
+    }
+    #[cfg(not(windows))]
+    {
+        left == right
+    }
+}
+
+fn relative_file_path(
+    from_directory: &std::path::Path,
+    target: &std::path::Path,
+) -> Option<String> {
+    let from = from_directory
+        .components()
+        .map(|component| component.as_os_str().to_os_string())
+        .collect::<Vec<_>>();
+    let to = target
+        .components()
+        .map(|component| component.as_os_str().to_os_string())
+        .collect::<Vec<_>>();
+    let mut common = 0;
+    while common < from.len()
+        && common < to.len()
+        && same_path_component(&from[common], &to[common])
+    {
+        common += 1;
+    }
+    if common == 0 {
+        return None;
+    }
+    let mut relative = std::path::PathBuf::new();
+    for _ in common..from.len() {
+        relative.push("..");
+    }
+    for component in &to[common..] {
+        relative.push(component);
+    }
+    Some(relative.to_string_lossy().replace('\\', "/"))
+}
+
+#[tauri::command]
+fn image_tool_update_references(
+    workspace_root_path: String,
+    original_image_path: String,
+    replacement_image_path: String,
+    source_paths: Vec<String>,
+) -> Result<usize, String> {
+    let root = normalized_existing_path(std::path::Path::new(&workspace_root_path));
+    let original = normalized_existing_path(std::path::Path::new(&original_image_path));
+    let replacement = normalized_existing_path(std::path::Path::new(&replacement_image_path));
+    if !root.is_dir() || !original.starts_with(&root) {
+        return Err("The original image is outside the active project".into());
+    }
+    if !replacement.is_file() || !replacement.starts_with(&root) {
+        return Err("Choose a replacement image inside the active project".into());
+    }
+
+    let mut updated = 0;
+    let mut visited = std::collections::HashSet::new();
+    for source_path in source_paths {
+        let source = normalized_existing_path(std::path::Path::new(&source_path));
+        if !source.starts_with(&root)
+            || source.extension().and_then(|extension| extension.to_str()) != Some("typ")
+            || !visited.insert(source.clone())
+        {
+            continue;
+        }
+        let mut contents = std::fs::read_to_string(&source)
+            .map_err(|error| format!("Could not read {}: {error}", source.display()))?;
+        let parent = source.parent().unwrap_or(std::path::Path::new(""));
+        let relative = relative_file_path(parent, &replacement).ok_or_else(|| {
+            format!(
+                "Could not create a relative Typst path from {} to {}",
+                source.display(),
+                replacement.display()
+            )
+        })?;
+        let mut ranges = local_typst_images(&contents, parent)
+            .into_iter()
+            .filter(|reference| reference.path == original)
+            .map(|reference| (reference.path_from_byte, reference.path_to_byte))
+            .collect::<Vec<_>>();
+        ranges.sort_unstable_by(|left, right| right.0.cmp(&left.0));
+        let file_updates = ranges.len();
+        for (from, to) in ranges {
+            contents.replace_range(from..to, &relative);
+        }
+        if file_updates > 0 {
+            std::fs::write(&source, contents)
+                .map_err(|error| format!("Could not update {}: {error}", source.display()))?;
+            updated += file_updates;
+        }
+    }
+    Ok(updated)
+}
+
+#[cfg(test)]
+mod image_tool_tests {
+    use super::{
+        image_tool_generate_preview_blocking, image_tool_save_copy, image_tool_update_references,
+        project_image_index_blocking,
+    };
+
+    fn write_png(path: &std::path::Path, width: u32, height: u32) {
+        let image = image::RgbaImage::from_pixel(width, height, image::Rgba([20, 120, 80, 255]));
+        image.save(path).expect("save PNG fixture");
+    }
+
+    #[test]
+    fn indexes_project_images_and_tracks_current_document_references() {
+        let workspace = tempfile::tempdir().expect("create workspace");
+        let root = workspace.path();
+        std::fs::create_dir(root.join("images")).unwrap();
+        std::fs::create_dir(root.join(".hidden")).unwrap();
+        write_png(&root.join("images/current.png"), 20, 10);
+        write_png(&root.join("images/unused.png"), 8, 8);
+        write_png(&root.join(".hidden/ignored.png"), 4, 4);
+        std::fs::write(root.join("main.typ"), "#image(\"images/current.png\")").unwrap();
+        std::fs::write(root.join("other.typ"), "#image(\"images/unused.png\")").unwrap();
+
+        let index = project_image_index_blocking(
+            root.to_string_lossy().to_string(),
+            Some(root.join("main.typ").to_string_lossy().to_string()),
+        )
+        .expect("index images");
+
+        assert_eq!(index.scanned_typst_files, 2);
+        assert_eq!(index.images.len(), 2);
+        let current = index
+            .images
+            .iter()
+            .find(|image| image.path.ends_with("current.png"))
+            .unwrap();
+        assert!(current.referenced_by_current_document);
+        assert_eq!(current.references.len(), 1);
+        let unused = index
+            .images
+            .iter()
+            .find(|image| image.path.ends_with("unused.png"))
+            .unwrap();
+        assert!(!unused.referenced_by_current_document);
+        assert_eq!(unused.references.len(), 1);
+    }
+
+    #[test]
+    fn generates_a_bounded_optimization_preview_inside_project_cache() {
+        let workspace = tempfile::tempdir().expect("create workspace");
+        let source = workspace.path().join("source.png");
+        write_png(&source, 20, 10);
+
+        let result = image_tool_generate_preview_blocking(super::ImageToolPreviewRequest {
+            workspace_root_path: workspace.path().to_string_lossy().to_string(),
+            source_path: source.to_string_lossy().to_string(),
+            width: 10,
+            height: 5,
+            format: "jpeg".into(),
+            quality: 80,
+        })
+        .expect("generate preview");
+
+        assert_eq!((result.width, result.height), (10, 5));
+        assert!(std::path::Path::new(&result.path).starts_with(workspace.path().join(".typsastra")));
+        assert!(result.output_bytes > 0);
+    }
+
+    #[test]
+    fn saves_an_optimized_copy_and_updates_static_typst_paths() {
+        let workspace = tempfile::tempdir().expect("create workspace");
+        let root = workspace.path();
+        let images = root.join("images");
+        let chapters = root.join("chapters");
+        std::fs::create_dir_all(&images).unwrap();
+        std::fs::create_dir_all(&chapters).unwrap();
+        let original = images.join("original.png");
+        write_png(&original, 20, 10);
+        let source = chapters.join("chapter.typ");
+        std::fs::write(
+            &source,
+            "#image(\"../images/original.png\")\n#image(\"../images/original.png\")",
+        )
+        .unwrap();
+
+        let preview = image_tool_generate_preview_blocking(super::ImageToolPreviewRequest {
+            workspace_root_path: root.to_string_lossy().to_string(),
+            source_path: original.to_string_lossy().to_string(),
+            width: 10,
+            height: 5,
+            format: "png".into(),
+            quality: 80,
+        })
+        .expect("generate preview");
+        let replacement = images.join("optimized.png");
+        image_tool_save_copy(
+            root.to_string_lossy().to_string(),
+            preview.path,
+            replacement.to_string_lossy().to_string(),
+        )
+        .expect("save optimized copy");
+        let updated = image_tool_update_references(
+            root.to_string_lossy().to_string(),
+            original.to_string_lossy().to_string(),
+            replacement.to_string_lossy().to_string(),
+            vec![source.to_string_lossy().to_string()],
+        )
+        .expect("update source references");
+
+        assert_eq!(updated, 2);
+        assert_eq!(
+            std::fs::read_to_string(source).unwrap(),
+            "#image(\"../images/optimized.png\")\n#image(\"../images/optimized.png\")"
+        );
+    }
 }
 
 fn collect_preview_image_profile_with_override(
@@ -4273,6 +4856,10 @@ pub fn run() {
             resolve_preview_main,
             typst_preview_source_stats,
             typst_preview_image_profile,
+            project_image_index,
+            image_tool_generate_preview,
+            image_tool_save_copy,
+            image_tool_update_references,
             ensure_toolchain,
             get_toolchain_status,
             list_system_fonts,

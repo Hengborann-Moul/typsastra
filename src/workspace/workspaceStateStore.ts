@@ -33,6 +33,7 @@ export type StoredWorkspaceState = {
     inputContainerWidthPct: number;
     explorerSidebarWidthPx: number;
     sidebarVisible: boolean;
+    activeSidebarTool: "explorer" | "images";
   };
   selectedToolchain: StoredWorkspaceToolchain | null;
   previewContentMode: "normal" | "draft";
@@ -125,7 +126,8 @@ export function normalizeWorkspaceMetadata(
       layout: {
         inputContainerWidthPct: numberOr(layout.inputContainerWidthPct, 50),
         explorerSidebarWidthPx: numberOr(layout.explorerSidebarWidthPx, 250),
-        sidebarVisible: typeof layout.sidebarVisible === "boolean" ? layout.sidebarVisible : true
+        sidebarVisible: typeof layout.sidebarVisible === "boolean" ? layout.sidebarVisible : true,
+        activeSidebarTool: layout.activeSidebarTool === "images" ? "images" : "explorer"
       },
       selectedToolchain: toolchainOrNull(workspace.selectedToolchain),
       previewContentMode: workspace.previewContentMode === "draft" ? "draft" : "normal",

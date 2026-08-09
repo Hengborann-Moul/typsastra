@@ -49,7 +49,12 @@ describe("workspace state store", () => {
           foldRanges: null
         }],
         expandedDirectories: ["chapters"],
-        layout: { inputContainerWidthPct: 60, explorerSidebarWidthPx: 300, sidebarVisible: false },
+        layout: {
+          inputContainerWidthPct: 60,
+          explorerSidebarWidthPx: 300,
+          sidebarVisible: false,
+          activeSidebarTool: "explorer"
+        },
         selectedToolchain: null,
         previewContentMode: "normal",
         previewRenderMode: null,

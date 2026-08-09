@@ -464,7 +464,7 @@ button.dropdown-item {
   align-items: center;
   justify-content: center;
   border: 0;
-  border-radius: 4px;
+  border-radius: 0 !important;
   background: transparent;
   color: var(--ui-header-text);
   cursor: pointer;
@@ -474,6 +474,12 @@ button.dropdown-item {
 .sidebar-activity-button:hover {
   background: var(--ui-hover);
   color: var(--ui-text);
+}
+
+.sidebar-activity-button.active {
+  color: var(--ui-accent-color);
+  background: var(--ui-navigation-background);
+  box-shadow: inset 2px 0 0 var(--ui-accent-color);
 }
 
 .sidebar-activity-button:focus-visible {
@@ -2639,6 +2645,137 @@ body.typsastra-resizing #input-container-wrapper::after {
   display: block;
 }
 
+body.image-tools-active .editor-tab-strip,
+body.image-tools-active #editor-visual-toolbar {
+  display: none !important;
+}
+
+body.image-tools-active #code-render-pane,
+body.image-tools-active #image-viewer-pane {
+  display: none !important;
+}
+
+body.image-tools-active #image-tools-comparison {
+  display: none !important;
+}
+
+.image-tools-inspector {
+  position: absolute;
+  inset: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 18px;
+  box-sizing: border-box;
+  color: var(--ui-text);
+  background: var(--ui-bg);
+  font: var(--font-size-ui)/1.5 var(--font-family-sans);
+}
+
+.image-tool-inspector-empty,
+.image-tool-comparison-empty {
+  inset: 0;
+}
+
+.image-tools-inspector:has(> .image-tool-inspector-empty),
+.image-tools-comparison:has(> .image-tool-comparison-empty) {
+  padding: 0;
+  background: var(--ui-bg);
+}
+
+/* The preview toolbar remains visible in Image Tools while the editor toolbar
+   is hidden. Use matching content rectangles so both empty messages share the
+   same vertical center. */
+body.image-tools-active .image-tools-inspector:has(> .image-tool-inspector-empty) {
+  top: var(--editor-tab-bar-height);
+}
+.image-tool-inspector-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.image-tool-inspector-header > div { min-width: 0; }
+.image-tool-inspector-header h2 { margin: 0; color: var(--ui-text); font-size: 17px; font-weight: 500; }
+.image-tool-path { margin-top: 3px; overflow-wrap: anywhere; color: var(--ui-header-text); font: 11px/1.4 var(--editor-code-font); }
+.image-tool-status { flex: 0 0 auto; padding: 3px 7px; border: 1px solid var(--ui-border); border-radius: 0; color: var(--ui-header-text); font-size: 11px; }
+
+.image-tool-notice {
+  margin-top: 14px;
+  padding: 9px 10px;
+  display: grid;
+  gap: 2px;
+  border: 1px solid var(--ui-border);
+  border-radius: 0;
+  color: var(--ui-header-text);
+  background: color-mix(in srgb, var(--ui-bg) 88%, var(--ui-hover));
+}
+.image-tool-notice strong { color: var(--ui-text); font-weight: 500; }
+.image-tool-notice.warning { border-color: color-mix(in srgb, var(--ui-warning-icon-color) 55%, var(--ui-border)); }
+.image-tool-notice.warning strong { color: var(--ui-warning-icon-color); }
+
+.image-tool-metadata-grid {
+  margin-top: 16px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(115px, 1fr));
+  border-top: 1px solid var(--ui-border);
+  border-left: 1px solid var(--ui-border);
+}
+.image-tool-metadata-grid > div { min-width: 0; padding: 9px; display: grid; gap: 2px; border-right: 1px solid var(--ui-border); border-bottom: 1px solid var(--ui-border); }
+.image-tool-metadata-grid span { color: var(--ui-header-text); font-size: 11px; }
+.image-tool-metadata-grid strong { overflow: hidden; color: var(--ui-text); font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
+
+.image-tool-section { margin-top: 18px; }
+.image-tool-section h3 { margin: 0 0 7px; color: var(--ui-text); font-size: 12px; font-weight: 500; }
+.image-tool-references { display: grid; border: 1px solid var(--ui-border); }
+.image-tool-reference { padding: 7px 9px; overflow: hidden; border: 0; border-bottom: 1px solid var(--ui-border); color: var(--ui-text); background: transparent; font: 11px var(--editor-code-font); text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.image-tool-reference:last-child { border-bottom: 0; }
+.image-tool-reference:hover { background: var(--ui-hover); }
+.image-tool-reference:focus-visible { outline: 1px solid var(--ui-accent-color); outline-offset: -1px; }
+.image-tool-empty-reference { padding: 8px 9px; color: var(--ui-header-text); }
+
+.image-tool-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(110px, 1fr));
+  gap: 10px 12px;
+  padding: 12px;
+  border: 1px solid var(--ui-border);
+  background: color-mix(in srgb, var(--ui-bg) 94%, var(--ui-hover));
+}
+.image-tool-form label { min-width: 0; display: grid; gap: 4px; color: var(--ui-header-text); font-size: 11px; }
+.image-tool-form input,
+.image-tool-form select { padding: 0 7px; }
+.image-tool-form input[type="range"] { padding: 0; accent-color: var(--ui-accent-color); }
+.image-tool-form .image-tool-lock { grid-template-columns: auto 1fr; align-items: center; justify-content: start; }
+.image-tool-form .image-tool-lock input { width: 14px; height: 14px; margin: 0; padding: 0; appearance: auto; }
+.image-tool-form output { color: var(--ui-text); }
+.image-tool-actions { margin-top: 9px; display: flex; flex-wrap: wrap; gap: 7px; }
+.image-tool-actions button { min-height: 28px; padding: 0 10px; border: 1px solid var(--ui-border); border-radius: 0; color: var(--ui-text); background: var(--ui-bg); font: 12px var(--font-family-sans); cursor: pointer; }
+.image-tool-actions button.primary { border-color: var(--ui-accent-color); }
+.image-tool-actions button:hover:not(:disabled) { background: var(--ui-hover); }
+.image-tool-actions button:disabled { opacity: .5; cursor: default; }
+.image-tool-output,
+.image-tool-reference-output { min-height: 15px; margin-top: 7px; color: var(--ui-header-text); font-size: 11px; overflow-wrap: anywhere; }
+
+.image-tools-comparison {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  min-height: 0;
+  overflow: auto;
+  padding: 14px;
+  box-sizing: border-box;
+  display: grid;
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  align-items: stretch;
+  gap: 12px;
+  color: var(--ui-text);
+  background: var(--ui-hover);
+  font: 12px var(--font-family-sans);
+}
+.image-tools-comparison figure { min-width: 0; min-height: 0; margin: 0; padding: 8px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 7px; border: 1px solid var(--ui-border); background: repeating-conic-gradient(color-mix(in srgb, var(--ui-bg) 88%, white) 0 25%, var(--ui-bg) 0 50%) 50% / 16px 16px; }
+.image-tools-comparison img { display: block; max-width: 100%; max-height: calc(50vh - 80px); object-fit: contain; box-shadow: 0 2px 10px rgba(0,0,0,.22); }
+.image-tools-comparison figcaption { max-width: 100%; overflow: hidden; color: var(--ui-header-text); text-overflow: ellipsis; white-space: nowrap; }
+.image-tools-comparison:has(figure:only-child) { grid-template-rows: minmax(0, 1fr); }
+
+@media (max-width: 900px) {
+  .image-tool-metadata-grid { grid-template-columns: repeat(2, minmax(100px, 1fr)); }
+}
+
 .preview-sync-overlay {
   position: absolute;
   display: none;
@@ -3874,6 +4011,94 @@ button.welcome-item:disabled {
   box-sizing: border-box;
 }
 
+.sidebar-tool-content {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+}
+
+#image-tools-sidebar {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.image-tool-sidebar-controls {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  border-bottom: 1px solid var(--ui-border);
+}
+
+.image-tool-search,
+.image-tool-filter,
+.image-tool-form input,
+.image-tool-form select {
+  width: 100%;
+  min-width: 0;
+  height: 26px;
+  box-sizing: border-box;
+  border: 1px solid var(--ui-border);
+  border-radius: 0;
+  outline: none;
+  color: var(--ui-text);
+  background: var(--ui-control-bg, var(--ui-bg));
+  font: 12px var(--font-family-sans);
+  appearance: none;
+}
+
+.image-tool-search { padding: 0 7px; }
+.image-tool-filter { padding: 0 24px 0 7px; }
+.image-tool-search:focus,
+.image-tool-filter:focus,
+.image-tool-form input:focus,
+.image-tool-form select:focus { border-color: var(--ui-accent-color); }
+
+.image-tool-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  /* Filtering and indexing can rebuild this tree. Keep the browser from
+     pinning a former row while its DOM is replaced. */
+  overflow-anchor: none;
+  scroll-behavior: auto;
+  overscroll-behavior: none;
+  outline: none;
+}
+
+.image-tool-list:focus { outline: none; }
+
+.image-tool-list:focus-within .tree-item.selected::after { display: block; }
+
+.image-tool-list .tree-item.pathological-image .tree-text,
+.image-tool-list .tree-item.pathological-image .tree-icon,
+.image-tool-list .tree-item.pathological-image .tree-icon svg {
+  color: var(--ui-warning-icon-color) !important;
+}
+
+.image-tool-sidebar-footer {
+  min-height: 28px;
+  padding: 6px 8px;
+  box-sizing: border-box;
+  overflow: hidden;
+  border-top: 1px solid var(--ui-border);
+  color: var(--ui-header-text);
+  font: 10px var(--font-family-sans);
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.image-tool-loading,
+.image-tool-empty {
+  padding: 12px;
+  color: var(--ui-header-text);
+  font: 12px/1.45 var(--font-family-sans);
+}
+
 .preview-actions.markdown-preview-toolbar {
   justify-content: flex-start;
 }
@@ -3996,7 +4221,7 @@ button.welcome-item:disabled {
   overflow: auto;
   padding: 1em;
   border: 1px solid var(--ui-border);
-  border-radius: 4px;
+  border-radius: 0;
   background: var(--ui-hover);
 }
 
@@ -4073,6 +4298,8 @@ button.welcome-item:disabled {
 .cm-image-optimization-marker svg {
   display: block;
 }
+
+.cm-image-optimization-marker.clickable { cursor: pointer; }
 
 .cm-image-optimization-marker-spacer {
   display: block;

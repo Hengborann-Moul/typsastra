@@ -6,6 +6,7 @@ import { fileNameFromPath, filePathKey, relativeFilePath } from "../platform/pat
 export interface FileNode { name: string; path: string; isDirectory: boolean; children?: FileNode[]; }
 
 export type ExplorerSelection = { path: string; isDirectory: boolean };
+export type ExplorerItemDecoration = { className?: string; title?: string };
 
 export function sortFileNodes(nodes: FileNode[]): FileNode[] {
   return [...nodes].sort((a, b) => Number(b.isDirectory) - Number(a.isDirectory) || a.name.localeCompare(b.name));
@@ -66,12 +67,15 @@ export class WorkspaceExplorer {
   private loadGeneration = 0;
   private workspaceRootPath: string | null = null;
   private activeFilePath: string | null = null;
+  private visibleFilePaths: string[] | null = null;
 
   constructor(
     private container: HTMLElement,
     private onFileSelected: (filePath: string, options?: { temporary?: boolean; focusEditor?: boolean }) => void,
     private isPinnedMainFile?: (filePath: string) => boolean,
-    private titleElement?: HTMLElement
+    private titleElement?: HTMLElement,
+    private itemDecoration?: (filePath: string, isDirectory: boolean) => ExplorerItemDecoration | null,
+    private titlePrefix = "EXPLORER",
   ) {
     this.container.tabIndex = 0;
     this.container.setAttribute("role", "tree");
@@ -163,6 +167,10 @@ export class WorkspaceExplorer {
     });
   }
 
+  public setVisibleFiles(paths: readonly string[] | null): void {
+    this.visibleFilePaths = paths === null ? null : paths.map(path => filePathKey(path));
+  }
+
   public expandedDirectoryPaths(): string[] {
     return [...this.captureViewState().expandedPaths];
   }
@@ -171,7 +179,7 @@ export class WorkspaceExplorer {
     this.workspaceRootPath = rootPath;
     if (this.titleElement) {
       const projectName = fileNameFromPath(rootPath) || rootPath;
-      this.titleElement.textContent = `EXPLORER: ${projectName}`;
+      this.titleElement.textContent = `${this.titlePrefix}: ${projectName}`;
       this.titleElement.title = rootPath;
     }
     const generation = ++this.loadGeneration;
@@ -183,7 +191,9 @@ export class WorkspaceExplorer {
     }
     try {
       const nodes = await this.readDirectory(rootPath);
+      await this.hydrateCompactDirectoryChains(nodes, viewState.expandedPaths);
       await this.hydrateExpandedDirectories(nodes, viewState.expandedPaths);
+      await this.hydrateCompactDirectoryChains(nodes, viewState.expandedPaths);
       if (generation !== this.loadGeneration) return;
       this.container.innerHTML = "";
 
@@ -208,7 +218,9 @@ export class WorkspaceExplorer {
     const generation = ++this.loadGeneration;
     try {
       const nodes = await this.readDirectory(this.workspaceRootPath);
+      await this.hydrateCompactDirectoryChains(nodes, viewState.expandedPaths);
       await this.hydrateExpandedDirectories(nodes, viewState.expandedPaths);
+      await this.hydrateCompactDirectoryChains(nodes, viewState.expandedPaths);
       if (generation !== this.loadGeneration) return;
       this.container.innerHTML = "";
       this.container.appendChild(this.renderTree(nodes, 0, viewState.expandedPaths, viewState.selectedPath));
@@ -228,6 +240,16 @@ export class WorkspaceExplorer {
     const expandedPaths = new Set<string>();
     this.container.querySelectorAll<HTMLElement>(".tree-folder:not(.collapsed) > .tree-item[data-path]")
       .forEach(item => {
+        const chain = item.dataset.directoryChain;
+        if (chain) {
+          try {
+            const paths = JSON.parse(chain) as string[];
+            paths.forEach(path => expandedPaths.add(path));
+            return;
+          } catch {
+            // Fall back to the item path for workspaces saved by older builds.
+          }
+        }
         if (item.dataset.path) expandedPaths.add(item.dataset.path);
       });
     const selectedPath = this.container.querySelector<HTMLElement>(".tree-item.selected[data-path]")?.dataset.path ?? null;
@@ -237,8 +259,35 @@ export class WorkspaceExplorer {
   private async hydrateExpandedDirectories(nodes: FileNode[], expandedPaths: Set<string>): Promise<void> {
     await Promise.all(nodes.map(async node => {
       if (!node.isDirectory || !workspacePathSetContains(expandedPaths, node.path)) return;
-      node.children = await this.readDirectory(node.path);
+      node.children ??= await this.readDirectory(node.path);
       await this.hydrateExpandedDirectories(node.children, expandedPaths);
+    }));
+  }
+
+  private directoryChain(node: FileNode): FileNode[] {
+    const chain = [node];
+    let current = node;
+    while (current.children?.length === 1 && current.children[0].isDirectory) {
+      current = current.children[0];
+      chain.push(current);
+    }
+    return chain;
+  }
+
+  private async hydrateCompactDirectoryChains(nodes: FileNode[], expandedPaths: Set<string>): Promise<void> {
+    await Promise.all(nodes.map(async node => {
+      if (!node.isDirectory) return;
+      let current = node;
+      current.children ??= await this.readDirectory(current.path);
+      while (current.children.length === 1 && current.children[0].isDirectory) {
+        current = current.children[0];
+        current.children ??= await this.readDirectory(current.path);
+      }
+      const chain = this.directoryChain(node);
+      const chainExpanded = chain.some(directory => workspacePathSetContains(expandedPaths, directory.path));
+      if (chainExpanded && current.children.length > 0) {
+        await this.hydrateCompactDirectoryChains(current.children, expandedPaths);
+      }
     }));
   }
 
@@ -248,7 +297,7 @@ export class WorkspaceExplorer {
     this.activeFilePath = null;
     this.container.replaceChildren();
     if (this.titleElement) {
-      this.titleElement.textContent = "EXPLORER";
+      this.titleElement.textContent = this.titlePrefix;
       this.titleElement.removeAttribute("title");
     }
   }
@@ -261,7 +310,15 @@ export class WorkspaceExplorer {
       path: await join(dirPath, entry.name),
       isDirectory: entry.isDirectory
     })));
-    return sortFileNodes(nodes);
+    const visibleNodes = this.visibleFilePaths === null
+      ? nodes
+      : nodes.filter(node => {
+          const nodeKey = filePathKey(node.path);
+          if (!node.isDirectory) return this.visibleFilePaths!.includes(nodeKey);
+          const prefix = `${nodeKey.replace(/[\\/]+$/u, "")}/`;
+          return this.visibleFilePaths!.some(path => path === nodeKey || path.startsWith(prefix));
+        });
+    return sortFileNodes(visibleNodes);
   }
 
   private renderTree(
@@ -276,7 +333,10 @@ export class WorkspaceExplorer {
 
     for (const node of nodes) {
       const li = document.createElement("li");
-      const isExpanded = node.isDirectory && workspacePathSetContains(expandedPaths, node.path);
+      const directoryChain = node.isDirectory ? this.directoryChain(node) : [];
+      const terminalNode = directoryChain[directoryChain.length - 1] ?? node;
+      const isExpanded = node.isDirectory
+        && directoryChain.some(directory => workspacePathSetContains(expandedPaths, directory.path));
       li.className = node.isDirectory ? `tree-folder${isExpanded ? "" : " collapsed"}` : "tree-file";
 
       const label = document.createElement("div");
@@ -284,10 +344,17 @@ export class WorkspaceExplorer {
       const isActiveFile = !node.isDirectory
         && this.activeFilePath !== null
         && filePathKey(this.activeFilePath) === filePathKey(node.path);
-      const isSelected = selectedPath !== null && filePathKey(selectedPath) === filePathKey(node.path);
-      label.className = `tree-item explorer-item-target${isSelected ? " selected" : ""}${isActiveFile ? " active-file" : ""}${isPinnedMain ? " pinned-main" : ""}`;
-      label.dataset.path = node.path;
+      const isSelected = selectedPath !== null && (node.isDirectory
+        ? directoryChain.some(directory => filePathKey(selectedPath) === filePathKey(directory.path))
+        : filePathKey(selectedPath) === filePathKey(terminalNode.path));
+      const decoration = this.itemDecoration?.(terminalNode.path, node.isDirectory) ?? null;
+      label.className = `tree-item explorer-item-target${isSelected ? " selected" : ""}${isActiveFile ? " active-file" : ""}${isPinnedMain ? " pinned-main" : ""}${decoration?.className ? ` ${decoration.className}` : ""}`;
+      if (decoration?.title) label.title = decoration.title;
+      label.dataset.path = terminalNode.path;
       label.dataset.isDir = String(node.isDirectory);
+      if (node.isDirectory) {
+        label.dataset.directoryChain = JSON.stringify(directoryChain.map(directory => directory.path));
+      }
       label.setAttribute("role", "treeitem");
       label.setAttribute("aria-selected", String(isSelected));
       if (isActiveFile) label.setAttribute("aria-current", "page");
@@ -317,7 +384,9 @@ export class WorkspaceExplorer {
 
       const textContainer = document.createElement("span");
       textContainer.className = "tree-text";
-      textContainer.textContent = node.name;
+      textContainer.textContent = node.isDirectory
+        ? directoryChain.map(directory => directory.name).join(" › ")
+        : node.name;
       label.appendChild(textContainer);
 
       if (!node.isDirectory) {
@@ -334,8 +403,8 @@ export class WorkspaceExplorer {
         childrenContainer.className = "tree-children";
         let loading = false;
 
-        if (node.children) {
-          childrenContainer.appendChild(this.renderTree(node.children, depth + 1, expandedPaths, selectedPath));
+        if (isExpanded && terminalNode.children) {
+          childrenContainer.appendChild(this.renderTree(terminalNode.children, depth + 1, expandedPaths, selectedPath));
         }
 
         label.addEventListener("click", async () => {
@@ -345,13 +414,23 @@ export class WorkspaceExplorer {
           li.classList.toggle("collapsed", !expanding);
           chevronContainer.classList.toggle("collapsed", !expanding);
 
-          if (!expanding || node.children || loading) return;
+          for (const directory of directoryChain) {
+            if (expanding) expandedPaths.add(directory.path);
+            else {
+              [...expandedPaths]
+                .filter(path => filePathKey(path) === filePathKey(directory.path))
+                .forEach(path => expandedPaths.delete(path));
+            }
+          }
+
+          if (!expanding || childrenContainer.childElementCount > 0 || loading) return;
 
           loading = true;
           label.classList.add("loading");
           try {
-            node.children = await this.readDirectory(node.path);
-            childrenContainer.replaceChildren(this.renderTree(node.children, depth + 1, expandedPaths, selectedPath));
+            terminalNode.children ??= await this.readDirectory(terminalNode.path);
+            await this.hydrateCompactDirectoryChains(terminalNode.children, expandedPaths);
+            childrenContainer.replaceChildren(this.renderTree(terminalNode.children, depth + 1, expandedPaths, selectedPath));
           } catch {
             const error = document.createElement("div");
             error.className = "explorer-error";
