@@ -76,6 +76,7 @@ export class WorkspaceExplorer {
     private titleElement?: HTMLElement,
     private itemDecoration?: (filePath: string, isDirectory: boolean) => ExplorerItemDecoration | null,
     private titlePrefix = "EXPLORER",
+    private showLoadingPlaceholder = true,
   ) {
     this.container.tabIndex = 0;
     this.container.setAttribute("role", "tree");
@@ -186,7 +187,7 @@ export class WorkspaceExplorer {
     const viewState = this.captureViewState();
     initialExpandedPaths.forEach(path => viewState.expandedPaths.add(path));
     const isFirstLoad = !this.container.querySelector(".file-tree-branch");
-    if (isFirstLoad) {
+    if (isFirstLoad && this.showLoadingPlaceholder) {
       this.container.innerHTML = `<div class="explorer-loading">Scanning Project...</div>`;
     }
     try {

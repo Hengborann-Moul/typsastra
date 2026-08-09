@@ -86,6 +86,7 @@ export class ImageToolsController {
   private originalProxy: ImageToolPreviewResult | null = null;
   private scannedTypstFiles = 0;
   private imageExplorer: WorkspaceExplorer | null = null;
+  private imageExplorerList: HTMLElement | null = null;
   private imageExpandedPaths: string[] = [];
   private imageKnownDirectoryPaths: string[] = [];
   private imageExpansionInitialized = false;
@@ -100,6 +101,9 @@ export class ImageToolsController {
   ) {}
 
   public async setWorkspace(workspaceRoot: string | null, mainPath: string | null): Promise<void> {
+    this.imageExplorer?.clearWorkspace();
+    this.imageExplorer = null;
+    this.imageExplorerList = null;
     this.workspaceRoot = workspaceRoot;
     this.mainPath = mainPath;
     this.images = [];
@@ -111,17 +115,22 @@ export class ImageToolsController {
     this.imageExpandedPaths = [];
     this.imageKnownDirectoryPaths = [];
     this.imageExpansionInitialized = false;
+    this.sidebar.replaceChildren();
     if (!workspaceRoot) {
       this.renderSidebar();
       this.renderEmptyInspector();
       return;
     }
   }
-
   public async refresh(): Promise<void> {
     if (!this.workspaceRoot) return;
     const generation = ++this.generation;
-    this.sidebar.innerHTML = `<div class="image-tool-loading">Indexing project images…</div>`;
+    const initialLoad = !this.loaded;
+
+    if (initialLoad) {
+      this.sidebar.innerHTML = `<div class="image-tool-loading">Indexing project images…</div>`;
+    }
+
     let index: ProjectImageIndex;
     try {
       index = await invoke<ProjectImageIndex>("project_image_index", {
@@ -130,6 +139,7 @@ export class ImageToolsController {
       });
     } catch (error) {
       if (generation !== this.generation) return;
+      if (!initialLoad) return;
       this.sidebar.replaceChildren();
       const message = document.createElement("div");
       message.className = "image-tool-empty";
@@ -148,7 +158,6 @@ export class ImageToolsController {
       else this.renderEmptyInspector();
     }
   }
-
   public show(): void {
     this.sidebar.classList.remove("hidden");
     this.inspector.classList.remove("hidden");
@@ -229,63 +238,86 @@ export class ImageToolsController {
     if (this.imageExplorer && this.imageExpansionInitialized) {
       this.imageExpandedPaths = this.imageExplorer.expandedDirectoryPaths();
     }
-    this.sidebar.replaceChildren();
-    const controls = document.createElement("div");
-    controls.className = "image-tool-sidebar-controls";
-    controls.innerHTML = `
-      <input class="image-tool-search" type="search" placeholder="Search images" aria-label="Search project images" autocomplete="off" />
-      <select class="image-tool-filter" aria-label="Filter project images">
-        <option value="all">All images</option>
-        <option value="current">Current document</option>
-        <option value="referenced">Referenced elsewhere</option>
-        <option value="unused">Unused</option>
-        <option value="recommended">Optimization recommended</option>
-      </select>`;
+
+    let controls = this.sidebar.querySelector<HTMLElement>(".image-tool-sidebar-controls");
+    let list = this.imageExplorerList;
+    let footer = this.sidebar.querySelector<HTMLElement>(".image-tool-sidebar-footer");
+    let explorer = this.imageExplorer;
+    const needsMount = !controls || !list || !footer || !explorer || !list.isConnected;
+
+    if (needsMount) {
+      controls = document.createElement("div");
+      controls.className = "image-tool-sidebar-controls";
+      controls.innerHTML = `
+        <input class="image-tool-search" type="search" placeholder="Search images" aria-label="Search project images" autocomplete="off" />
+        <select class="image-tool-filter" aria-label="Filter project images">
+          <option value="all">All images</option>
+          <option value="current">Current document</option>
+          <option value="referenced">Referenced elsewhere</option>
+          <option value="unused">Unused</option>
+          <option value="recommended">Optimization recommended</option>
+        </select>`;
+
+      list = document.createElement("div");
+      list.className = "image-tool-list explorer-tree";
+
+      footer = document.createElement("div");
+      footer.className = "image-tool-sidebar-footer";
+
+      explorer = new WorkspaceExplorer(
+        list,
+        path => {
+          const key = path.replace(/\\/gu, "/").toLocaleLowerCase();
+          const image = this.filteredImages().find(candidate =>
+            candidate.path.replace(/\\/gu, "/").toLocaleLowerCase() === key
+          );
+          if (image) void this.commit(image);
+        },
+        undefined,
+        document.getElementById("image-tools-sidebar-title") ?? undefined,
+        (path, isDirectory) => {
+          if (isDirectory) return null;
+          const key = path.replace(/\\/gu, "/").toLocaleLowerCase();
+          const image = this.images.find(candidate =>
+            candidate.path.replace(/\\/gu, "/").toLocaleLowerCase() === key
+          );
+          return image && isRecommended(image)
+            ? { className: "pathological-image", title: "Optimization recommended" }
+            : null;
+        },
+        "IMAGES",
+        false,
+      );
+
+      this.imageExplorerList = list;
+      this.imageExplorer = explorer;
+      this.sidebar.replaceChildren(controls, list, footer);
+    }
+
     const search = controls.querySelector<HTMLInputElement>(".image-tool-search")!;
     const filter = controls.querySelector<HTMLSelectElement>(".image-tool-filter")!;
-    filter.value = this.filter;
     search.value = this.query;
-    const list = document.createElement("div");
-    list.className = "image-tool-list explorer-tree";
-    const footer = document.createElement("div");
-    footer.className = "image-tool-sidebar-footer";
-    const explorer = new WorkspaceExplorer(
-      list,
-      path => {
-        const key = path.replace(/\\/gu, "/").toLocaleLowerCase();
-        const image = this.filteredImages().find(candidate =>
-          candidate.path.replace(/\\/gu, "/").toLocaleLowerCase() === key
-        );
-        if (image) void this.commit(image);
-      },
-      undefined,
-      document.getElementById("image-tools-sidebar-title") ?? undefined,
-      (path, isDirectory) => {
-        if (isDirectory) return null;
-        const key = path.replace(/\\/gu, "/").toLocaleLowerCase();
-        const image = this.images.find(candidate =>
-          candidate.path.replace(/\\/gu, "/").toLocaleLowerCase() === key
-        );
-        return image && isRecommended(image)
-          ? { className: "pathological-image", title: "Optimization recommended" }
-          : null;
-      },
-      "IMAGES",
-    );
-    this.imageExplorer = explorer;
-    let explorerHasRendered = false;
+    filter.value = this.filter;
+
+    const activeList = list;
+    const activeFooter = footer;
+    const activeExplorer = explorer;
+    let explorerHasRendered = activeList.querySelector(".file-tree-branch") !== null;
+
     const renderList = async (expandAll = false) => {
       if (explorerHasRendered && this.imageExpansionInitialized) {
-        this.imageExpandedPaths = explorer.expandedDirectoryPaths();
+        this.imageExpandedPaths = activeExplorer.expandedDirectoryPaths();
       }
-      list.replaceChildren();
+
       const images = this.filteredImages();
       if (images.length === 0) {
-        explorer.clearWorkspace();
-        list.innerHTML = `<div class="image-tool-empty">No images match this view.</div>`;
-        footer.textContent = `0 images · ${this.scannedTypstFiles.toLocaleString()} Typst file${this.scannedTypstFiles === 1 ? "" : "s"} scanned`;
+        activeExplorer.clearWorkspace();
+        activeList.innerHTML = `<div class="image-tool-empty">No images match this view.</div>`;
+        activeFooter.textContent = `0 images · ${this.scannedTypstFiles.toLocaleString()} Typst file${this.scannedTypstFiles === 1 ? "" : "s"} scanned`;
+        explorerHasRendered = false;
         return;
       }
+
       const parentPaths = [...new Map(
         images
           .flatMap(image => workspaceParentDirectories(this.workspaceRoot!, image.path))
@@ -300,27 +332,30 @@ export class ImageToolsController {
       const expandedPaths = expandAll || !this.imageExpansionInitialized
         ? parentPaths
         : [...this.imageExpandedPaths, ...newParentPaths];
+
       this.imageExpansionInitialized = true;
       this.imageKnownDirectoryPaths = parentPaths;
-      explorer.setVisibleFiles(images.map(image => image.path));
-      await explorer.loadWorkspace(this.workspaceRoot!, expandedPaths);
+      activeExplorer.setVisibleFiles(images.map(image => image.path));
+      await activeExplorer.loadWorkspace(this.workspaceRoot!, expandedPaths);
       explorerHasRendered = true;
-      this.imageExpandedPaths = explorer.expandedDirectoryPaths();
-      explorer.setActiveFile(this.committed?.path ?? null);
-      footer.textContent = `${images.length.toLocaleString()} image${images.length === 1 ? "" : "s"} · ${this.scannedTypstFiles.toLocaleString()} Typst file${this.scannedTypstFiles === 1 ? "" : "s"} scanned`;
+      this.imageExpandedPaths = activeExplorer.expandedDirectoryPaths();
+      activeExplorer.setActiveFile(this.committed?.path ?? null);
+      activeFooter.textContent = `${images.length.toLocaleString()} image${images.length === 1 ? "" : "s"} · ${this.scannedTypstFiles.toLocaleString()} Typst file${this.scannedTypstFiles === 1 ? "" : "s"} scanned`;
     };
-    search.addEventListener("input", () => {
-      this.query = search.value;
-      void renderList(true);
-    });
-    filter.addEventListener("change", () => {
-      this.filter = filter.value as ImageToolFilter;
-      void renderList(true);
-    });
-    this.sidebar.append(controls, list, footer);
+
+    if (needsMount) {
+      search.addEventListener("input", () => {
+        this.query = search.value;
+        void renderList(true);
+      });
+      filter.addEventListener("change", () => {
+        this.filter = filter.value as ImageToolFilter;
+        void renderList(true);
+      });
+    }
+
     void renderList(!this.imageExpansionInitialized);
   }
-
   private async commit(image: ProjectImageAsset): Promise<void> {
     this.committed = image;
     this.generatedPreview = null;
