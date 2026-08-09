@@ -42,3 +42,4 @@ implementation-plan.md
 vite.config.ts.timestamp-*.mjs
 assets/debug
 temp/
+graphify-out/
