@@ -20,10 +20,12 @@ export type ContextMenuDependencies = {
   getActiveFile: () => string | null;
   getEditor: () => EditorView;
   getExplorer: () => WorkspaceExplorer;
+  getExplorerForElement?: (element: HTMLElement) => WorkspaceExplorer | null;
+  refreshSecondaryExplorer?: () => void | Promise<void>;
   getPreviewFrame: () => HTMLIFrameElement | null;
   loadFile: (path: string) => void | Promise<void>;
   save: () => void | Promise<void>;
-  renameWorkspacePath: (oldPath: string, newPath: string) => void | Promise<void>;
+  renameWorkspacePath: (oldPath: string, newPath: string, updateImageReferences?: boolean) => void | Promise<void>;
   closeTab: (path: string) => void | Promise<void>;
   closeTabInteractive: (path: string) => void | Promise<void>;
   closeOtherTabs: (path: string) => void | Promise<void>;
@@ -94,6 +96,7 @@ export class ContextMenuController {
   private spellingDictionaryWords: string[] = [];
   private spellingSuggestions: string[] = [];
   private contextMenuOpenedFromExplorer = false;
+  private contextExplorer: WorkspaceExplorer | null = null;
   private surroundSelection: { from: number; to: number } | null = null;
   private surroundSelectionIndex = 0;
   private readonly surroundOverlay = document.getElementById("surround-with-overlay");
@@ -123,7 +126,7 @@ export class ContextMenuController {
       if (action) {
         const restoreExplorerFocus = this.contextMenuOpenedFromExplorer;
         void this.execute(action).finally(() => {
-          if (restoreExplorerFocus) this.dependencies.getExplorer().focus();
+          if (restoreExplorerFocus) (this.contextExplorer ?? this.dependencies.getExplorer()).focus();
         });
       }
     });
@@ -331,11 +334,14 @@ export class ContextMenuController {
     const originalPath = this.targetPath;
     const oldName = await basename(originalPath);
     await new Promise<void>(resolve => {
-      this.dependencies.getExplorer().showInlineInput(originalPath, "rename", oldName, async newName => {
+      (this.contextExplorer ?? this.dependencies.getExplorer()).showInlineInput(originalPath, "rename", oldName, async newName => {
         if (newName && newName !== oldName) {
           const newPath = await join(await dirname(originalPath), newName);
           try {
-            await this.dependencies.renameWorkspacePath(originalPath, newPath);
+            const updateImageReferences = !this.targetIsDirectory
+              && Boolean(this.contextExplorer)
+              && this.contextExplorer !== this.dependencies.getExplorer();
+            await this.dependencies.renameWorkspacePath(originalPath, newPath, updateImageReferences);
             await this.refreshExplorer();
           } catch (error) { alert(`Failed to rename: ${error}`); }
         }
@@ -515,11 +521,13 @@ export class ContextMenuController {
   private async refreshExplorer(): Promise<void> {
     const workspace = this.dependencies.getWorkspaceRoot();
     if (workspace) await this.dependencies.getExplorer().loadWorkspace(workspace);
+    await this.dependencies.refreshSecondaryExplorer?.();
   }
 
   private async showForTarget(event: MouseEvent): Promise<void> {
     const target = event.target as HTMLElement;
     this.contextMenuOpenedFromExplorer = false;
+    this.contextExplorer = null;
     if (target.closest("#preview-container-wrapper")) {
       event.preventDefault();
       this.hide();
@@ -535,10 +543,17 @@ export class ContextMenuController {
     const explorerItem = target.closest<HTMLElement>(".explorer-item-target");
     if (explorerItem) {
       this.contextMenuOpenedFromExplorer = true;
+      const openedFromImageExplorer = Boolean(explorerItem.closest(".image-tool-list"));
+      this.contextExplorer = this.dependencies.getExplorerForElement?.(explorerItem)
+        ?? this.dependencies.getExplorer();
       this.targetPath = explorerItem.dataset.path || "";
       this.targetIsDirectory = explorerItem.dataset.isDir === "true";
       event.preventDefault();
-      this.show(this.explorerItems(), event.clientX, event.clientY);
+      this.show(
+        openedFromImageExplorer ? this.imageExplorerItems() : this.explorerItems(),
+        event.clientX,
+        event.clientY,
+      );
       return;
     }
     if (target.closest(".workspace-explorer-section")) {
@@ -677,6 +692,10 @@ export class ContextMenuController {
   private explorerItems(): string {
     const mainAction = this.mainFileItem();
     return `${mainAction}<div class="dropdown-item" id="ctx-new-file">New File <span class="hotkey">Ctrl+N</span></div><div class="dropdown-item" id="ctx-fs-new-folder">New Folder</div><div class="dropdown-separator"></div><div class="dropdown-item" id="ctx-fs-rename">Rename <span class="hotkey">F2</span></div><div class="dropdown-item" id="ctx-fs-delete">Delete <span class="hotkey">Delete</span></div>${this.targetIsDirectory ? "" : '<div class="dropdown-separator"></div><div class="dropdown-item" id="ctx-fs-duplicate">Duplicate File</div><div class="dropdown-item" id="ctx-fs-copy">Copy File <span class="hotkey">Ctrl+C</span></div>'}${this.copiedFilePath ? '<div class="dropdown-item" id="ctx-fs-paste">Paste File <span class="hotkey">Ctrl+V</span></div>' : ""}<div class="dropdown-separator"></div><div class="dropdown-item" id="ctx-fs-reveal">Reveal in System Explorer</div><div class="dropdown-item" id="ctx-fs-copy-rel-path">Copy Relative Path</div><div class="dropdown-item" id="ctx-fs-copy-abs-path">Copy Absolute Path</div>`;
+  }
+
+  private imageExplorerItems(): string {
+    return `<div class="dropdown-item" id="ctx-fs-rename">Rename <span class="hotkey">F2</span></div><div class="dropdown-item" id="ctx-fs-delete">Delete <span class="hotkey">Delete</span></div><div class="dropdown-separator"></div><div class="dropdown-item" id="ctx-fs-reveal">Reveal in System Explorer</div><div class="dropdown-item" id="ctx-fs-copy-rel-path">Copy Relative Path</div><div class="dropdown-item" id="ctx-fs-copy-abs-path">Copy Absolute Path</div>`;
   }
 
   private explorerBackgroundItems(): string {

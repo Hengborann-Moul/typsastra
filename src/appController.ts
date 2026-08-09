@@ -728,10 +728,17 @@ export class TypsastraWorkspaceController {
     getActiveFile: () => this.activeFilePath,
     getEditor: () => this.editorInstance,
     getExplorer: () => this.explorer,
+    getExplorerForElement: element => element.closest(".image-tool-list")
+      ? this.imageToolsController.getExplorer()
+      : this.explorer,
+    refreshSecondaryExplorer: () => this.activeSidebarTool === "images"
+      ? this.imageToolsController.refresh()
+      : undefined,
     getPreviewFrame: () => this.previewFrame.element,
     loadFile: path => this.loadFile(path),
     save: () => this.saveActiveFile(),
-    renameWorkspacePath: (oldPath, newPath) => this.renameWorkspacePath(oldPath, newPath),
+    renameWorkspacePath: (oldPath, newPath, updateImageReferences) =>
+      this.renameWorkspacePath(oldPath, newPath, updateImageReferences),
     closeTab: path => this.closeEditorTab(path, true),
     closeTabInteractive: path => this.closeEditorTab(path, false),
     closeOtherTabs: path => this.closeOtherTabs(path),
@@ -2294,12 +2301,43 @@ export class TypsastraWorkspaceController {
     this.handleContentMutation(currentText, previewDebounceElapsedMs);
   }
 
-  private async renameWorkspacePath(oldPath: string, newPath: string): Promise<void> {
+  private async renameWorkspacePath(
+    oldPath: string,
+    newPath: string,
+    updateImageReferences = false,
+  ): Promise<void> {
     const workspaceRoot = this.workspaceRootPath;
+    const imageReferenceSourcePaths = updateImageReferences
+      ? this.imageToolsController.referenceSourcePathsForImage(oldPath)
+      : [];
     if (workspaceRoot) this.workspaceWatcher.stop();
+    if (imageReferenceSourcePaths.length > 0) {
+      await this.handleImageToolFilesWritten(imageReferenceSourcePaths, "before");
+    }
 
     try {
       await invoke("rename_workspace_file", { oldPath, newPath });
+
+      if (workspaceRoot && imageReferenceSourcePaths.length > 0) {
+        try {
+          await invoke<number>("image_tool_update_references", {
+            workspaceRootPath: workspaceRoot,
+            originalImagePath: oldPath,
+            replacementImagePath: newPath,
+            sourcePaths: imageReferenceSourcePaths,
+          });
+          // Keep open source tabs synchronized before preparing the next
+          // preview generation, otherwise it can briefly compile the stale
+          // image path that existed before the rename.
+          await this.reloadOpenFilesFromDisk(false);
+        } catch (error) {
+          this.appendDeveloperLog({
+            kind: "error",
+            source: "image tools",
+            message: `The image was renamed, but its static Typst references could not be updated: ${String(error)}`,
+          });
+        }
+      }
 
       const renamedTabs: Array<{ oldPath: string; tab: EditorTab }> = [];
       for (const tab of this.openTabs) {
@@ -2387,6 +2425,9 @@ export class TypsastraWorkspaceController {
 
       await this.prepareRenderProjectIfNeeded();
       await this.refreshActivePreviewRoot(true);
+      if (imageReferenceSourcePaths.length > 0) {
+        await this.handleImageToolFilesWritten(imageReferenceSourcePaths, "after");
+      }
     } finally {
       if (workspaceRoot && this.workspaceRootPath === workspaceRoot) {
         await this.workspaceWatcher.start(workspaceRoot);

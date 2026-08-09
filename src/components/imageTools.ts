@@ -182,6 +182,20 @@ export class ImageToolsController {
     return this.committed !== null;
   }
 
+  public getExplorer(): WorkspaceExplorer | null {
+    return this.imageExplorer;
+  }
+
+  public referenceSourcePathsForImage(path: string): string[] {
+    const key = path.replace(/\\/gu, "/").toLocaleLowerCase();
+    const image = this.images.find(candidate =>
+      candidate.path.replace(/\\/gu, "/").toLocaleLowerCase() === key
+    );
+    return image
+      ? [...new Set(image.references.map(reference => reference.sourcePath))]
+      : [];
+  }
+
   public async selectImage(path: string): Promise<boolean> {
     if (!this.workspaceRoot) return false;
     if (!this.loaded) await this.refresh();

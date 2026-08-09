@@ -2663,7 +2663,7 @@ body.image-tools-active #image-tools-comparison {
   position: absolute;
   inset: 0;
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
   padding: 18px;
   box-sizing: border-box;
   color: var(--ui-text);

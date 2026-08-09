@@ -2822,6 +2822,34 @@ mod image_tool_tests {
             "#image(\"../images/optimized.png\")\n#image(\"../images/optimized.png\")"
         );
     }
+
+    #[test]
+    fn updates_static_typst_paths_after_an_image_is_renamed() {
+        let workspace = tempfile::tempdir().expect("create workspace");
+        let root = workspace.path();
+        let images = root.join("images");
+        std::fs::create_dir_all(&images).unwrap();
+        let original = images.join("original.png");
+        let renamed = images.join("renamed.png");
+        write_png(&original, 20, 10);
+        let source = root.join("main.typ");
+        std::fs::write(&source, "#image(\"images/original.png\")").unwrap();
+
+        std::fs::rename(&original, &renamed).unwrap();
+        let updated = image_tool_update_references(
+            root.to_string_lossy().to_string(),
+            original.to_string_lossy().to_string(),
+            renamed.to_string_lossy().to_string(),
+            vec![source.to_string_lossy().to_string()],
+        )
+        .expect("update renamed image reference");
+
+        assert_eq!(updated, 1);
+        assert_eq!(
+            std::fs::read_to_string(source).unwrap(),
+            "#image(\"images/renamed.png\")"
+        );
+    }
 }
 
 fn collect_preview_image_profile_with_override(
