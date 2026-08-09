@@ -1289,9 +1289,11 @@ export class TypsastraWorkspaceController {
     const explorerSidebar = document.getElementById("explorer-sidebar");
     const explorerResizer = document.getElementById("explorer-resizer");
     const sidebarToggle = document.getElementById("sidebar-toggle-button") as HTMLButtonElement | null;
-    explorerSidebar?.classList.toggle("hidden", !this.sidebarVisible);
+    const visible = this.sidebarVisible && !this.workspaceLoading;
+    
+    explorerSidebar?.classList.toggle("hidden", !visible);
     if (explorerSidebar) explorerSidebar.style.display = "";
-    explorerResizer?.classList.toggle("hidden", !this.sidebarVisible);
+    explorerResizer?.classList.toggle("hidden", !visible);
     this.layoutController.reconcileDockedPaneWidths();
     sidebarToggle?.setAttribute("aria-expanded", String(this.sidebarVisible));
     sidebarToggle?.setAttribute("aria-label", this.sidebarVisible ? "Hide sidebar" : "Show sidebar");
