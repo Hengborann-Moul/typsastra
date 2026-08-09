@@ -1180,6 +1180,7 @@ export class TypsastraWorkspaceController {
     this.codeRenderPane.classList.toggle("hidden", showingImages);
     document.getElementById("image-viewer-pane")?.classList.add("hidden");
     this.previewPane.classList.remove("hidden");
+    this.layoutController.setMainPreviewVisibleWhileUndocked(showingImages);
     if (showingImages) {
       if (toolChanged) this.invalidatePreviewWork("switched to Image Tools");
       this.imageToolsController.show();
