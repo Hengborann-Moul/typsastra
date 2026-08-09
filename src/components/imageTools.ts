@@ -122,7 +122,7 @@ export class ImageToolsController {
       return;
     }
   }
-  public async refresh(): Promise<void> {
+  public async refresh(preferredImagePath?: string): Promise<void> {
     if (!this.workspaceRoot) return;
     const generation = ++this.generation;
     const initialLoad = !this.loaded;
@@ -151,13 +151,34 @@ export class ImageToolsController {
     this.images = index.images;
     this.scannedTypstFiles = index.scannedTypstFiles;
     this.loaded = true;
+
+    const committedPath = preferredImagePath ?? this.committed?.path;
+    const committedKey = committedPath?.replace(/\\/gu, "/").toLocaleLowerCase();
+    const next = committedKey
+      ? this.images.find(image => image.path.replace(/\\/gu, "/").toLocaleLowerCase() === committedKey)
+      : undefined;
+
+    if (preferredImagePath && next) {
+      this.committed = next;
+      this.generatedPreview = null;
+      this.originalProxy = null;
+    }
+
     this.renderSidebar();
-    if (this.committed) {
-      const next = this.images.find(image => image.path === this.committed?.path);
-      if (next) await this.commit(next);
-      else this.renderEmptyInspector();
+
+    if (next) {
+      if (preferredImagePath) {
+        this.imageExplorer?.setActiveFile(next.path);
+        this.renderInspector(next);
+        await this.loadOriginalProxy(next);
+      } else {
+        await this.commit(next);
+      }
+    } else if (committedPath) {
+      this.renderEmptyInspector();
     }
   }
+
   public show(): void {
     this.sidebar.classList.remove("hidden");
     this.inspector.classList.remove("hidden");
@@ -470,11 +491,7 @@ export class ImageToolsController {
         sourcePaths,
       });
       await this.workspaceFilesWritten(sourcePaths, "after");
-      await this.refresh();
-      const replacement = this.images.find(candidate =>
-        candidate.path.replace(/\\/gu, "/").toLocaleLowerCase() === replacementKey
-      );
-      if (replacement) await this.commit(replacement);
+      await this.refresh(replacementPath);
       const refreshedOutput = this.inspector.querySelector<HTMLElement>(".image-tool-reference-output");
       if (refreshedOutput) {
         refreshedOutput.textContent = `Replaced ${updatedReferences} static Typst image path${updatedReferences === 1 ? "" : "s"}.`;
@@ -653,7 +670,7 @@ export class ImageToolsController {
         : `Saved optimized copy to ${destination}`;
       if (output?.isConnected) output.textContent = successMessage;
       try {
-        await this.refresh();
+        await this.refresh(updateReferences ? destination : undefined);
       } catch (refreshError) {
         if (output?.isConnected) {
           output.textContent = `${successMessage} Image Tools could not refresh: ${String(refreshError)}`;
