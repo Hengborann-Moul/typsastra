@@ -495,6 +495,11 @@ button.dropdown-item {
   transform: rotate(180deg);
 }
 
+#sidebar-toggle-button {
+  order: 10;
+  margin-top: auto;
+}
+
 #explorer-sidebar {
   width: 250px;
   height: 100%;
