@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { syntaxTree } from "@codemirror/language";
+import { getIndentation, indentUnit, syntaxTree } from "@codemirror/language";
 import { EditorState } from "@codemirror/state";
 import { typstLanguage } from "../src/editor/typstLanguage";
 
@@ -26,7 +26,31 @@ function tokenName(tokens: ParsedToken[], text: string): string | undefined {
   return tokens.find(token => token.text === text)?.name;
 }
 
+function indentationAt(doc: string, position: number): number | null {
+  const state = EditorState.create({
+    doc,
+    extensions: [typstLanguage, indentUnit.of("  ")]
+  });
+  return getIndentation(state, position);
+}
+
 describe("Typst stream language", () => {
+  test("counts a closure body inside a function call as one indentation level", () => {
+    const doc = "#let x = items.map(it => {\n\n})";
+    const blankLine = doc.indexOf("\n") + 1;
+    const closingLine = doc.lastIndexOf("})");
+
+    expect(indentationAt(doc, blankLine)).toBe(2);
+    expect(indentationAt(doc, closingLine)).toBe(0);
+  });
+
+  test("preserves ordinary nested call indentation", () => {
+    const doc = "#figure(\n  image(\n\n  )\n)";
+    const blankLine = doc.indexOf("\n\n") + 1;
+
+    expect(indentationAt(doc, blankLine)).toBe(4);
+  });
+
   test("tags only line-leading whitespace as fixed-width indentation", () => {
     const tokens = parseTokens("  #image(\n    width: 100%,\n  )\nPlain prose keeps spaces");
 

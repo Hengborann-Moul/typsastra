@@ -148,9 +148,17 @@ const typstParser: StreamParser<TypstParserState> = {
   indent(state: TypstParserState, textAfter: string, cx: IndentContext) {
     if (state.inBlockComment || state.inRawBlock) return null;
     const indentBrackets = state.bracketStack.filter(b => b === "(" || b === "[" || b === "{");
-    let indent = indentBrackets.length * cx.unit;
+    let indentLevels = indentBrackets.length;
+    for (let index = 1; index < indentBrackets.length; index += 1) {
+      // A closure body replaces the indentation contributed by its enclosing
+      // call rather than adding another visible level: `items.map(it => {`.
+      if (indentBrackets[index - 1] === "(" && indentBrackets[index] === "{") {
+        indentLevels -= 1;
+      }
+    }
+    let indent = indentLevels * cx.unit;
     if (/^[\}\]]/.test(textAfter)) indent -= cx.unit;
-    return indent;
+    return Math.max(0, indent);
   },
 
   tokenTable: {
