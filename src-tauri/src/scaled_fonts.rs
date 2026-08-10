@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -37,6 +38,34 @@ pub struct FontVariantLimitWarning {
     pub recommended_limit: usize,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScaledFontVariantIdentity {
+    pub family: String,
+    pub scale: f32,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScaledFontCacheVariant {
+    pub family: String,
+    pub scale: f32,
+    pub bytes: u64,
+    pub file_count: usize,
+    pub generated_at_ms: Option<u64>,
+    pub last_used_at_ms: Option<u64>,
+    pub source_status: String,
+    pub workspace_references: usize,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScaledFontCacheReport {
+    pub root: PathBuf,
+    pub total_bytes: u64,
+    pub variants: Vec<ScaledFontCacheVariant>,
+}
+
 pub const RECOMMENDED_VARIANTS_PER_FONT_FACE: usize = 10;
 
 #[derive(Deserialize, Serialize)]
@@ -46,21 +75,27 @@ struct WorkspaceFontSelection {
     fonts: Vec<ScaledFontRequest>,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct ScaledFontManifest<'a> {
+struct ScaledFontManifest {
     version: u32,
-    family: &'a str,
-    scale: f32,
-    files: &'a [String],
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct StoredScaledFontManifest {
     family: String,
     scale: f32,
     files: Vec<String>,
+    #[serde(default)]
+    generated_at_ms: Option<u64>,
+    #[serde(default)]
+    last_used_at_ms: Option<u64>,
+    #[serde(default)]
+    sources: Vec<ScaledFontSource>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ScaledFontSource {
+    path: Option<PathBuf>,
+    bytes: u64,
+    modified_at_ms: Option<u64>,
 }
 
 fn validate_request(workspace_root: &Path, family: &str, scale: f32) -> Result<(), String> {
@@ -76,14 +111,36 @@ fn validate_request(workspace_root: &Path, family: &str, scale: f32) -> Result<(
     Ok(())
 }
 
-fn current_manifest(generated_dir: &Path) -> Option<StoredScaledFontManifest> {
-    let manifest: StoredScaledFontManifest =
+fn current_manifest(generated_dir: &Path) -> Option<ScaledFontManifest> {
+    let manifest: ScaledFontManifest =
         serde_json::from_slice(&fs::read(generated_dir.join("manifest.json")).ok()?).ok()?;
     manifest
         .files
         .iter()
         .all(|file| generated_dir.join(file).is_file())
         .then_some(manifest)
+}
+
+fn system_time_ms(value: SystemTime) -> Option<u64> {
+    value
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .and_then(|duration| u64::try_from(duration.as_millis()).ok())
+}
+
+fn now_ms() -> u64 {
+    system_time_ms(SystemTime::now()).unwrap_or(0)
+}
+
+fn source_metadata(path: Option<&Path>, bytes: usize) -> ScaledFontSource {
+    let metadata = path.and_then(|path| fs::metadata(path).ok());
+    ScaledFontSource {
+        path: path.map(Path::to_path_buf),
+        bytes: metadata.as_ref().map_or(bytes as u64, fs::Metadata::len),
+        modified_at_ms: metadata
+            .and_then(|metadata| metadata.modified().ok())
+            .and_then(system_time_ms),
+    }
 }
 
 pub fn global_scaled_font_root(app_local_data_dir: &Path) -> PathBuf {
@@ -325,6 +382,7 @@ pub fn prepare_scaled_workspace_font(
         .map_err(|error| format!("Failed to create {}: {error}", generated_dir.display()))?;
 
     let mut generated_files = Vec::new();
+    let mut sources = Vec::new();
     if (scale - 1.0).abs() > 0.0001 {
         let mut database = fontdb::Database::new();
         database.load_system_fonts();
@@ -357,6 +415,7 @@ pub fn prepare_scaled_workspace_font(
             if !written_sources.insert(source_key) {
                 continue;
             }
+            sources.push(source_metadata(source_path, bytes.len()));
             if face.index != 0 || bytes.get(..4) == Some(b"ttcf") {
                 return Err(format!(
                     "{family:?} is stored in a font collection. Select an individual TTF or OTF face for scaling."
@@ -389,11 +448,15 @@ pub fn prepare_scaled_workspace_font(
         }
     }
 
+    let generated_at_ms = now_ms();
     let manifest = ScaledFontManifest {
-        version: 1,
-        family,
+        version: 2,
+        family: family.to_string(),
         scale,
-        files: &generated_files,
+        files: generated_files.clone(),
+        generated_at_ms: Some(generated_at_ms),
+        last_used_at_ms: Some(generated_at_ms),
+        sources,
     };
     fs::write(
         generated_dir.join("manifest.json"),
@@ -461,8 +524,230 @@ pub fn workspace_font_directories(cache_root: &Path, workspace_root: &Path) -> V
     current_selection(cache_root, workspace_root)
         .into_iter()
         .map(|request| generated_family_dir(cache_root, &request.family, request.scale))
-        .filter(|directory| current_manifest(directory).is_some())
+        .filter(|directory| {
+            let Some(mut manifest) = current_manifest(directory) else {
+                return false;
+            };
+            let now = now_ms();
+            if manifest.last_used_at_ms.map_or(true, |last_used| {
+                now.saturating_sub(last_used) >= 60 * 60 * 1000
+            }) {
+                manifest.last_used_at_ms = Some(now);
+                let _ = fs::write(
+                    directory.join("manifest.json"),
+                    serde_json::to_vec_pretty(&manifest).unwrap_or_default(),
+                );
+            }
+            true
+        })
         .collect()
+}
+
+fn variant_key(family: &str, scale: f32) -> (String, u32) {
+    (family.to_lowercase(), scale.to_bits())
+}
+
+fn workspace_variant_references(
+    cache_root: &Path,
+) -> std::collections::BTreeMap<(String, u32), usize> {
+    let mut references = std::collections::BTreeMap::new();
+    let root = cache_root.join("workspaces");
+    for entry in fs::read_dir(root)
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+    {
+        let Ok(bytes) = fs::read(entry.path()) else {
+            continue;
+        };
+        let Ok(selection) = serde_json::from_slice::<WorkspaceFontSelection>(&bytes) else {
+            continue;
+        };
+        for font in selection.fonts {
+            *references
+                .entry(variant_key(&font.family, font.scale))
+                .or_insert(0) += 1;
+        }
+    }
+    references
+}
+
+fn directory_size(path: &Path) -> (u64, usize) {
+    let mut bytes = 0;
+    let mut files = 0;
+    let mut pending = vec![path.to_path_buf()];
+    while let Some(directory) = pending.pop() {
+        for entry in fs::read_dir(directory)
+            .into_iter()
+            .flatten()
+            .filter_map(Result::ok)
+        {
+            let path = entry.path();
+            if path.is_dir() {
+                pending.push(path);
+            } else if let Ok(metadata) = entry.metadata() {
+                bytes += metadata.len();
+                files += 1;
+            }
+        }
+    }
+    (bytes, files)
+}
+
+fn manifest_source_status(manifest: &ScaledFontManifest) -> &'static str {
+    if manifest.sources.is_empty() || manifest.sources.iter().all(|source| source.path.is_none()) {
+        return "unknown";
+    }
+    let mut changed = false;
+    for source in &manifest.sources {
+        let Some(path) = &source.path else {
+            continue;
+        };
+        let Ok(metadata) = fs::metadata(path) else {
+            return "missing";
+        };
+        let modified_at_ms = metadata.modified().ok().and_then(system_time_ms);
+        if metadata.len() != source.bytes || modified_at_ms != source.modified_at_ms {
+            changed = true;
+        }
+    }
+    if changed {
+        "changed"
+    } else {
+        "current"
+    }
+}
+
+pub fn inspect_scaled_font_cache(cache_root: &Path) -> ScaledFontCacheReport {
+    let references = workspace_variant_references(cache_root);
+    let mut variants = Vec::new();
+    let variants_root = cache_root.join("variants");
+    for family_entry in fs::read_dir(&variants_root)
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+    {
+        for variant_entry in fs::read_dir(family_entry.path())
+            .into_iter()
+            .flatten()
+            .filter_map(Result::ok)
+        {
+            let directory = variant_entry.path();
+            let Some(manifest) = current_manifest(&directory) else {
+                continue;
+            };
+            let (bytes, file_count) = directory_size(&directory);
+            let generated_at_ms = manifest.generated_at_ms.or_else(|| {
+                fs::metadata(&directory)
+                    .ok()
+                    .and_then(|metadata| metadata.modified().ok())
+                    .and_then(system_time_ms)
+            });
+            variants.push(ScaledFontCacheVariant {
+                workspace_references: references
+                    .get(&variant_key(&manifest.family, manifest.scale))
+                    .copied()
+                    .unwrap_or(0),
+                source_status: manifest_source_status(&manifest).to_string(),
+                family: manifest.family,
+                scale: manifest.scale,
+                bytes,
+                file_count,
+                generated_at_ms,
+                last_used_at_ms: manifest.last_used_at_ms,
+            });
+        }
+    }
+    variants.sort_by(|left, right| {
+        left.family
+            .to_lowercase()
+            .cmp(&right.family.to_lowercase())
+            .then_with(|| left.scale.total_cmp(&right.scale))
+    });
+    ScaledFontCacheReport {
+        root: cache_root.to_path_buf(),
+        total_bytes: variants.iter().map(|variant| variant.bytes).sum(),
+        variants,
+    }
+}
+
+pub fn delete_scaled_font_variants(
+    cache_root: &Path,
+    variants: &[ScaledFontVariantIdentity],
+) -> Result<usize, String> {
+    let mut deleted = 0;
+    for variant in variants {
+        if variant.family.trim().is_empty()
+            || !variant.scale.is_finite()
+            || !(0.5..=2.0).contains(&variant.scale)
+        {
+            return Err("The scaled-font variant identity is invalid.".into());
+        }
+        let directory = generated_family_dir(cache_root, &variant.family, variant.scale);
+        if directory.exists() {
+            fs::remove_dir_all(&directory)
+                .map_err(|error| format!("Failed to remove {}: {error}", directory.display()))?;
+            if let Some(parent) = directory.parent() {
+                if fs::read_dir(parent)
+                    .map(|mut entries| entries.next().is_none())
+                    .unwrap_or(false)
+                {
+                    let _ = fs::remove_dir(parent);
+                }
+            }
+            deleted += 1;
+        }
+    }
+    Ok(deleted)
+}
+
+pub fn delete_unused_scaled_font_variants(cache_root: &Path) -> Result<usize, String> {
+    let report = inspect_scaled_font_cache(cache_root);
+    let unused = report
+        .variants
+        .into_iter()
+        .filter(|variant| variant.workspace_references == 0)
+        .map(|variant| ScaledFontVariantIdentity {
+            family: variant.family,
+            scale: variant.scale,
+        })
+        .collect::<Vec<_>>();
+    delete_scaled_font_variants(cache_root, &unused)
+}
+
+pub fn renew_scaled_font_variant(
+    cache_root: &Path,
+    generation_root: &Path,
+    family: &str,
+    scale: f32,
+    private_font_directories: &[PathBuf],
+) -> Result<ScaledFontResult, String> {
+    let directory = generated_family_dir(cache_root, family, scale);
+    let mut font_directories = private_font_directories.to_vec();
+    if let Some(manifest) = current_manifest(&directory) {
+        for source in manifest.sources {
+            let Some(parent) = source
+                .path
+                .and_then(|path| path.parent().map(Path::to_path_buf))
+            else {
+                continue;
+            };
+            if !font_directories.contains(&parent) {
+                font_directories.push(parent);
+            }
+        }
+    }
+    if directory.exists() {
+        fs::remove_dir_all(&directory)
+            .map_err(|error| format!("Failed to renew {}: {error}", directory.display()))?;
+    }
+    prepare_scaled_workspace_font(
+        cache_root,
+        generation_root,
+        family,
+        scale,
+        &font_directories,
+    )
 }
 
 pub fn remove_legacy_workspace_fonts(workspace_root: &Path) -> Result<bool, String> {
@@ -554,6 +839,50 @@ mod tests {
         clear_scaled_workspace_fonts(cache.path(), workspace.path()).unwrap();
         assert!(generated.exists());
         assert!(workspace_font_directories(cache.path(), workspace.path()).is_empty());
+    }
+
+    #[test]
+    fn cache_report_includes_usage_and_workspace_references() {
+        let cache = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        seed_variant(cache.path(), "MiSans Khmer", 1.2);
+        activate_scaled_workspace_fonts(
+            cache.path(),
+            workspace.path(),
+            &[ScaledFontRequest {
+                family: "MiSans Khmer".into(),
+                scale: 1.2,
+            }],
+        )
+        .unwrap();
+
+        let report = inspect_scaled_font_cache(cache.path());
+        assert_eq!(report.variants.len(), 1);
+        assert!(report.total_bytes > 0);
+        assert_eq!(report.variants[0].family, "MiSans Khmer");
+        assert_eq!(report.variants[0].workspace_references, 1);
+        assert_eq!(report.variants[0].source_status, "unknown");
+    }
+
+    #[test]
+    fn unused_cleanup_preserves_referenced_variants() {
+        let cache = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        let retained = seed_variant(cache.path(), "MiSans Khmer", 1.2);
+        let removed = seed_variant(cache.path(), "MiSans Khmer", 0.9);
+        activate_scaled_workspace_fonts(
+            cache.path(),
+            workspace.path(),
+            &[ScaledFontRequest {
+                family: "MiSans Khmer".into(),
+                scale: 1.2,
+            }],
+        )
+        .unwrap();
+
+        assert_eq!(delete_unused_scaled_font_variants(cache.path()).unwrap(), 1);
+        assert!(retained.exists());
+        assert!(!removed.exists());
     }
 
     #[test]

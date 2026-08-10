@@ -212,8 +212,17 @@ Typsastra recommends keeping at most 10 cached scale variants per font face.
 Reusing an existing variant never prompts. When a main-file change, toolbar
 edit, or direct typography-directive edit would create an additional variant
 after that limit, Typsastra asks for confirmation first. It does not delete an
-existing variant automatically. Advanced controls for viewing, deleting, and
-renewing global variants are planned for a future update.
+existing variant automatically.
+
+Manage generated variants from **Settings → Storage → Scaled-font cache**.
+The cache manager groups variants by family and reports their scale, disk use,
+last use, saved workspace references, and whether the original source font is
+current, changed, missing, or unavailable to legacy metadata. You can renew a
+variant explicitly, delete selected variants, or delete only variants that no
+saved workspace selection references. Renewing and deleting referenced
+variants restarts the font-dependent workspace services; unused cleanup does
+not interrupt the compiler. None of these controls copy source font files into
+a project or export.
 
 ### Known Typst PDF limitation
 

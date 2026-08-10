@@ -575,6 +575,7 @@ export class TypsastraWorkspaceController {
   private readonly settingsController = new SettingsController(
     settings => this.applySettingsToRuntime(settings),
     providers => this.handleLanguageProvidersChanged(providers),
+    () => this.handlePrivateFontDirectoriesChanged(),
     () => this.handlePrivateFontDirectoriesChanged()
   );
   private readonly toolchainController = new ToolchainController({

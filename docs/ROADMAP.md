@@ -219,9 +219,6 @@ weakening project portability or silently modifying source assets.
   the existing PDF session when switching tabs.
 - Add a toolchain health panel showing active Typst/Tinymist versions,
   provenance, validation state, download status, and recovery actions.
-- Add advanced management for the private global scaled-font cache: inspect
-  variants by face, scale, disk usage, and last use; delete selected or unused
-  variants; and renew stale variants under explicit user control.
 - Add font-dependency health reporting for missing, moved, ambiguous, and
   unavailable system/private fonts without silently substituting or installing
   a replacement.

@@ -2834,6 +2834,21 @@
                                 <button id="settings-storage-reveal" class="settings-secondary-button" type="button">Reveal folder</button>
                             </div>
                             <p class="settings-help">Monitoring is read-only. Typsastra does not delete the complete WebView profile or clear persistent application state.</p>
+                            <h4 class="settings-storage-heading">Scaled-font cache</h4>
+                            <div id="settings-scaled-font-status" class="settings-notice" role="status" aria-live="polite">Select Storage to inspect cached font variants.</div>
+                            <div class="settings-field settings-storage-path-field">
+                                <label>Global cache root</label>
+                                <code id="settings-scaled-font-root">Not scanned</code>
+                                <small>Generated variants are machine-local and are never included in project exports.</small>
+                            </div>
+                            <div id="settings-scaled-font-cache" class="settings-scaled-font-cache"></div>
+                            <div class="settings-storage-actions">
+                                <button id="settings-scaled-font-refresh" class="settings-secondary-button" type="button">Refresh</button>
+                                <button id="settings-scaled-font-reveal" class="settings-secondary-button" type="button" disabled>Reveal cache</button>
+                                <button id="settings-scaled-font-delete-selected" class="settings-secondary-button" type="button" disabled>Delete selected</button>
+                                <button id="settings-scaled-font-delete-unused" class="settings-secondary-button" type="button" disabled>Delete unused</button>
+                            </div>
+                            <p class="settings-help">Renew regenerates a variant from its current source font. Delete unused removes only variants that are not referenced by a saved workspace selection.</p>
                         </div>
 
                         <div

@@ -430,6 +430,68 @@ async fn clear_scaled_workspace_fonts(
 }
 
 #[tauri::command]
+fn inspect_scaled_font_cache(
+    app_handle: tauri::AppHandle,
+) -> Result<scaled_fonts::ScaledFontCacheReport, String> {
+    let data_dir = app_handle
+        .path()
+        .app_local_data_dir()
+        .map_err(|error| error.to_string())?;
+    Ok(scaled_fonts::inspect_scaled_font_cache(
+        &scaled_fonts::global_scaled_font_root(&data_dir),
+    ))
+}
+
+#[tauri::command]
+async fn delete_scaled_font_variants(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, LspState>,
+    variants: Vec<scaled_fonts::ScaledFontVariantIdentity>,
+) -> Result<usize, String> {
+    let data_dir = app_handle
+        .path()
+        .app_local_data_dir()
+        .map_err(|error| error.to_string())?;
+    stop_lsp_process(&state).await;
+    scaled_fonts::delete_scaled_font_variants(
+        &scaled_fonts::global_scaled_font_root(&data_dir),
+        &variants,
+    )
+}
+
+#[tauri::command]
+fn delete_unused_scaled_font_variants(app_handle: tauri::AppHandle) -> Result<usize, String> {
+    let data_dir = app_handle
+        .path()
+        .app_local_data_dir()
+        .map_err(|error| error.to_string())?;
+    scaled_fonts::delete_unused_scaled_font_variants(&scaled_fonts::global_scaled_font_root(
+        &data_dir,
+    ))
+}
+
+#[tauri::command]
+async fn renew_scaled_font_variant(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, LspState>,
+    family: String,
+    scale: f32,
+) -> Result<scaled_fonts::ScaledFontResult, String> {
+    let data_dir = app_handle
+        .path()
+        .app_local_data_dir()
+        .map_err(|error| error.to_string())?;
+    stop_lsp_process(&state).await;
+    scaled_fonts::renew_scaled_font_variant(
+        &scaled_fonts::global_scaled_font_root(&data_dir),
+        &data_dir,
+        &family,
+        scale,
+        &configured_private_font_directories(&app_handle),
+    )
+}
+
+#[tauri::command]
 #[cfg(debug_assertions)]
 fn open_devtools(window: tauri::WebviewWindow) {
     let _ = window.open_devtools();
@@ -4911,6 +4973,10 @@ pub fn run() {
             scaled_workspace_font_set_status,
             activate_scaled_workspace_fonts,
             clear_scaled_workspace_fonts,
+            inspect_scaled_font_cache,
+            delete_scaled_font_variants,
+            delete_unused_scaled_font_variants,
+            renew_scaled_font_variant,
             install_unicode_font,
             analyze_language_ranges,
             language_suggestions,

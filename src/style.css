@@ -2799,6 +2799,49 @@ body.image-tools-active .image-tools-inspector:has(> .image-tool-inspector-empty
   background: var(--ui-control-bg, var(--ui-bg));
   font-size: 11px;
 }
+.settings-scaled-font-cache {
+  max-height: 340px;
+  overflow-y: auto;
+  border: 1px solid var(--ui-border);
+}
+.settings-scaled-font-empty {
+  margin: 0;
+  padding: 12px;
+  color: var(--ui-header-text);
+  font-size: 11px;
+}
+.settings-scaled-font-family + .settings-scaled-font-family {
+  border-top: 1px solid var(--ui-border);
+}
+.settings-scaled-font-family > h5 {
+  margin: 0;
+  padding: 7px 10px;
+  color: var(--ui-header-text);
+  background: color-mix(in srgb, var(--ui-hover) 45%, transparent);
+  font-size: 11px;
+}
+.settings-scaled-font-variant {
+  display: grid;
+  grid-template-columns: auto 64px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--ui-border);
+}
+.settings-scaled-font-variant input { margin: 0; }
+.settings-scaled-font-scale { font: 11px/1.4 var(--font-family-mono); }
+.settings-scaled-font-details {
+  min-width: 0;
+  color: var(--ui-header-text);
+  font-size: 10px;
+  line-height: 1.45;
+}
+.settings-scaled-font-details span { display: block; }
+.settings-scaled-font-source-current { color: var(--ui-success-color); }
+.settings-scaled-font-source-changed,
+.settings-scaled-font-source-missing { color: var(--ui-warning-color); }
+.settings-scaled-font-variant-actions { display: flex; gap: 6px; }
+.settings-scaled-font-variant-actions button { padding: 5px 8px; }
 
 .image-tool-status.current-document {
   border-color: color-mix(in srgb, var(--ui-accent-color) 72%, var(--ui-border));

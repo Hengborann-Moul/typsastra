@@ -33,6 +33,21 @@ type PrivateFontDirectoryInspection = {
   families: string[];
   collisions: string[];
 };
+type ScaledFontCacheVariant = {
+  family: string;
+  scale: number;
+  bytes: number;
+  fileCount: number;
+  generatedAtMs: number | null;
+  lastUsedAtMs: number | null;
+  sourceStatus: "current" | "changed" | "missing" | "unknown";
+  workspaceReferences: number;
+};
+type ScaledFontCacheReport = {
+  root: string;
+  totalBytes: number;
+  variants: ScaledFontCacheVariant[];
+};
 type LanguageProviderOption = LanguageProviderCapabilities;
 type HunspellCatalogEntry = LanguageCatalogCapabilities;
 type LinuxRendererCompatibility = {
@@ -56,7 +71,7 @@ export type SettingsTimingEntry = {
 };
 
 function formatBytes(bytes: number): string {
-  if (bytes === 0) return "";
+  if (bytes === 0) return "0 B";
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
@@ -77,11 +92,15 @@ export class SettingsController {
   private updateProjectTerminology: (entries: TerminologyEntry[]) => void = () => {};
   private workspacePreviewRenderMode: PreviewRenderMode | null = null;
   private updateWorkspacePreviewRenderMode: (mode: PreviewRenderMode) => void = () => {};
+  private scaledFontCacheReport: ScaledFontCacheReport | null = null;
+  private readonly scaledFontCacheSelection = new Set<string>();
+  private scaledFontCacheLoading = false;
 
   constructor(
     private readonly applySettings: (settings: AppSettings) => void,
     private readonly onLanguageProvidersChanged: (providers: LanguageProviderOption[]) => void = () => {},
-    private readonly onPrivateFontDirectoriesChanged: () => void | Promise<void> = () => {}
+    private readonly onPrivateFontDirectoriesChanged: () => void | Promise<void> = () => {},
+    private readonly onScaledFontCacheChanged: () => void | Promise<void> = () => {}
   ) {}
 
   public get value(): AppSettings {
@@ -174,6 +193,7 @@ export class SettingsController {
       document.querySelectorAll<HTMLElement>("[data-settings-panel-content]").forEach(panel => {
         panel.classList.toggle("active", panel.dataset.settingsPanelContent === name);
       });
+      if (name === "storage") void this.refreshScaledFontCache();
     };
     const openSettings = (panel?: string) => {
       this.populatePanel();
@@ -266,6 +286,20 @@ export class SettingsController {
     document.getElementById("settings-renderer-restart")?.addEventListener("click", () => {
       void this.restartForRendererCompatibility();
     });
+    document.getElementById("settings-scaled-font-refresh")?.addEventListener("click", () => {
+      void this.refreshScaledFontCache();
+    });
+    document.getElementById("settings-scaled-font-reveal")?.addEventListener("click", () => {
+      if (this.scaledFontCacheReport?.root) {
+        void invoke("reveal_in_explorer", { path: this.scaledFontCacheReport.root });
+      }
+    });
+    document.getElementById("settings-scaled-font-delete-selected")?.addEventListener("click", () => {
+      void this.deleteSelectedScaledFontVariants();
+    });
+    document.getElementById("settings-scaled-font-delete-unused")?.addEventListener("click", () => {
+      void this.deleteUnusedScaledFontVariants();
+    });
 
     document.getElementById("settings-reset")?.addEventListener("click", async () => {
       if (await confirm("Reset all application settings to their defaults?", { title: "Reset Settings", kind: "warning" })) {
@@ -291,6 +325,177 @@ export class SettingsController {
     });
 
     this.populatePanel();
+  }
+
+  private scaledFontVariantKey(variant: Pick<ScaledFontCacheVariant, "family" | "scale">): string {
+    return JSON.stringify([variant.family, variant.scale]);
+  }
+
+  private async refreshScaledFontCache(): Promise<void> {
+    if (this.scaledFontCacheLoading) return;
+    this.scaledFontCacheLoading = true;
+    const status = document.getElementById("settings-scaled-font-status");
+    if (status) status.textContent = "Inspecting the global scaled-font cache...";
+    try {
+      this.scaledFontCacheReport = await invoke<ScaledFontCacheReport>("inspect_scaled_font_cache");
+      const available = new Set(this.scaledFontCacheReport.variants.map(variant => this.scaledFontVariantKey(variant)));
+      for (const key of this.scaledFontCacheSelection) {
+        if (!available.has(key)) this.scaledFontCacheSelection.delete(key);
+      }
+      this.renderScaledFontCache();
+    } catch (error) {
+      this.scaledFontCacheReport = null;
+      if (status) status.textContent = `Could not inspect the scaled-font cache: ${String(error)}`;
+      const list = document.getElementById("settings-scaled-font-cache");
+      if (list) list.replaceChildren();
+    } finally {
+      this.scaledFontCacheLoading = false;
+    }
+  }
+
+  private renderScaledFontCache(): void {
+    const report = this.scaledFontCacheReport;
+    if (!report) return;
+    const status = document.getElementById("settings-scaled-font-status");
+    const root = document.getElementById("settings-scaled-font-root");
+    const list = document.getElementById("settings-scaled-font-cache");
+    const reveal = document.getElementById("settings-scaled-font-reveal") as HTMLButtonElement | null;
+    const deleteSelected = document.getElementById("settings-scaled-font-delete-selected") as HTMLButtonElement | null;
+    const deleteUnused = document.getElementById("settings-scaled-font-delete-unused") as HTMLButtonElement | null;
+    if (status) status.textContent = `${report.variants.length} variant${report.variants.length === 1 ? "" : "s"} · ${formatBytes(report.totalBytes)}`;
+    if (root) root.textContent = report.root;
+    if (reveal) reveal.disabled = !report.root;
+    if (deleteSelected) deleteSelected.disabled = this.scaledFontCacheSelection.size === 0;
+    if (deleteUnused) deleteUnused.disabled = !report.variants.some(variant => variant.workspaceReferences === 0);
+    if (!list) return;
+    list.replaceChildren();
+    if (report.variants.length === 0) {
+      const empty = document.createElement("p");
+      empty.className = "settings-scaled-font-empty";
+      empty.textContent = "No generated scaled-font variants are cached.";
+      list.append(empty);
+      return;
+    }
+
+    const families = new Map<string, ScaledFontCacheVariant[]>();
+    for (const variant of report.variants) {
+      const variants = families.get(variant.family) ?? [];
+      variants.push(variant);
+      families.set(variant.family, variants);
+    }
+    const statusLabels: Record<ScaledFontCacheVariant["sourceStatus"], string> = {
+      current: "Source current",
+      changed: "Source changed",
+      missing: "Source missing",
+      unknown: "Source not recorded",
+    };
+    for (const [family, variants] of families) {
+      const section = document.createElement("section");
+      section.className = "settings-scaled-font-family";
+      const heading = document.createElement("h5");
+      heading.textContent = family;
+      section.append(heading);
+      for (const variant of variants) {
+        const row = document.createElement("div");
+        row.className = "settings-scaled-font-variant";
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.setAttribute("aria-label", `Select ${family} at ${variant.scale.toFixed(2)} times scale`);
+        const key = this.scaledFontVariantKey(variant);
+        checkbox.checked = this.scaledFontCacheSelection.has(key);
+        checkbox.addEventListener("change", () => {
+          if (checkbox.checked) this.scaledFontCacheSelection.add(key);
+          else this.scaledFontCacheSelection.delete(key);
+          if (deleteSelected) deleteSelected.disabled = this.scaledFontCacheSelection.size === 0;
+        });
+        const scale = document.createElement("span");
+        scale.className = "settings-scaled-font-scale";
+        scale.textContent = `${variant.scale.toFixed(2)}×`;
+        const details = document.createElement("div");
+        details.className = "settings-scaled-font-details";
+        const usage = document.createElement("span");
+        usage.textContent = `${formatBytes(variant.bytes)} · ${variant.fileCount} file${variant.fileCount === 1 ? "" : "s"} · ${variant.workspaceReferences} workspace reference${variant.workspaceReferences === 1 ? "" : "s"}`;
+        const source = document.createElement("span");
+        source.className = `settings-scaled-font-source-${variant.sourceStatus}`;
+        const lastUsed = variant.lastUsedAtMs ? new Date(variant.lastUsedAtMs).toLocaleString() : "not recorded";
+        source.textContent = `${statusLabels[variant.sourceStatus]} · Last used ${lastUsed}`;
+        details.append(usage, source);
+        const actions = document.createElement("div");
+        actions.className = "settings-scaled-font-variant-actions";
+        const renew = document.createElement("button");
+        renew.type = "button";
+        renew.className = "settings-secondary-button";
+        renew.textContent = "Renew";
+        renew.addEventListener("click", () => void this.renewScaledFontVariant(variant));
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "settings-secondary-button";
+        remove.textContent = "Delete";
+        remove.addEventListener("click", () => void this.deleteScaledFontVariants([variant]));
+        actions.append(renew, remove);
+        row.append(checkbox, scale, details, actions);
+        section.append(row);
+      }
+      list.append(section);
+    }
+  }
+
+  private async deleteSelectedScaledFontVariants(): Promise<void> {
+    const variants = this.scaledFontCacheReport?.variants.filter(variant =>
+      this.scaledFontCacheSelection.has(this.scaledFontVariantKey(variant))) ?? [];
+    await this.deleteScaledFontVariants(variants);
+  }
+
+  private async deleteScaledFontVariants(variants: ScaledFontCacheVariant[]): Promise<void> {
+    if (variants.length === 0) return;
+    const referenced = variants.reduce((total, variant) => total + variant.workspaceReferences, 0);
+    const detail = referenced > 0
+      ? ` ${referenced} saved workspace reference${referenced === 1 ? "" : "s"} will require the variant to be generated again when used.`
+      : "";
+    if (!await confirm(`Delete ${variants.length} scaled-font variant${variants.length === 1 ? "" : "s"}?${detail}`, {
+      title: "Delete Scaled Fonts",
+      kind: "warning",
+    })) return;
+    try {
+      await invoke<number>("delete_scaled_font_variants", {
+        variants: variants.map(({ family, scale }) => ({ family, scale })),
+      });
+      this.scaledFontCacheSelection.clear();
+      await this.onScaledFontCacheChanged();
+      await this.refreshScaledFontCache();
+    } catch (error) {
+      await message(String(error), { title: "Could Not Delete Scaled Fonts", kind: "error" });
+    }
+  }
+
+  private async deleteUnusedScaledFontVariants(): Promise<void> {
+    const unused = this.scaledFontCacheReport?.variants.filter(variant => variant.workspaceReferences === 0) ?? [];
+    if (unused.length === 0) return;
+    if (!await confirm(`Delete ${unused.length} unused scaled-font variant${unused.length === 1 ? "" : "s"}?`, {
+      title: "Delete Unused Scaled Fonts",
+      kind: "warning",
+    })) return;
+    try {
+      await invoke<number>("delete_unused_scaled_font_variants");
+      this.scaledFontCacheSelection.clear();
+      await this.refreshScaledFontCache();
+    } catch (error) {
+      await message(String(error), { title: "Could Not Delete Scaled Fonts", kind: "error" });
+    }
+  }
+
+  private async renewScaledFontVariant(variant: ScaledFontCacheVariant): Promise<void> {
+    if (!await confirm(`Regenerate ${variant.family} at ${variant.scale.toFixed(2)}× from its current source font?`, {
+      title: "Renew Scaled Font",
+      kind: "info",
+    })) return;
+    try {
+      await invoke("renew_scaled_font_variant", { family: variant.family, scale: variant.scale });
+      await this.onScaledFontCacheChanged();
+      await this.refreshScaledFontCache();
+    } catch (error) {
+      await message(String(error), { title: "Could Not Renew Scaled Font", kind: "error" });
+    }
   }
 
   private async persist(): Promise<boolean> {
