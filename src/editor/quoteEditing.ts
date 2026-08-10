@@ -1,6 +1,6 @@
 import { EditorSelection } from "@codemirror/state";
 import { EditorView, type Command } from "@codemirror/view";
-import { pairedSelectionContent } from "./selectionPairEditing";
+import { replaceSelectedDelimiters } from "./selectionPairEditing";
 
 export type DoubleQuoteAction = "pair" | "single" | "skip" | "wrap";
 
@@ -32,6 +32,9 @@ export function doubleQuoteAction(before: string, after: string, hasSelection = 
 
 export const insertContextualDoubleQuote: Command = view => {
   if (view.state.readOnly) return false;
+  if (view.state.selection.ranges.every(range => !range.empty)) {
+    return replaceSelectedDelimiters(view, '"');
+  }
   const transaction = view.state.changeByRange(range => {
     const before = view.state.doc.sliceString(0, range.from);
     const after = view.state.doc.sliceString(range.to);
@@ -41,17 +44,6 @@ export const insertContextualDoubleQuote: Command = view => {
     }
     if (action === "wrap") {
       const selected = view.state.doc.sliceString(range.from, range.to);
-      const pairedContent = pairedSelectionContent(selected);
-      if (pairedContent !== null) {
-        const innerFrom = range.from + 1;
-        const innerTo = innerFrom + pairedContent.length;
-        return {
-          changes: { from: range.from, to: range.to, insert: `"${pairedContent}"` },
-          range: range.anchor > range.head
-            ? EditorSelection.range(innerTo, innerFrom)
-            : EditorSelection.range(innerFrom, innerTo),
-        };
-      }
       return {
         changes: { from: range.from, to: range.to, insert: `"${selected}"` },
         range: EditorSelection.range(range.anchor + 1, range.head + 1),

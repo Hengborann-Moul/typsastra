@@ -34,7 +34,19 @@ describe("selection pair editing", () => {
     expect(pairedSelectionContent("[Hello)")).toBeNull();
   });
 
-  test("replaces any existing pair with every supported pair type", () => {
+  test("wraps bare selected text and selects the complete result", () => {
+    const state = replace("Hello world", 0, 5, "[");
+    expect(state.doc.toString()).toBe("[Hello] world");
+    expect(state.sliceDoc(state.selection.main.from, state.selection.main.to)).toBe("[Hello]");
+  });
+
+  test("removes an existing pair when the same opening delimiter is typed", () => {
+    const state = replace("[Hello] world", 0, 7, "[");
+    expect(state.doc.toString()).toBe("Hello world");
+    expect(state.sliceDoc(state.selection.main.from, state.selection.main.to)).toBe("Hello");
+  });
+
+  test("replaces an existing pair when a different opening delimiter is typed", () => {
     const cases: Array<[EditorOpeningDelimiter, string]> = [
       ['"', '"Hello"'],
       ["(", "(Hello)"],
@@ -43,9 +55,10 @@ describe("selection pair editing", () => {
     ];
     for (const source of ['"Hello"', "[Hello]", "(Hello)", "{Hello}"]) {
       for (const [opening, expected] of cases) {
+        if (source.startsWith(opening)) continue;
         const state = replace(source, 0, source.length, opening);
         expect(state.doc.toString()).toBe(expected);
-        expect(state.sliceDoc(state.selection.main.from, state.selection.main.to)).toBe("Hello");
+        expect(state.sliceDoc(state.selection.main.from, state.selection.main.to)).toBe(expected);
       }
     }
   });
@@ -53,16 +66,8 @@ describe("selection pair editing", () => {
   test("preserves a backward selection", () => {
     const state = replace('"Hello" world', 7, 0, "{");
     expect(state.doc.toString()).toBe("{Hello} world");
-    expect(state.selection.main.anchor).toBe(6);
-    expect(state.selection.main.head).toBe(1);
-  });
-
-  test("leaves ordinary selections to CodeMirror's existing pair wrapping", () => {
-    const state = EditorState.create({
-      doc: "Hello",
-      selection: EditorSelection.range(0, 5),
-    });
-    const view = { state } as unknown as EditorView;
-    expect(replaceSelectedDelimiters(view, "[")).toBe(false);
+    expect(state.selection.main.anchor).toBe(7);
+    expect(state.selection.main.head).toBe(0);
+    expect(state.sliceDoc(state.selection.main.from, state.selection.main.to)).toBe("{Hello}");
   });
 });

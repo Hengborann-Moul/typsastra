@@ -10,40 +10,49 @@ export const EDITOR_DELIMITER_PAIRS = {
 
 export type EditorOpeningDelimiter = keyof typeof EDITOR_DELIMITER_PAIRS;
 
-export function pairedSelectionContent(selected: string): string | null {
+export type PairedSelection = {
+  opening: EditorOpeningDelimiter;
+  closing: string;
+  content: string;
+};
+
+export function pairedSelection(selected: string): PairedSelection | null {
   if (selected.length < 2) return null;
   const opening = selected[0] as EditorOpeningDelimiter;
   const closing = EDITOR_DELIMITER_PAIRS[opening];
   return closing !== undefined && selected.endsWith(closing)
-    ? selected.slice(1, -1)
+    ? { opening, closing, content: selected.slice(1, -1) }
     : null;
 }
 
+export function pairedSelectionContent(selected: string): string | null {
+  return pairedSelection(selected)?.content ?? null;
+}
+
 /**
- * Replaces the outer delimiters of every selection with the requested pair.
- * Ordinary selections deliberately fall through to CodeMirror's existing
- * pair-wrapping behavior.
+ * Wraps bare selections, removes an existing matching pair, or replaces a
+ * different existing pair. The complete result remains selected so repeated
+ * delimiter keys can toggle or switch pairs without selecting the text again.
  */
 export function replaceSelectedDelimiters(
   view: EditorView,
   opening: EditorOpeningDelimiter,
 ): boolean {
   if (view.state.readOnly || view.state.selection.ranges.some(range => range.empty)) return false;
-  const replacements = view.state.selection.ranges.map(range =>
-    pairedSelectionContent(view.state.doc.sliceString(range.from, range.to))
-  );
-  if (replacements.some(content => content === null)) return false;
   const closing = EDITOR_DELIMITER_PAIRS[opening];
-  let index = 0;
   const transaction = view.state.changeByRange(range => {
-    const content = replacements[index++]!;
-    const innerFrom = range.from + 1;
-    const innerTo = innerFrom + content.length;
+    const selected = view.state.doc.sliceString(range.from, range.to);
+    const existing = pairedSelection(selected);
+    const insert = existing?.opening === opening
+      ? existing.content
+      : `${opening}${existing?.content ?? selected}${closing}`;
+    const selectionFrom = range.from;
+    const selectionTo = selectionFrom + insert.length;
     return {
-      changes: { from: range.from, to: range.to, insert: `${opening}${content}${closing}` },
+      changes: { from: range.from, to: range.to, insert },
       range: range.anchor > range.head
-        ? EditorSelection.range(innerTo, innerFrom)
-        : EditorSelection.range(innerFrom, innerTo),
+        ? EditorSelection.range(selectionTo, selectionFrom)
+        : EditorSelection.range(selectionFrom, selectionTo),
     };
   });
   view.dispatch(view.state.update(transaction, {

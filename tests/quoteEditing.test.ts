@@ -37,15 +37,21 @@ describe("contextual double-quote editing", () => {
     expect(applyQuote("Hello world", 5).doc.toString()).toBe('Hello" world');
   });
 
-  test("wraps selected text and keeps the inner text selected", () => {
+  test("wraps selected text and keeps the complete result selected", () => {
     const state = applyQuote("Hello Khmer", 0, 5);
     expect(state.doc.toString()).toBe('"Hello" Khmer');
-    expect(state.sliceDoc(state.selection.main.from, state.selection.main.to)).toBe("Hello");
+    expect(state.sliceDoc(state.selection.main.from, state.selection.main.to)).toBe('"Hello"');
   });
 
   test("replaces content brackets when changing the selected delimiter to quotes", () => {
     const state = applyQuote("[Hello] Khmer", 0, 7);
     expect(state.doc.toString()).toBe('"Hello" Khmer');
+    expect(state.sliceDoc(state.selection.main.from, state.selection.main.to)).toBe('"Hello"');
+  });
+
+  test("removes quotes when the selected text already uses quotes", () => {
+    const state = applyQuote('"Hello" Khmer', 0, 7);
+    expect(state.doc.toString()).toBe("Hello Khmer");
     expect(state.sliceDoc(state.selection.main.from, state.selection.main.to)).toBe("Hello");
   });
 
@@ -57,8 +63,8 @@ describe("contextual double-quote editing", () => {
   test("preserves a backward selection when replacing content brackets", () => {
     const state = applyQuote("[Hello] Khmer", 7, 0);
     expect(state.doc.toString()).toBe('"Hello" Khmer');
-    expect(state.selection.main.anchor).toBe(6);
-    expect(state.selection.main.head).toBe(1);
+    expect(state.selection.main.anchor).toBe(7);
+    expect(state.selection.main.head).toBe(0);
   });
 
   test("moves over an existing closer and preserves escaped quotes", () => {
