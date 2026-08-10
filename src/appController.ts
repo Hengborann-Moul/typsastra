@@ -11,7 +11,7 @@ import { undo, redo, undoDepth } from "@codemirror/commands";
 import { foldAll, foldEffect, foldedRanges, indentUnit, unfoldAll, unfoldEffect } from "@codemirror/language";
 import { closeBrackets, completionStatus } from "@codemirror/autocomplete";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
-import { getEditorExtensions, themeCompartment, getThemeExtension, applyUIThemeVariables, wrapCompartment, lineNumbersCompartment, activeLineCompartment, closeBracketsCompartment, indentationGuidesCompartment, tabSizeCompartment, completionCompartment, languageCompartment, showZwsCompartment, showZeroWidthSpaces, visibleIndentationMarkers } from "./editor/extensions";
+import { editorMatchQuery, getEditorExtensions, themeCompartment, getThemeExtension, applyUIThemeVariables, wrapCompartment, lineNumbersCompartment, activeLineCompartment, closeBracketsCompartment, indentationGuidesCompartment, tabSizeCompartment, completionCompartment, languageCompartment, showZwsCompartment, showZeroWidthSpaces, visibleIndentationMarkers } from "./editor/extensions";
 import { typstLanguage } from "./editor/typstLanguage";
 import { createTypstAutocomplete } from "./editor/autocomplete";
 import {
@@ -594,6 +594,9 @@ export class TypsastraWorkspaceController {
   private editorExtensions: Extension = [];
   private editorCaretScrollMarker: HTMLElement | null = null;
   private editorDiagnosticScrollMarkerLayer: HTMLElement | null = null;
+  private editorMatchScrollMarkerFrame: number | null = null;
+  private editorMatchScrollMarkerGeneration = 0;
+  private editorMatchScrollMarkerLines = new Set<number>();
   private isComposing = false;
   private editorInputSequence = 0;
   private editorInputStartedAt: number | null = null;
@@ -1592,9 +1595,18 @@ export class TypsastraWorkspaceController {
             || effect.is(setImageOptimizationWarningsEffect)
           )
         );
+
+        const currentMatchQuery = editorMatchQuery(update.state);
+        const previousMatchQuery = editorMatchQuery(update.startState);
+        const matchQueryChanged = currentMatchQuery === null
+          ? previousMatchQuery !== null
+          : previousMatchQuery === null || !currentMatchQuery.eq(previousMatchQuery);
         
         if (update.docChanged || update.geometryChanged || diagnosticsChanged) {
           this.updateEditorDiagnosticScrollMarkers();
+        }
+        if (update.docChanged || update.selectionSet || matchQueryChanged) {
+          this.scheduleEditorMatchScrollMarkers();
         }
         if (!this.suppressFoldStatePersistence && update.transactions.some(transaction =>
           transaction.effects.some(effect => effect.is(foldEffect) || effect.is(unfoldEffect))
@@ -1756,6 +1768,7 @@ export class TypsastraWorkspaceController {
     this.updateCursorPositionStatus();
     this.updateEditorCaretScrollMarker();
     this.updateEditorDiagnosticScrollMarkers();
+    this.scheduleEditorMatchScrollMarkers();
   }
 
   private updateEditorCaretScrollMarker(): void {
@@ -1803,7 +1816,11 @@ export class TypsastraWorkspaceController {
   
     if (doc.lines <= 1) return;
   
-    const lineMarkers = new Map<number, "error" | "warning">();
+    const lineMarkers = new Map<number, "error" | "warning" | "info">();
+
+    for (const line of this.editorMatchScrollMarkerLines) {
+      if (line >= 1 && line <= doc.lines) lineMarkers.set(line, "info");
+    }
   
     for (const diagnostic of diagnostics) {
       if (diagnostic.severity !== "error" && diagnostic.severity !== "warning") continue;
@@ -1840,12 +1857,72 @@ export class TypsastraWorkspaceController {
         top: `${top}px`,
         width: "5px",
         height: `${markerHeight}px`,
-        backgroundColor: severity === "error" ? "#f14c4c" : "#cca700",
+        backgroundColor: severity === "error"
+          ? "#f14c4c"
+          : severity === "warning"
+            ? "#cca700"
+            : "#3794ff",
         pointerEvents: "none"
       });
   
       layer.appendChild(marker);
     }
+  }
+
+  private scheduleEditorMatchScrollMarkers(): void {
+    const editor = this.editorInstance;
+    if (!editor) return;
+
+    const generation = ++this.editorMatchScrollMarkerGeneration;
+    if (this.editorMatchScrollMarkerFrame !== null) {
+      cancelAnimationFrame(this.editorMatchScrollMarkerFrame);
+      this.editorMatchScrollMarkerFrame = null;
+    }
+
+    const state = editor.state;
+    const query = editorMatchQuery(state);
+    const lines = new Set<number>();
+    const selection = state.selection.main;
+    if (query && !selection.empty) {
+      const selectedMatch = query.getCursor(state, selection.from, selection.to).next();
+      if (
+        !selectedMatch.done
+        && selectedMatch.value.from === selection.from
+        && selectedMatch.value.to === selection.to
+      ) {
+        lines.add(state.doc.lineAt(selection.from).number);
+      }
+    }
+    this.editorMatchScrollMarkerLines = new Set(lines);
+    this.updateEditorDiagnosticScrollMarkers();
+    if (!query) return;
+
+    const cursor = query.getCursor(state);
+    let completedFrames = 0;
+    const scan = () => {
+      // Query/document/selection changes increment the generation and cancel
+      // this scan. Do not compare EditorState identity here: CodeMirror can
+      // create an equivalent follow-up state for unrelated view effects.
+      if (generation !== this.editorMatchScrollMarkerGeneration) return;
+      const startedAt = performance.now();
+      for (let processed = 0; processed < 500 && performance.now() - startedAt < 4; processed += 1) {
+        const result = cursor.next();
+        if (result.done) {
+          this.editorMatchScrollMarkerFrame = null;
+          this.editorMatchScrollMarkerLines = lines;
+          this.updateEditorDiagnosticScrollMarkers();
+          return;
+        }
+        lines.add(state.doc.lineAt(result.value.from).number);
+      }
+      completedFrames += 1;
+      if (completedFrames === 1 || completedFrames % 4 === 0) {
+        this.editorMatchScrollMarkerLines = new Set(lines);
+        this.updateEditorDiagnosticScrollMarkers();
+      }
+      this.editorMatchScrollMarkerFrame = requestAnimationFrame(scan);
+    };
+    this.editorMatchScrollMarkerFrame = requestAnimationFrame(scan);
   }
 
   private updateCursorPositionStatus(): void {

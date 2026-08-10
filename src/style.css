@@ -3241,6 +3241,12 @@ body.image-tools-active .image-tools-inspector:has(> .image-tool-inspector-empty
   background: color-mix(in srgb, var(--ui-accent-color) 8%, transparent);
 }
 
+.cm-editor .cm-selectionMatch {
+  background: color-mix(in srgb, #3794ff 22%, transparent);
+  outline: 1px solid color-mix(in srgb, #3794ff 68%, transparent);
+  outline-offset: -1px;
+}
+
 .wysiwym-container {
   padding: 30px;
   height: 100%;

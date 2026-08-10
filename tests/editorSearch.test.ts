@@ -3,6 +3,7 @@ import { EditorState } from "@codemirror/state";
 import { SearchQuery, getSearchQuery, search, setSearchQuery } from "@codemirror/search";
 import { codeFolding, foldEffect } from "@codemirror/language";
 import {
+  editorMatchQuery,
   firstSearchMatch,
   firstVisibleSearchMatch,
   foldedRangeForSearchMatch,
@@ -12,6 +13,29 @@ import {
 import { collapseSearchSelection, TypsastraSearchQuery } from "../src/editor/search";
 
 describe("editor search navigation", () => {
+  test("uses a case-insensitive literal query for selected text", () => {
+    const state = EditorState.create({
+      doc: "Typsastra typsastra TYPSASTRA Typ-sastra",
+      selection: { anchor: 0, head: 9 }
+    });
+    const query = editorMatchQuery(state);
+
+    expect(query).not.toBeNull();
+    expect(Array.from(query!.getCursor(state))).toEqual([
+      { from: 0, to: 9, precise: true },
+      { from: 10, to: 19, precise: true },
+      { from: 20, to: 29, precise: true }
+    ]);
+  });
+
+  test("does not create selection search queries for cursors or multiline selections", () => {
+    const cursor = EditorState.create({ doc: "word", selection: { anchor: 2 } });
+    const multiline = EditorState.create({ doc: "one\ntwo", selection: { anchor: 0, head: 7 } });
+
+    expect(editorMatchQuery(cursor)).toBeNull();
+    expect(editorMatchQuery(multiline)).toBeNull();
+  });
+
   test("matches diacritics exactly by default", () => {
     const state = EditorState.create({ doc: "cafe café résumé" });
     const plain = new TypsastraSearchQuery({ search: "cafe" });

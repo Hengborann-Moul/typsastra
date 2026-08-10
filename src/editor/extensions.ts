@@ -227,6 +227,75 @@ export function firstSearchMatch(
   return result.done ? null : result.value;
 }
 
+const MAX_SELECTION_SEARCH_LENGTH = 200;
+
+/**
+ * Returns the query that should drive editor match feedback. An open search
+ * panel is authoritative. Otherwise, a single non-empty selection becomes a
+ * literal, case-insensitive query for lightweight selection matching.
+ */
+export function editorMatchQuery(state: EditorState): SearchQuery | null {
+  if (searchPanelOpen(state)) {
+    const query = getSearchQuery(state);
+    return query.valid ? query : null;
+  }
+
+  if (state.selection.ranges.length !== 1) return null;
+  const selection = state.selection.main;
+  const length = selection.to - selection.from;
+  if (length <= 0 || length > MAX_SELECTION_SEARCH_LENGTH) return null;
+
+  const selectedText = state.sliceDoc(selection.from, selection.to);
+  if (!selectedText || /[\r\n]/u.test(selectedText)) return null;
+  return new SearchQuery({
+    search: selectedText,
+    caseSensitive: false,
+    literal: true
+  });
+}
+
+const selectedTextMatchDecoration = Decoration.mark({ class: "cm-selectionMatch" });
+
+const caseInsensitiveSelectionMatches = ViewPlugin.fromClass(class {
+  decorations: DecorationSet;
+
+  constructor(view: EditorView) {
+    this.decorations = this.build(view);
+  }
+
+  update(update: ViewUpdate): void {
+    if (
+      update.docChanged
+      || update.selectionSet
+      || update.viewportChanged
+      || searchPanelOpen(update.state) !== searchPanelOpen(update.startState)
+    ) {
+      this.decorations = this.build(update.view);
+    }
+  }
+
+  private build(view: EditorView): DecorationSet {
+    if (searchPanelOpen(view.state)) return Decoration.none;
+    const query = editorMatchQuery(view.state);
+    if (!query) return Decoration.none;
+
+    const ranges: Array<{ from: number; to: number; value: Decoration }> = [];
+    for (const visible of view.visibleRanges) {
+      const cursor = query.getCursor(view.state, visible.from, visible.to);
+      for (let result = cursor.next(); !result.done; result = cursor.next()) {
+        ranges.push({
+          from: result.value.from,
+          to: result.value.to,
+          value: selectedTextMatchDecoration
+        });
+      }
+    }
+    return Decoration.set(ranges, true);
+  }
+}, {
+  decorations: value => value.decorations
+});
+
 export function foldedRangeForSearchMatch(
   state: EditorState,
   match: SearchRange
@@ -766,6 +835,7 @@ export function getEditorExtensions(
     }),
     visibleFirstSearchNavigation,
     searchMatchCounter,
+    caseInsensitiveSelectionMatches,
     closeBracketsCompartment.of(closeBrackets()),
     bracketMatching(),
     bracketColorizer,
