@@ -397,12 +397,15 @@ export class ImageToolsController {
     const status = image.referencedByCurrentDocument
       ? "Current document"
       : image.references.length > 0 ? "Referenced elsewhere" : "Unused";
+    const statusClass = image.referencedByCurrentDocument
+      ? "current-document"
+      : image.references.length > 0 ? "referenced-elsewhere" : "unused";
     const warning = isRecommended(image)
       ? `<div class="image-tool-notice warning"><strong>Optimization recommended</strong><span>${image.estimatedDecodedBytes > decodedWarningBytes ? "Large decoded dimensions can increase compilation and preview memory." : "The encoded source file is unusually large."}</span></div>`
       : "";
     const transformSupported = image.format !== "GIF";
     this.inspector.innerHTML = `
-      <div class="image-tool-inspector-header"><div><h2></h2><div class="image-tool-path"></div></div><span class="image-tool-status">${status}</span></div>
+      <div class="image-tool-inspector-header"><div><h2></h2><div class="image-tool-path"></div></div><span class="image-tool-status ${statusClass}">${status}</span></div>
       ${warning}
       <section class="image-tool-metadata-grid">
         <div><span>Dimensions</span><strong>${image.width.toLocaleString()} × ${image.height.toLocaleString()} px</strong></div>

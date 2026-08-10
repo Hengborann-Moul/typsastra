@@ -2699,7 +2699,21 @@ body.image-tools-active .image-tools-inspector:has(> .image-tool-inspector-empty
 .image-tool-inspector-header > div { min-width: 0; }
 .image-tool-inspector-header h2 { margin: 0; color: var(--ui-text); font-size: 17px; font-weight: 500; }
 .image-tool-path { margin-top: 3px; overflow-wrap: anywhere; color: var(--ui-header-text); font: 11px/1.4 var(--editor-code-font); }
-.image-tool-status { flex: 0 0 auto; padding: 3px 7px; border: 1px solid var(--ui-border); border-radius: 0; color: var(--ui-header-text); font-size: 11px; }
+.image-tool-status {
+  flex: 0 0 auto;
+  padding: 3px 7px;
+  border: 1px solid var(--ui-border);
+  border-radius: 0;
+  color: var(--ui-text);
+  background: var(--ui-control-bg, var(--ui-bg));
+  font-size: 11px;
+}
+
+.image-tool-status.current-document {
+  border-color: color-mix(in srgb, var(--ui-accent-color) 72%, var(--ui-border));
+  color: var(--ui-accent-color);
+  background: var(--ui-navigation-background);
+}
 
 .image-tool-notice {
   margin-top: 14px;
