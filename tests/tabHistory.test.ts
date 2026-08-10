@@ -90,4 +90,17 @@ describe("per-tab editor history", () => {
     expect(restoredHistory).toBeGreaterThan(restore);
     expect(source).not.toContain("Transaction.addToHistory.of(false)");
   });
+
+  test("tab switches restore a document-aware scroll snapshot before asynchronous typography work", async () => {
+    const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
+    const persist = source.indexOf("private persistActiveTabState");
+    const capture = source.indexOf("tab.scrollSnapshot = this.editorInstance.scrollSnapshot()", persist);
+    const activation = source.indexOf("private async activateEditorTab");
+    const restore = source.indexOf("this.restoreEditorTabViewport(tab, path)", activation);
+    const typography = source.indexOf("await this.effectiveDocumentTypography(path, tab.content)", activation);
+
+    expect(capture).toBeGreaterThan(persist);
+    expect(restore).toBeGreaterThan(activation);
+    expect(restore).toBeLessThan(typography);
+  });
 });

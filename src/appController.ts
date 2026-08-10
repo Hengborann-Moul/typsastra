@@ -238,6 +238,7 @@ type EditorTab = {
   selectionHead: number;
   scrollTop?: number;
   scrollLeft?: number;
+  scrollSnapshot?: ReturnType<EditorView["scrollSnapshot"]>;
   foldRanges: EditorFoldRange[] | null;
   foldStateExplicit: boolean;
   sizeBytes?: number;
@@ -2066,6 +2067,7 @@ export class TypsastraWorkspaceController {
     tab.selectionHead = selection.head;
     tab.scrollTop = this.editorInstance.scrollDOM.scrollTop;
     tab.scrollLeft = this.editorInstance.scrollDOM.scrollLeft;
+    tab.scrollSnapshot = this.editorInstance.scrollSnapshot();
     tab.foldRanges = tab.foldStateExplicit ? this.collectCurrentFoldRanges() : [];
     tab.undoHistory = captureEditorUndoHistory(this.editorInstance.state);
   }
@@ -2082,6 +2084,44 @@ export class TypsastraWorkspaceController {
     });
 
     return ranges;
+  }
+
+  private restoreEditorTabViewport(tab: EditorTab, path: string): void {
+    if (tab.scrollSnapshot) {
+      // A CodeMirror snapshot retains the top document anchor as well as its
+      // pixel offset. Unlike assigning scrollTop directly, it remains stable
+      // while the newly activated document's virtual line geometry settles.
+      this.editorInstance.dispatch({ effects: tab.scrollSnapshot });
+      return;
+    }
+
+    if (tab.scrollTop === undefined && tab.scrollLeft === undefined) return;
+    const restoredPath = path;
+    const targetScrollTop = tab.scrollTop ?? 0;
+    const targetScrollLeft = tab.scrollLeft ?? 0;
+    const editor = this.editorInstance;
+    const restoreKey = { restoredPath };
+    const scheduleRestore = () => {
+      editor.requestMeasure({
+        key: restoreKey,
+        read: () => null,
+        write: () => {
+          if (
+            this.editorInstance !== editor
+            || !this.activeFilePath
+            || filePathKey(this.activeFilePath) !== filePathKey(restoredPath)
+          ) return;
+          editor.scrollDOM.scrollTop = targetScrollTop;
+          editor.scrollDOM.scrollLeft = targetScrollLeft;
+        },
+      });
+    };
+
+    // Workspace-restored tabs do not have an in-memory snapshot. Restore their
+    // serialized offsets once immediately and once after the first viewport
+    // draw so CodeMirror cannot overwrite them with provisional geometry.
+    scheduleRestore();
+    requestAnimationFrame(scheduleRestore);
   }
 
   private restoreTabFoldState(tab: EditorTab) {
@@ -3275,46 +3315,10 @@ export class TypsastraWorkspaceController {
     }
     this.publishImageOptimizationWarnings();
     this.renderEditorTabs();
+    this.restoreEditorTabViewport(tab, path);
     const activeTypography = await this.effectiveDocumentTypography(path, tab.content);
     if (activeTypography) {
       this.editorToolbarController.synchronizeDocumentTypography(activeTypography);
-    }
-
-    if (tab.scrollTop !== undefined || tab.scrollLeft !== undefined) {
-      const restoredPath = path;
-      const targetScrollTop = tab.scrollTop ?? 0;
-      const targetScrollLeft = tab.scrollLeft ?? 0;
-    
-      const restoreScroll = () => {
-        if (
-          !this.activeFilePath ||
-          filePathKey(this.activeFilePath) !== filePathKey(restoredPath)
-        ) {
-          return;
-        }
-    
-        const scrollDOM = this.editorInstance.scrollDOM;
-    
-        scrollDOM.scrollTop = targetScrollTop;
-        scrollDOM.scrollLeft = targetScrollLeft;
-    
-        this.editorInstance.requestMeasure();
-    
-        this.appendDeveloperLog({
-          kind: "info",
-          source: "editor state",
-          message:
-            `Restored editor scroll: top=${targetScrollTop.toFixed(0)}, `
-            + `left=${targetScrollLeft.toFixed(0)}`
-        });
-      };
-    
-      // CodeMirror has just received a completely new EditorState.
-      // Give it two layout frames so line geometry, folds and the scroll
-      // container are established before restoring the saved position.
-      requestAnimationFrame(() => {
-        requestAnimationFrame(restoreScroll);
-      });
     }
 
     if (path.toLowerCase().endsWith(".typ")) this.diagnosticWaitStartedAt = performance.now();
