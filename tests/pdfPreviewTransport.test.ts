@@ -153,6 +153,33 @@ describe("compiled PDF transport", () => {
     );
   });
 
+  test("keeps the current preview session while navigating to a diagnostic source", async () => {
+    const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
+    const navigateStart = source.indexOf("private async navigateToLogEntry");
+    const navigateEnd = source.indexOf("\n  private ", navigateStart + 10);
+    const navigateMethod = source.slice(navigateStart, navigateEnd);
+
+    expect(navigateMethod).toContain("const previewSession = this.previewRootPath");
+    expect(navigateMethod).toContain("preservePreviewSession: previewSession");
+    expect(navigateMethod).not.toContain("await this.loadFile(entry.filePath);");
+  });
+
+  test("restores retained diagnostics when a source tab becomes active", async () => {
+    const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
+    const activateStart = source.indexOf("private async activateEditorTab");
+    const activateEnd = source.indexOf("\n  private ", activateStart + 10);
+    const activateMethod = source.slice(activateStart, activateEnd);
+    const diagnosticsStart = source.indexOf("private async handleLspDiagnostics");
+    const diagnosticsEnd = source.indexOf("\n  private ", diagnosticsStart + 10);
+    const diagnosticsMethod = source.slice(diagnosticsStart, diagnosticsEnd);
+
+    expect(activateMethod).toContain("this.clearEditorDiagnostics()");
+    expect(activateMethod).not.toContain("this.clearDiagnostics()");
+    expect(activateMethod).toContain("this.restoreCachedEditorDiagnostics(path)");
+    expect(diagnosticsMethod).toContain("this.lspDiagnosticsByFile.set(filePathKey(originalPath), cacheableDiagnostics)");
+    expect(source).toContain("private restoreCachedEditorDiagnostics(path: string): void");
+  });
+
   test("validates copied workspace caches before starting Tinymist", async () => {
     const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
     const validation = source.indexOf(

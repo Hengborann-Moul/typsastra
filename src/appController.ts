@@ -481,6 +481,7 @@ export class TypsastraWorkspaceController {
   private tinymistLifecycleQueue: Promise<void> = Promise.resolve();
   private latestDocumentVersion = 1;
   private diagnosticWaitStartedAt: number | null = null;
+  private readonly lspDiagnosticsByFile = new Map<string, LspDiagnostic[]>();
   private openTabs: EditorTab[] = [];
   private readonly detectedPlainTextPaths = new Set<string>();
   private readonly classifiedUnknownPaths = new Set<string>();
@@ -3149,7 +3150,7 @@ export class TypsastraWorkspaceController {
     this.currentVersion = tab.version;
     this.latestDocumentVersion = tab.latestVersion;
     this.previewSyncController.reset();
-    this.clearDiagnostics();
+    this.clearEditorDiagnostics();
 
     this.isLoadingFile = true;
     try {
@@ -3375,6 +3376,7 @@ export class TypsastraWorkspaceController {
     if (path.toLowerCase().endsWith(".typ")) {
       this.scheduleDocumentOutlineUpdate(path, 0);
       this.documentOutlineController.setCursorPosition(this.editorInstance.state.selection.main.head, this.activeFilePath);
+      this.restoreCachedEditorDiagnostics(path);
     } else {
       this.documentOutlineController.clear();
     }
@@ -7198,8 +7200,14 @@ export class TypsastraWorkspaceController {
       return;
     }
 
-    const filteredDiagnostics = diagnostics.filter(diagnostic => {
-      if (diagnostic.message.includes("cannot export multiple images without a page number template")) return false;
+    if (isActive && !this.shouldAcceptLspDiagnostics(uri, originalPath, version)) return;
+
+    const cacheableDiagnostics = diagnostics.filter(diagnostic =>
+      !diagnostic.message.includes("cannot export multiple images without a page number template")
+    );
+    this.lspDiagnosticsByFile.set(filePathKey(originalPath), cacheableDiagnostics);
+
+    const filteredDiagnostics = cacheableDiagnostics.filter(diagnostic => {
       if (!isActive) return true;
       if (!/label.*does not exist|unknown label/i.test(diagnostic.message)) return true;
       const externalLabels = this.previewImported && this.previewStandalone
@@ -7211,8 +7219,6 @@ export class TypsastraWorkspaceController {
     });
 
     if (isActive) {
-      if (!this.shouldAcceptLspDiagnostics(uri, originalPath, version)) return;
-
       const editorDiagnostics: EditorDiagnostic[] = [];
       const staleDiagnostics = new Set<LspDiagnostic>();
       const rawPath = filePathFromUri(uri);
@@ -7577,12 +7583,57 @@ export class TypsastraWorkspaceController {
   }
 
   private clearDiagnostics() {
+    this.lspDiagnosticsByFile.clear();
     this.logConsoleController.clearDiagnostics();
+    this.clearEditorDiagnostics();
+  }
+
+  private clearEditorDiagnostics() {
     if (this.editorInstance) {
       this.editorInstance.dispatch({
         effects: setEditorDiagnosticsEffect.of([])
       });
     }
+  }
+
+  private restoreCachedEditorDiagnostics(path: string): void {
+    const cached = this.lspDiagnosticsByFile.get(filePathKey(path));
+    if (!cached || filePathKey(path) !== filePathKey(this.activeFilePath ?? "")) return;
+
+    const externalLabels = this.previewImported && this.previewStandalone
+      ? new Set(externalReferenceLabels(this.editorInstance.state.doc.toString()))
+      : new Set<string>();
+    const editorDiagnostics: EditorDiagnostic[] = [];
+    for (const diagnostic of cached) {
+      if (
+        /label.*does not exist|unknown label/i.test(diagnostic.message)
+        && [...externalLabels].some(label =>
+          diagnostic.message.includes(label) || this.diagnosticSourceText(diagnostic).includes(`@${label}`)
+        )
+      ) {
+        continue;
+      }
+      const from = this.editorPositionFromLspPosition(diagnostic.range.start);
+      const to = this.editorPositionFromLspPosition(diagnostic.range.end);
+      if (from === null || to === null) continue;
+      if (looksLikeStalePrefixDiagnostic(
+        this.editorInstance.state.doc,
+        from,
+        Math.max(from, to),
+        diagnostic.message
+      )) {
+        continue;
+      }
+      editorDiagnostics.push({
+        from,
+        to: Math.max(from, to),
+        severity: this.diagnosticSeverityFromLsp(diagnostic.severity),
+        message: diagnostic.message
+      });
+    }
+    this.editorInstance.dispatch({
+      effects: setEditorDiagnosticsEffect.of(editorDiagnostics)
+    });
   }
 
   private diagnosticSeverityFromLsp(severity: number | undefined): EditorDiagnosticSeverity {
@@ -7617,7 +7668,20 @@ export class TypsastraWorkspaceController {
   private async navigateToLogEntry(entry: LogConsoleEntryInput) {
     if (!entry.line && entry.offset === undefined) return;
     if (entry.filePath && filePathKey(entry.filePath) !== filePathKey(this.activeFilePath ?? "")) {
-      await this.loadFile(entry.filePath);
+      // A diagnostic navigation is an editor operation, not a request to
+      // change the preview document. In particular, errors in an included
+      // template commonly arrive while the configured main document cannot
+      // compile. Activating that template through the normal tab path would
+      // resolve and pin another preview target while Tinymist is handling the
+      // failed main generation, which can tear down the working LSP session.
+      // Keep the current preview identity and let activateEditorTab register
+      // the destination source with the existing Tinymist connection.
+      const previewSession = this.previewRootPath
+        ? this.capturePreviewSession()
+        : undefined;
+      await this.loadFile(entry.filePath, {
+        preservePreviewSession: previewSession
+      });
     }
     if (entry.filePath && filePathKey(entry.filePath) !== filePathKey(this.activeFilePath ?? "")) {
       // A large-file guard or another interrupted navigation may have kept the
