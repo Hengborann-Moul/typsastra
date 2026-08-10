@@ -105,7 +105,11 @@ import {
   type SpellingIssue,
 } from "./editor/spellcheck";
 import { DocumentLanguageService } from "./editor/languageScopes";
-import type { ImportedTypsastraProject, TypsastraProjectPreflight } from "./projectArchive";
+import {
+  projectImportDestinationNameError,
+  type ImportedTypsastraProject,
+  type TypsastraProjectPreflight
+} from "./projectArchive";
 import { AppUpdateController } from "./appUpdateController";
 import { releaseSummaryForVersion, shouldShowReleaseSummary } from "./releaseNotes";
 import { WebviewStorageController } from "./webviewStorageController";
@@ -9431,25 +9435,13 @@ export class TypsastraWorkspaceController {
         title: "Choose where to import the project"
       });
       if (typeof destinationParent !== "string") return;
-      const destinationPath = await join(destinationParent, inspection.suggestedFolderName);
-      const sizeMiB = (inspection.totalUncompressedBytes / 1024 / 1024).toFixed(1);
-      const confirmed = await confirm(
-        `Import “${inspection.manifest.project.name}” to:\n${destinationPath}\n\n` +
-        `${inspection.entryCount} archive entries, ${sizeMiB} MiB uncompressed.` +
-        "\n\nFonts are not included. Install the fonts required by this project separately.",
-        {
-          title: "Import Typsastra Project",
-          kind: "info",
-          okLabel: "Import Project",
-          cancelLabel: "Cancel"
-        }
-      );
-      if (!confirmed) return;
+      const destination = await this.chooseProjectImportDestination(inspection, destinationParent);
+      if (!destination) return;
 
       this.setLspStatus({ kind: "starting", message: "Verifying and importing project..." });
       const imported = await this.runCancellableProjectImport({
         archivePath: selected,
-        destinationPath,
+        destinationPath: destination.path,
         expectedManifestSha256: inspection.manifestSha256,
         allowIncompatibleToolchain
       });
@@ -9465,7 +9457,7 @@ export class TypsastraWorkspaceController {
       if (this.workspaceRootPath && filePathKey(this.workspaceRootPath) === filePathKey(imported.workspacePath)) {
         await this.setPinnedMainFile(imported.mainFilePath);
         await this.saveWorkspaceState();
-        this.setLspStatus({ kind: "preview-ready", message: `Imported ${imported.manifest.project.name}` });
+        this.setLspStatus({ kind: "preview-ready", message: `Imported ${destination.name}` });
       } else {
         await message(`The project was imported to:\n\n${imported.workspacePath}`, {
           title: "Project Imported",
@@ -9476,6 +9468,140 @@ export class TypsastraWorkspaceController {
       this.setLspStatus({ kind: "error", message: `Project import failed: ${error}` });
       await message(String(error), { title: "Typsastra Project Import Failed", kind: "error" });
     }
+  }
+
+  private chooseProjectImportDestination(
+    inspection: TypsastraProjectPreflight,
+    parentPath: string
+  ): Promise<{ name: string; path: string } | null> {
+    const overlay = document.getElementById("project-import-overlay");
+    const closeButton = document.getElementById("project-import-close") as HTMLButtonElement | null;
+    const cancelButton = document.getElementById("project-import-cancel") as HTMLButtonElement | null;
+    const confirmButton = document.getElementById("project-import-confirm") as HTMLButtonElement | null;
+    const input = document.getElementById("project-import-name") as HTMLInputElement | null;
+    const originalName = document.getElementById("project-import-original-name");
+    const parent = document.getElementById("project-import-parent");
+    const resolvedPath = document.getElementById("project-import-path");
+    const validation = document.getElementById("project-import-name-error");
+    const details = document.getElementById("project-import-details");
+    if (
+      !overlay || !closeButton || !cancelButton || !confirmButton || !input
+      || !originalName || !parent || !resolvedPath || !validation || !details
+    ) {
+      return Promise.reject(new Error("The project import dialog is unavailable."));
+    }
+
+    originalName.textContent = inspection.manifest.project.name;
+    parent.textContent = parentPath;
+    details.textContent = `${inspection.entryCount} archive entries · ${formatFileSize(inspection.totalUncompressedBytes)} uncompressed`;
+    input.value = inspection.suggestedFolderName;
+    resolvedPath.textContent = "";
+    validation.textContent = "";
+    confirmButton.disabled = true;
+    overlay.classList.remove("hidden");
+
+    return new Promise(resolve => {
+      let validationSequence = 0;
+      let validationTimer: ReturnType<typeof setTimeout> | null = null;
+      let acceptedPath: string | null = null;
+      let settled = false;
+
+      const finish = (result: { name: string; path: string } | null) => {
+        if (settled) return;
+        settled = true;
+        validationSequence += 1;
+        if (validationTimer !== null) clearTimeout(validationTimer);
+        input.removeAttribute("aria-busy");
+        overlay.classList.add("hidden");
+        closeButton.removeEventListener("click", cancel);
+        cancelButton.removeEventListener("click", cancel);
+        confirmButton.removeEventListener("click", accept);
+        input.removeEventListener("input", validate);
+        overlay.removeEventListener("pointerdown", backdropCancel);
+        document.removeEventListener("keydown", onKeyDown, true);
+        resolve(result);
+      };
+      const cancel = () => finish(null);
+      const previewDestinationPath = (name: string) => {
+        const separator = parentPath.includes("\\") && !parentPath.includes("/") ? "\\" : "/";
+        return `${parentPath.replace(/[\\/]+$/u, "")}${separator}${name}`;
+      };
+      const backdropCancel = (event: PointerEvent) => {
+        if (event.target === overlay) cancel();
+      };
+      const onKeyDown = (event: KeyboardEvent) => {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          cancel();
+        } else if (event.key === "Enter" && event.target === input && !confirmButton.disabled) {
+          event.preventDefault();
+          accept();
+        }
+      };
+      const runValidation = (delay: number, acceptWhenValid = false) => {
+        const sequence = ++validationSequence;
+        const name = input.value;
+        if (validationTimer !== null) {
+          clearTimeout(validationTimer);
+          validationTimer = null;
+        }
+        acceptedPath = null;
+        validation.textContent = "";
+        input.removeAttribute("aria-busy");
+        const localError = projectImportDestinationNameError(name);
+        if (localError) {
+          confirmButton.disabled = true;
+          input.setAttribute("aria-invalid", "true");
+          validation.textContent = localError;
+          return;
+        }
+        input.removeAttribute("aria-invalid");
+        resolvedPath.textContent = previewDestinationPath(name);
+        confirmButton.disabled = false;
+        input.setAttribute("aria-busy", "true");
+        validationTimer = setTimeout(() => {
+          validationTimer = null;
+          void invoke<string>("validate_typsastra_project_import_destination", {
+            parentPath,
+            projectName: name
+          }).then(path => {
+            if (settled || sequence !== validationSequence) return;
+            input.removeAttribute("aria-busy");
+            acceptedPath = path;
+            resolvedPath.textContent = path;
+            confirmButton.disabled = false;
+            if (acceptWhenValid) finish({ name, path });
+          }).catch(error => {
+            if (settled || sequence !== validationSequence) return;
+            input.removeAttribute("aria-busy");
+            confirmButton.disabled = true;
+            input.setAttribute("aria-invalid", "true");
+            validation.textContent = String(error);
+          });
+        }, delay);
+      };
+      const validate = () => runValidation(180);
+      const accept = () => {
+        if (confirmButton.disabled) return;
+        if (acceptedPath) {
+          finish({ name: input.value, path: acceptedPath });
+          return;
+        }
+        runValidation(0, true);
+      };
+
+      closeButton.addEventListener("click", cancel);
+      cancelButton.addEventListener("click", cancel);
+      confirmButton.addEventListener("click", accept);
+      input.addEventListener("input", validate);
+      overlay.addEventListener("pointerdown", backdropCancel);
+      document.addEventListener("keydown", onKeyDown, true);
+      validate();
+      requestAnimationFrame(() => {
+        input.focus();
+        input.select();
+      });
+    });
   }
 
   private async runCancellableProjectImport(args: {

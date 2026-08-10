@@ -45,6 +45,29 @@ export type ImportedTypsastraProject = {
   manifest: TypsastraProjectManifest;
 };
 
+export function projectImportDestinationNameError(value: string): string | null {
+  if (value.length === 0 || value.trim().length === 0) {
+    return "Enter a project name.";
+  }
+  if (value !== value.trim()) {
+    return "Project names cannot start or end with spaces.";
+  }
+  if (value === "." || value === "..") {
+    return "Choose a project name instead of a relative path.";
+  }
+  if (new TextEncoder().encode(value).length > 255) {
+    return "The project name is too long for a portable folder name.";
+  }
+  if (value.endsWith(".") || /[<>:"/\\|?*\u0000-\u001f]/u.test(value)) {
+    return "The project name contains characters that are not portable across platforms.";
+  }
+  const stem = value.split(".", 1)[0]?.toUpperCase() ?? "";
+  if (/^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/u.test(stem)) {
+    return `“${value}” is a reserved Windows name.`;
+  }
+  return null;
+}
+
 function objectValue(value: unknown, label: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`${label} must be an object.`);

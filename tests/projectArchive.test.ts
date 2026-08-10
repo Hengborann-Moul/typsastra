@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  projectImportDestinationNameError,
   parseTypsastraProjectManifest,
   LEGACY_TYPSTELLA_PROJECT_FORMAT,
   TYPSASTRA_PROJECT_FORMAT,
@@ -78,5 +79,22 @@ describe("Typsastra project manifest", () => {
     const value = manifest() as any;
     value.integrity.files["main.typ"] = "not-a-hash";
     expect(() => parseTypsastraProjectManifest(value)).toThrow("SHA-256 digest");
+  });
+});
+
+describe("project import destination names", () => {
+  test("accepts portable Unicode project names", () => {
+    expect(projectImportDestinationNameError("Research Book – 2027")).toBeNull();
+    expect(projectImportDestinationNameError("គម្រោងស្រាវជ្រាវ")).toBeNull();
+  });
+
+  test("rejects paths, reserved names, and ambiguous whitespace", () => {
+    expect(projectImportDestinationNameError("")).not.toBeNull();
+    expect(projectImportDestinationNameError(" Project")).not.toBeNull();
+    expect(projectImportDestinationNameError("Project.")).not.toBeNull();
+    expect(projectImportDestinationNameError("chapter/project")).not.toBeNull();
+    expect(projectImportDestinationNameError("CON")).not.toBeNull();
+    expect(projectImportDestinationNameError("com1.notes")).not.toBeNull();
+    expect(projectImportDestinationNameError("a".repeat(256))).not.toBeNull();
   });
 });

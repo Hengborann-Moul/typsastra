@@ -220,27 +220,14 @@ pub fn import_typsastra_project_cancellable(
         .file_name()
         .and_then(|value| value.to_str())
         .ok_or_else(|| "The import destination name is not valid Unicode.".to_string())?;
-    validate_portable_component(destination_name)?;
-    let parent = std::fs::canonicalize(parent_input).map_err(|error| {
-        format!(
-            "Failed to resolve import destination '{}': {error}",
-            parent_input.display()
-        )
-    })?;
-    if !parent.is_dir() {
-        return Err("The import destination parent is not a directory.".to_string());
-    }
-    let destination = parent.join(destination_name);
-    if destination.exists() {
-        return Err(format!(
-            "The import destination already exists: '{}'. Choose another location.",
-            destination.display()
-        ));
-    }
+    let destination = validate_import_destination(parent_input, destination_name)?;
+    let parent = destination
+        .parent()
+        .ok_or_else(|| "The validated import destination has no parent directory.".to_string())?;
 
     let staging = tempfile::Builder::new()
         .prefix(".typsastra-import-")
-        .tempdir_in(&parent)
+        .tempdir_in(parent)
         .map_err(|error| format!("Failed to create import staging directory: {error}"))?;
     let mut extracted_files = HashSet::new();
     for metadata in &validated.entries {
@@ -373,6 +360,36 @@ pub fn import_typsastra_project_cancellable(
         main_file_path: main_file.to_string_lossy().to_string(),
         manifest: validated.inspection.manifest,
     })
+}
+
+pub fn validate_import_destination(
+    parent_input: &Path,
+    destination_name: &str,
+) -> Result<PathBuf, String> {
+    if destination_name != destination_name.trim() {
+        return Err("Project names cannot start or end with spaces.".to_string());
+    }
+    if destination_name.len() > 255 {
+        return Err("The project name is too long for a portable folder name.".to_string());
+    }
+    validate_portable_component(destination_name)?;
+    let parent = std::fs::canonicalize(parent_input).map_err(|error| {
+        format!(
+            "Failed to resolve import destination '{}': {error}",
+            parent_input.display()
+        )
+    })?;
+    if !parent.is_dir() {
+        return Err("The import destination parent is not a directory.".to_string());
+    }
+    let destination = parent.join(destination_name);
+    if destination.exists() {
+        return Err(format!(
+            "The import destination already exists: '{}'. Choose another project name or location.",
+            destination.display()
+        ));
+    }
+    Ok(dunce::simplified(&destination).to_path_buf())
 }
 
 pub fn export_source_zip(workspace_root: &Path, archive_path: &Path) -> Result<(), String> {
@@ -1118,6 +1135,22 @@ mod tests {
             .file_name()
             .to_string_lossy()
             .starts_with(".typsastra-import-")));
+    }
+
+    #[test]
+    fn import_destination_validation_rejects_conflicts_and_unsafe_names() {
+        let parent = tempfile::tempdir().unwrap();
+        let available = validate_import_destination(parent.path(), "Renamed Project").unwrap();
+        assert_eq!(available, parent.path().join("Renamed Project"));
+
+        std::fs::create_dir(parent.path().join("Existing Project")).unwrap();
+        assert!(
+            validate_import_destination(parent.path(), "Existing Project")
+                .unwrap_err()
+                .contains("already exists")
+        );
+        assert!(validate_import_destination(parent.path(), "../Outside").is_err());
+        assert!(validate_import_destination(parent.path(), "CON").is_err());
     }
 
     #[test]

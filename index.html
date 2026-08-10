@@ -3029,6 +3029,42 @@ SOFTWARE.</pre>
             </section>
         </div>
 
+        <div id="project-import-overlay" class="settings-overlay hidden" role="presentation">
+            <section class="settings-dialog project-import-dialog" role="dialog" aria-modal="true" aria-labelledby="project-import-title" aria-describedby="project-import-subtitle">
+                <header class="settings-header">
+                    <div>
+                        <h2 id="project-import-title">Import Typsastra Project</h2>
+                        <p id="project-import-subtitle">Choose the local project name and destination.</p>
+                    </div>
+                    <button id="project-import-close" class="settings-icon-button" type="button" aria-label="Cancel project import" title="Cancel">×</button>
+                </header>
+                <div class="project-import-content">
+                    <dl class="project-import-summary">
+                        <div><dt>Archive project</dt><dd id="project-import-original-name"></dd></div>
+                        <div><dt>Destination folder</dt><dd id="project-import-parent"></dd></div>
+                    </dl>
+                    <label class="project-import-name-label" for="project-import-name">
+                        Project name
+                        <input id="project-import-name" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" aria-describedby="project-import-name-error" />
+                    </label>
+                    <p id="project-import-name-error" class="project-import-validation" role="alert"></p>
+                    <div class="project-import-resolved">
+                        <span>Project will be imported to</span>
+                        <code id="project-import-path"></code>
+                    </div>
+                    <p id="project-import-details" class="project-import-details"></p>
+                    <p class="project-import-note">Renaming changes only the local destination folder. The project metadata stored in the archive remains unchanged. Fonts are not included.</p>
+                </div>
+                <footer class="settings-footer project-import-footer">
+                    <span></span>
+                    <div class="settings-footer-actions">
+                        <button id="project-import-cancel" type="button">Cancel</button>
+                        <button id="project-import-confirm" class="settings-primary" type="button" disabled>Import Project</button>
+                    </div>
+                </footer>
+            </section>
+        </div>
+
         <div id="app-dialog-overlay" class="settings-overlay hidden" role="presentation">
             <section
                 class="settings-dialog app-dialog"

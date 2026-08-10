@@ -4691,6 +4691,15 @@ async fn inspect_typsastra_project(
 }
 
 #[tauri::command]
+fn validate_typsastra_project_import_destination(
+    parent_path: String,
+    project_name: String,
+) -> Result<String, String> {
+    project_archive::validate_import_destination(Path::new(&parent_path), &project_name)
+        .map(|path| path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
 async fn import_typsastra_project(
     app_handle: tauri::AppHandle,
     archive_path: String,
@@ -4869,6 +4878,7 @@ pub fn run() {
             export_source_zip,
             export_typsastra_project,
             inspect_typsastra_project,
+            validate_typsastra_project_import_destination,
             import_typsastra_project,
             cancel_typsastra_project_import,
             select_project_toolchain,

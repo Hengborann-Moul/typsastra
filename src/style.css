@@ -1182,6 +1182,10 @@ body.typsastra-resizing #input-container-wrapper::after {
 .settings-footer button:hover { background: var(--ui-hover); }
 .settings-footer .settings-primary { color: var(--ui-accent-foreground); background: var(--ui-accent-color); border-color: var(--ui-accent-color); }
 .settings-footer .settings-primary:hover { background: var(--ui-accent-hover); }
+.settings-footer button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
 
 .about-dialog {
   width: min(540px, 100%);
@@ -1207,6 +1211,93 @@ body.typsastra-resizing #input-container-wrapper::after {
 
 .app-dialog-footer {
   align-items: center;
+}
+
+.project-import-dialog {
+  width: min(620px, 100%);
+  height: auto;
+  max-height: calc(100vh - 48px);
+}
+
+.project-import-content {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  overflow: auto;
+}
+
+.project-import-summary {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.project-import-summary > div {
+  display: grid;
+  grid-template-columns: 125px minmax(0, 1fr);
+  gap: 12px;
+}
+
+.project-import-summary dt,
+.project-import-resolved > span {
+  color: var(--ui-header-text);
+}
+
+.project-import-summary dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.project-import-name-label {
+  display: grid;
+  gap: 6px;
+  font-weight: 600;
+}
+
+.project-import-name-label input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--ui-border);
+  border-radius: 4px;
+  color: var(--ui-text);
+  background: var(--ui-bg);
+  font: inherit;
+  font-weight: 400;
+  outline: none;
+}
+
+.project-import-name-label input:focus {
+  border-color: var(--ui-accent-color);
+  box-shadow: 0 0 0 1px var(--ui-accent-color);
+}
+
+.project-import-validation {
+  min-height: 1.4em;
+  margin: -8px 0 0;
+  color: var(--ui-error-text, #e96b67);
+}
+
+.project-import-resolved {
+  display: grid;
+  gap: 5px;
+  padding: 10px 12px;
+  border: 1px solid var(--ui-border);
+  background: var(--ui-input-bg, var(--ui-bg));
+}
+
+.project-import-resolved code {
+  color: var(--ui-text);
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.project-import-details,
+.project-import-note {
+  margin: 0;
+  color: var(--ui-header-text);
+  line-height: 1.5;
 }
 
 .about-content {
