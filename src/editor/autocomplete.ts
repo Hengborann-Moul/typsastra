@@ -546,13 +546,28 @@ export function isTypstMemberAccessAt(
   const memberSuffix = /(?:\.[\p{L}\p{M}\p{N}_-]*)+$/u.exec(before);
   if (!memberSuffix || memberSuffix.index === undefined) return false;
 
+  const isReceiverExpression = (receiver: string): boolean =>
+    /^(?:"(?:\\.|[^"\\])*"|\d+(?:\.\d+)?|[\p{L}_][\p{L}\p{M}\p{N}_-]*|\([^()\r\n]*\)|\[[^\]\r\n]*\])(?:\([^()\r\n]*\))?(?:\.[\p{L}_][\p{L}\p{M}\p{N}_-]*(?:\([^()\r\n]*\))?)*$/u.test(receiver);
+
   const hash = before.lastIndexOf("#", memberSuffix.index);
-  if (hash < 0) return false;
-  const receiver = before.slice(hash + 1, memberSuffix.index);
+  if (hash >= 0) {
+    const receiver = before.slice(hash + 1, memberSuffix.index);
+    if (isReceiverExpression(receiver)) return true;
+  }
+
+  // A `#let` statement enters code mode for its right-hand side. The receiver
+  // therefore does not need another hash, as in `#let x = items.`.
+  const beforeMember = before.slice(0, memberSuffix.index);
+  const letAssignment = /^\s*#let\s+[\p{L}_][\p{L}\p{M}\p{N}_-]*(?:\s*\([^()\r\n]*\))?\s*=\s*/u.exec(
+    beforeMember
+  );
+  if (letAssignment) {
+    return isReceiverExpression(beforeMember.slice(letAssignment[0].length));
+  }
 
   // Keep ordinary markup such as `See example.com` out of implicit Typst
   // completion. These forms are expressions that can own fields or methods.
-  return /^(?:"(?:\\.|[^"\\])*"|\d+(?:\.\d+)?|[\p{L}_][\p{L}\p{M}\p{N}_-]*|\([^()\r\n]*\)|\[[^\]\r\n]*\])(?:\([^()\r\n]*\))?(?:\.[\p{L}_][\p{L}\p{M}\p{N}_-]*(?:\([^()\r\n]*\))?)*$/u.test(receiver);
+  return false;
 }
 
 export function liveTypstMemberCompletionEditOffsets(

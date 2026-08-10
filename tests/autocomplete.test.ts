@@ -699,6 +699,8 @@ describe("LSP autocomplete edits", () => {
     expect(isTypstMemberAccessAt("#value.fi", 9)).toBe(true);
     expect(isTypstMemberAccessAt("#items.at(0).fi", 15)).toBe(true);
     expect(isTypstMemberAccessAt("#(1 + 2).fi", 11)).toBe(true);
+    expect(isTypstMemberAccessAt("#let x = items.", 15)).toBe(true);
+    expect(isTypstMemberAccessAt("#let x = items.fi", 17)).toBe(true);
     expect(isTypstMemberAccessAt("example.fi", 10)).toBe(false);
     expect(isTypstMemberAccessAt("See #tag and example.fi", 23)).toBe(false);
     expect(typstMemberCompletionValidFor.test("")).toBe(true);
@@ -735,6 +737,13 @@ describe("LSP autocomplete edits", () => {
     const bareDot = Text.of(['#"hello".']);
     expect(liveTypstMemberCompletionEditOffsets(bareDot, bareDot.length))
       .toEqual({ from: 9, to: 9 });
+  });
+
+  test("replaces a member suffix on the right-hand side of a let assignment", () => {
+    const doc = Text.of(["#let x = items.fi"]);
+    const replacement = liveTypstMemberCompletionEditOffsets(doc, doc.length);
+
+    expect(replacement).toEqual({ from: 15, to: 17 });
   });
 
   test("activates named argument completion after accepting an empty function call", async () => {
