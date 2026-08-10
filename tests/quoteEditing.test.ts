@@ -43,6 +43,24 @@ describe("contextual double-quote editing", () => {
     expect(state.sliceDoc(state.selection.main.from, state.selection.main.to)).toBe("Hello");
   });
 
+  test("replaces content brackets when changing the selected delimiter to quotes", () => {
+    const state = applyQuote("[Hello] Khmer", 0, 7);
+    expect(state.doc.toString()).toBe('"Hello" Khmer');
+    expect(state.sliceDoc(state.selection.main.from, state.selection.main.to)).toBe("Hello");
+  });
+
+  test("replaces parentheses and braces when changing the selected delimiter to quotes", () => {
+    expect(applyQuote("(Hello)", 0, 7).doc.toString()).toBe('"Hello"');
+    expect(applyQuote("{Hello}", 0, 7).doc.toString()).toBe('"Hello"');
+  });
+
+  test("preserves a backward selection when replacing content brackets", () => {
+    const state = applyQuote("[Hello] Khmer", 7, 0);
+    expect(state.doc.toString()).toBe('"Hello" Khmer');
+    expect(state.selection.main.anchor).toBe(6);
+    expect(state.selection.main.head).toBe(1);
+  });
+
   test("moves over an existing closer and preserves escaped quotes", () => {
     expect(doubleQuoteAction("", '"')).toBe("skip");
     expect(applyQuote('""', 1).doc.toString()).toBe('""');

@@ -31,6 +31,7 @@ import { TinymistLspClient } from "./compiler/lsp";
 import { isTinymistStoppedRequestError, type EditorTextEdit, type LspDiagnostic, type LspInverseSyncResult, type LspLogEntry, type LspSourcePosition, type LspStatus, type PreviewDocumentPosition } from "./compiler/lsp";
 import {
   parsePreviewCompilerFailure,
+  relocatePreviewCompilerFailureMessage,
   typstPackageEntrypoint,
   typstPackageImports,
   type PreviewCompilerFailure,
@@ -5148,9 +5149,16 @@ export class TypsastraWorkspaceController {
       console.error("PDF Preview compilation failed:", JSON.stringify(error, null, 2));
       const failure = parsePreviewCompilerFailure(error);
       const packageHint = await this.previewPackageFailureHint(failure, preparedPreview);
-      const failureMessage = packageHint
-        ? `${failure.message}\n\nPackage compatibility hint\n${packageHint.message}`
+      const displayedFailureMessage = failure.location !== null
+        && this.isRenderCachePath(failure.location.filePath)
+        ? relocatePreviewCompilerFailureMessage(
+            failure,
+            this.mapToOriginalPath(failure.location.filePath)
+          )
         : failure.message;
+      const failureMessage = packageHint
+        ? `${displayedFailureMessage}\n\nPackage compatibility hint\n${packageHint.message}`
+        : displayedFailureMessage;
       this.lastFailedPreviewContents = contents;
       this.lastPreviewRecoveryRequestedContents = null;
       // Keep the last successful PDF mounted, but make an actual compiler
@@ -7399,17 +7407,27 @@ export class TypsastraWorkspaceController {
     failure: PreviewCompilerFailure,
     packageHint: PreviewPackageFailureHint | null
   ): void {
-    this.logConsoleController.appendLog({
-      kind: "error",
-      source: "compiler",
-      message: failure.message,
-      channel: "lsp",
-      counted: true,
-      filePath: failure.location?.filePath,
-      fileName: failure.location ? fileNameFromPath(failure.location.filePath) : undefined,
-      line: failure.location?.line,
-      column: failure.location?.column
-    });
+    // The prepared render mirror is private implementation detail. Tinymist
+    // normally publishes the same error against the original workspace file,
+    // so exposing the export failure as a second cache-file problem produces a
+    // duplicate that navigates users into .typsastra. Keep the preview overlay
+    // as the export failure surface and let the original LSP diagnostic own the
+    // Problems entry.
+    const failureComesFromRenderMirror = failure.location !== null
+      && this.isRenderCachePath(failure.location.filePath);
+    if (!failureComesFromRenderMirror) {
+      this.logConsoleController.appendLog({
+        kind: "error",
+        source: "compiler",
+        message: failure.message,
+        channel: "lsp",
+        counted: true,
+        filePath: failure.location?.filePath,
+        fileName: failure.location ? fileNameFromPath(failure.location.filePath) : undefined,
+        line: failure.location?.line,
+        column: failure.location?.column
+      });
+    }
     if (!packageHint) return;
     this.logConsoleController.appendLog({
       kind: "error",

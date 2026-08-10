@@ -836,41 +836,41 @@ export function applyTextForHashPrefix(apply: string, type: string, isHashPrefix
 }
 
 export const typstSnippets = [
-  // Document structure
-  snippetCompletion("#set document(title: \"${title}\")\n", { label: "#document", detail: "Document Properties" }),
-  snippetCompletion("#set page(margin: ${margin}, paper: \"${paper}\")\n", { label: "#page", detail: "Page setup" }),
-  snippetCompletion("#set text(font: \"${font}\", size: ${11pt})\n", { label: "#text", detail: "Text Properties" }),
-  snippetCompletion("#set heading(numbering: \"${1.}\")\n", { label: "#heading setup", detail: "Heading Numbering" }),
-  snippetCompletion(
-    "#block[\n  #set par(\n    justification-limits: (\n      spacing: (min: ${85%}, max: ${115%}),\n      tracking: (min: ${-0.8pt}, max: ${0pt}),\n    ),\n  )\n  ${content}\n]",
-    { label: "#par justification limits", detail: "Scoped paragraph justification" }
-  ),
+  // // Document structure
+  // snippetCompletion("#set document(title: \"${title}\")\n", { label: "#document", detail: "Document Properties" }),
+  // snippetCompletion("#set page(margin: ${margin}, paper: \"${paper}\")\n", { label: "#page", detail: "Page setup" }),
+  // snippetCompletion("#set text(font: \"${font}\", size: ${11pt})\n", { label: "#text", detail: "Text Properties" }),
+  // snippetCompletion("#set heading(numbering: \"${1.}\")\n", { label: "#heading setup", detail: "Heading Numbering" }),
+  // snippetCompletion(
+  //   "#block[\n  #set par(\n    justification-limits: (\n      spacing: (min: ${85%}, max: ${115%}),\n      tracking: (min: ${-0.8pt}, max: ${0pt}),\n    ),\n  )\n  ${content}\n]",
+  //   { label: "#par justification limits", detail: "Scoped paragraph justification" }
+  // ),
   
-  // Elements
-  snippetCompletion("#align(${center})[\n  ${content}\n]\n", { label: "#align", detail: "Align content" }),
-  snippetCompletion("#import \"${pkg}\": *\n", { label: "#import", detail: "Import package" }),
-  snippetCompletion("= ${heading}\n", { label: "= Heading 1", detail: "Level 1 Heading" }),
-  snippetCompletion("== ${heading}\n", { label: "== Heading 2", detail: "Level 2 Heading" }),
-  snippetCompletion("#figure(\n  image(\"${path}\", width: ${80%}),\n  caption: [${caption}],\n)\n", { label: "#figure", detail: "Image Figure" }),
-  snippetCompletion("#table(\n  columns: (${columns}),\n  align: ${center},\n  [${A}], [${B}],\n)\n", { label: "#table", detail: "Table" }),
-  snippetCompletion("#grid(\n  columns: (${columns}),\n  gutter: ${1em},\n  [${cell 1}], [${cell 2}],\n)\n", { label: "#grid", detail: "Grid layout" }),
+  // // Elements
+  // snippetCompletion("#align(${center})[\n  ${content}\n]\n", { label: "#align", detail: "Align content" }),
+  // snippetCompletion("#import \"${pkg}\": *\n", { label: "#import", detail: "Import package" }),
+  // snippetCompletion("= ${heading}\n", { label: "= Heading 1", detail: "Level 1 Heading" }),
+  // snippetCompletion("== ${heading}\n", { label: "== Heading 2", detail: "Level 2 Heading" }),
+  // snippetCompletion("#figure(\n  image(\"${path}\", width: ${80%}),\n  caption: [${caption}],\n)\n", { label: "#figure", detail: "Image Figure" }),
+  // snippetCompletion("#table(\n  columns: (${columns}),\n  align: ${center},\n  [${A}], [${B}],\n)\n", { label: "#table", detail: "Table" }),
+  // snippetCompletion("#grid(\n  columns: (${columns}),\n  gutter: ${1em},\n  [${cell 1}], [${cell 2}],\n)\n", { label: "#grid", detail: "Grid layout" }),
   
-  // Math & Code
-  snippetCompletion("$ ${math} $\n", { label: "math inline", detail: "Inline Math" }),
-  snippetCompletion("$ ${math} $\n", { label: "$", detail: "Inline Math" }),
-  snippetCompletion("$ \n  ${math} \n$\n", { label: "math block", detail: "Math Block" }),
-  snippetCompletion("```${lang}\n${code}\n```\n", { label: "```", detail: "Code Block" }),
+  // // Math & Code
+  // snippetCompletion("$ ${math} $\n", { label: "math inline", detail: "Inline Math" }),
+  // snippetCompletion("$ ${math} $\n", { label: "$", detail: "Inline Math" }),
+  // snippetCompletion("$ \n  ${math} \n$\n", { label: "math block", detail: "Math Block" }),
+  // snippetCompletion("```${lang}\n${code}\n```\n", { label: "```", detail: "Code Block" }),
   
-  // Typography
-  snippetCompletion("*${bold}*", { label: "*bold*", detail: "Bold text" }),
-  snippetCompletion("_${italic}_", { label: "_italic_", detail: "Italic text" }),
-  snippetCompletion("#strong[${bold}]", { label: "#strong", detail: "Strong text" }),
-  snippetCompletion("#emph[${italic}]", { label: "#emph", detail: "Emphasized text" }),
+  // // Typography
+  // snippetCompletion("*${bold}*", { label: "*bold*", detail: "Bold text" }),
+  // snippetCompletion("_${italic}_", { label: "_italic_", detail: "Italic text" }),
+  // snippetCompletion("#strong[${bold}]", { label: "#strong", detail: "Strong text" }),
+  // snippetCompletion("#emph[${italic}]", { label: "#emph", detail: "Emphasized text" }),
   
-  // Math common
-  snippetCompletion("frac(${num}, ${den})", { label: "frac", detail: "Fraction" }),
-  snippetCompletion("sum_(${i=1})^(${n})", { label: "sum", detail: "Summation" }),
-  snippetCompletion("integral_(${a})^(${b})", { label: "integral", detail: "Integral" }),
+  // // Math common
+  // snippetCompletion("frac(${num}, ${den})", { label: "frac", detail: "Fraction" }),
+  // snippetCompletion("sum_(${i=1})^(${n})", { label: "sum", detail: "Summation" }),
+  // snippetCompletion("integral_(${a})^(${b})", { label: "integral", detail: "Integral" }),
 ];
 
 export function typstCompletions(context: CompletionContext) {

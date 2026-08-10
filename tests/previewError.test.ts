@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   parsePreviewCompilerFailure,
+  relocatePreviewCompilerFailureMessage,
   typstPackageEntrypoint,
   typstPackageImports
 } from "../src/compiler/previewError";
@@ -45,6 +46,20 @@ describe("preview compiler errors", () => {
       line: 3,
       column: 3
     }]);
+  });
+
+  test("relocates private mirror paths without changing compiler details", () => {
+    const cachePath = String.raw`C:\Project\.typsastra\cache\render\main.typ`;
+    const originalPath = String.raw`C:\Project\main.typ`;
+    const failure = parsePreviewCompilerFailure(
+      `error: unknown variable\n  ┌─ ${cachePath}:94:12\n94 │ #strong-[Text]`
+    );
+
+    const displayed = relocatePreviewCompilerFailureMessage(failure, originalPath);
+
+    expect(displayed).toContain(`${originalPath}:94:12`);
+    expect(displayed).not.toContain(".typsastra");
+    expect(displayed).toContain("#strong-[Text]");
   });
 
   test("reads a package entrypoint from typst.toml", () => {

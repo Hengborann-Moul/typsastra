@@ -118,6 +118,14 @@ export function parsePreviewCompilerFailure(error: unknown): PreviewCompilerFail
   };
 }
 
+export function relocatePreviewCompilerFailureMessage(
+  failure: PreviewCompilerFailure,
+  displayedFilePath: string,
+): string {
+  if (!failure.location || failure.location.filePath === displayedFilePath) return failure.message;
+  return failure.message.split(failure.location.filePath).join(displayedFilePath);
+}
+
 export function typstPackageEntrypoint(manifest: string): string | null {
   return /^\s*entrypoint\s*=\s*["']([^"']+)["']\s*$/m.exec(manifest)?.[1] ?? null;
 }
