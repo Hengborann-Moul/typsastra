@@ -21,7 +21,6 @@ import {
   type SurroundWithCompletionItem,
   type SurroundWithOption,
 } from "./editor/surroundWith";
-import { cursorRowColumn } from "./editor/verticalCursor";
 import { isForwardSyncContentPosition } from "./editor/forwardSyncEligibility";
 import type { EditorFoldRange } from "./editor/folding";
 import { looksLikeStalePrefixDiagnostic, setEditorDiagnosticsEffect } from "./editor/diagnostics";
@@ -139,13 +138,6 @@ type StartupTimingEntry = {
   source: string;
   label: string;
   ms: number;
-};
-
-type EditorInputProfile = {
-  sequence: number;
-  inputType: string;
-  inputStartedAt: number;
-  listenerStartedAt: number;
 };
 
 type ProcessMemorySample = {
@@ -543,7 +535,6 @@ export class TypsastraWorkspaceController {
   private memoryDiagnosticSequence = 0;
   private saveMemoryDiagnosticGeneration = 0;
   private previousMemoryDiagnostic: MemoryDiagnosticTotals | null = null;
-  private editorScrollbarPointerActive = false;
   private readonly externalConflictPaths = new Set<string>();
   private externalPreviewRefreshPending = false;
   private readonly managedPreviewPdfPathKeys = new Set<string>();
@@ -573,13 +564,18 @@ export class TypsastraWorkspaceController {
 
   private editorInstance!: EditorView;
   private editorExtensions: Extension = [];
-  private readonly editorController = new EditorController();
+  private readonly editorController = new EditorController({
+    performanceEnabled: () => this.isDeveloperLogEnabled("performance"),
+    recordPerformance: metric => this.performanceDiagnostics.record(metric),
+    logLayoutRefresh: reason => this.appendDeveloperLog({
+      kind: "log",
+      source: "editor layout",
+      message: `Requested CodeMirror layout refresh after ${reason}.`,
+    }),
+    suppressPreviewSync: durationMs => this.previewSyncController.suppressForwardFor(durationMs),
+    revealPreviewAtCursor: cursor => void this.previewSyncController.renderAtCursor(cursor),
+  });
   private isComposing = false;
-  private editorInputSequence = 0;
-  private editorInputStartedAt: number | null = null;
-  private editorInputType = "unknown";
-  private editorLastInputAt = 0;
-  private editorLongTaskObserver: PerformanceObserver | null = null;
   private readonly editorInputKeysHeld = new Set<string>();
   private readonly performanceSummaryCounts = new Map<PerformanceMetric["name"], number>();
   private readonly performanceDiagnostics = new PerformanceDiagnostics(metric => this.publishPerformanceMetric(metric));
@@ -972,7 +968,7 @@ export class TypsastraWorkspaceController {
     await this.timeStartup("show main window", () => getCurrentWindow().show());
     this.appUpdateController.initialize();
     this.webviewStorageController.initialize();
-    this.refreshEditorLayout("main window shown");
+    this.editorController.refreshLayout("main window shown");
     this.recordStartupTiming("frontend startup", "frontend bootstrap until window shown", this.startupStart);
     this.performanceDiagnostics.recordFirst({
       name: "startup.usable-editor",
@@ -1489,7 +1485,7 @@ export class TypsastraWorkspaceController {
       ),
       this.spellcheckController.extension(),
       EditorView.updateListener.of((update) => {
-        const inputProfile = this.beginEditorInputProfile();
+        const inputProfile = this.editorController.beginInputProfile();
         this.spellcheckController.completionStateChanged(completionStatus(update.state) !== null);
         const wasComposing = this.isComposing;
         this.isComposing = update.view.composing;
@@ -1513,7 +1509,7 @@ export class TypsastraWorkspaceController {
           this.logConsoleController.setActiveSpellcheckLocation(null);
         }
         if (update.selectionSet || update.docChanged) {
-          this.updateCursorPositionStatus();
+          this.editorController.updateCursorStatus();
           this.editorController.updateCaretMarker();
         }
         if (update.viewportChanged) {
@@ -1550,10 +1546,10 @@ export class TypsastraWorkspaceController {
             void this.saveWorkspaceState();
           }
         }
-        if (!update.docChanged && this.shouldForwardSyncSelectionUpdate(update)) {
+        if (!update.docChanged && this.editorController.shouldForwardSyncSelectionUpdate(update)) {
           this.previewSyncController.schedule(this.forwardSyncDebounceMs);
         }
-        this.finishEditorInputProfile(inputProfile, update.state.doc.length, update.view.composing);
+        this.editorController.finishInputProfile(inputProfile, update.state.doc.length, update.view.composing);
       })
     ];
     this.editorInstance = new EditorView({
@@ -1584,14 +1580,6 @@ export class TypsastraWorkspaceController {
     // The editor remains mouse- and command-focusable, but ordinary Tab
     // navigation between application controls must never land in source text.
     this.editorInstance.contentDOM.tabIndex = -1;
-    this.editorInstance.contentDOM.addEventListener("beforeinput", event => {
-      if (!this.isDeveloperLogEnabled("performance")) return;
-      this.editorInputSequence += 1;
-      this.editorInputStartedAt = performance.now();
-      this.editorLastInputAt = this.editorInputStartedAt;
-      this.editorInputType = event.inputType || "unknown";
-    }, { capture: true });
-
     this.editorInstance.contentDOM.addEventListener("keydown", event => {
       if (!this.isEditorMutationKey(event)) return;
       this.editorInputKeysHeld.add(event.code || event.key);
@@ -1608,177 +1596,9 @@ export class TypsastraWorkspaceController {
       if (this.pendingEditorMutation) this.restartEditorMutationTimer();
     });
     
-    this.initializeEditorLongTaskObserver();
-    this.editorInstance.dom.addEventListener("pointerup", event => {
-      if (!(event instanceof PointerEvent) || event.button !== 0) return;
-      if (this.editorScrollbarPointerActive) {
-        this.editorScrollbarPointerActive = false;
-        this.previewSyncController.suppressForwardFor(250);
-        return;
-      }
-      window.setTimeout(() => {
-        const cursor = this.editorInstance.state.selection.main.head;
-        void this.previewSyncController.renderAtCursor(cursor);
-      }, 0);
-    }, true);
-    this.editorInstance.scrollDOM.addEventListener("pointerdown", event => {
-      if (!(event instanceof PointerEvent) || event.button !== 0) return;
-    
-      const scrollDOM = this.editorInstance.scrollDOM;
-      const rect = scrollDOM.getBoundingClientRect();
-      const scrollbarWidth = Math.max(12, scrollDOM.offsetWidth - scrollDOM.clientWidth);
-      const inVerticalScrollbar = scrollDOM.scrollHeight > scrollDOM.clientHeight
-        && event.clientX >= rect.right - scrollbarWidth;
-    
-      if (!inVerticalScrollbar) return;
-    
-      event.preventDefault();
-      event.stopPropagation();
-    
-      this.editorScrollbarPointerActive = true;
-      this.previewSyncController.suppressForwardFor(1000);
-    
-      const trackHeight = scrollDOM.clientHeight;
-      const maxScrollTop = Math.max(0, scrollDOM.scrollHeight - trackHeight);
-    
-      const thumbHeight = Math.max(
-        20,
-        trackHeight * (trackHeight / scrollDOM.scrollHeight)
-      );
-    
-      const pointerY = event.clientY - rect.top;
-      const thumbCenterY = Math.max(
-        thumbHeight / 2,
-        Math.min(trackHeight - thumbHeight / 2, pointerY)
-      );
-    
-      const thumbTravel = Math.max(1, trackHeight - thumbHeight);
-      const ratio = (thumbCenterY - thumbHeight / 2) / thumbTravel;
-    
-      scrollDOM.scrollTop = ratio * maxScrollTop;
-    }, true);
-    window.addEventListener("pointerup", () => {
-      if (!this.editorScrollbarPointerActive) return;
-      window.setTimeout(() => {
-        this.editorScrollbarPointerActive = false;
-      }, 0);
-    }, true);
-    this.editorInstance.scrollDOM.addEventListener("scroll", () => {
-      this.previewSyncController.suppressForwardFor(500);
-    }, { passive: true });
     this.editorFontManager.updateDocument(initialDocument);
-    this.updateCursorPositionStatus();
+    this.editorController.updateCursorStatus();
     this.editorController.updateAll();
-  }
-
-  private updateCursorPositionStatus(): void {
-    const status = document.getElementById("cursor-position-status");
-    const label = status?.querySelector<HTMLElement>(".status-label");
-    if (!status || !label || !this.editorInstance) return;
-    const { row, column } = cursorRowColumn(
-      this.editorInstance.state.doc,
-      this.editorInstance.state.selection.main.head,
-    );
-    label.textContent = `Ln ${row}, Col ${column}`;
-    status.setAttribute("aria-label", `Cursor at row ${row}, column ${column}`);
-  }
-
-  private beginEditorInputProfile(): EditorInputProfile | null {
-    if (
-      !this.isDeveloperLogEnabled("performance")
-      || this.editorInputStartedAt === null
-    ) return null;
-    return {
-      sequence: this.editorInputSequence,
-      inputType: this.editorInputType,
-      inputStartedAt: this.editorInputStartedAt,
-      listenerStartedAt: performance.now(),
-    };
-  }
-
-  private finishEditorInputProfile(
-    profile: EditorInputProfile | null,
-    documentLength: number,
-    composing: boolean,
-  ): void {
-    if (!profile) return;
-    const listenerFinishedAt = performance.now();
-    const detail = {
-      sequence: profile.sequence,
-      inputType: profile.inputType,
-      documentLength,
-      composing,
-    };
-    this.performanceDiagnostics.record({
-      name: "editor.input-update",
-      milliseconds: profile.listenerStartedAt - profile.inputStartedAt,
-      detail,
-    });
-    this.performanceDiagnostics.record({
-      name: "editor.update-listener",
-      milliseconds: listenerFinishedAt - profile.listenerStartedAt,
-      detail,
-    });
-    this.editorInputStartedAt = null;
-
-    requestAnimationFrame(() => {
-      this.performanceDiagnostics.record({
-        name: "editor.input-frame",
-        milliseconds: performance.now() - profile.inputStartedAt,
-        detail,
-      });
-    });
-  }
-
-  private initializeEditorLongTaskObserver(): void {
-    if (
-      this.editorLongTaskObserver
-      || typeof PerformanceObserver === "undefined"
-      || !PerformanceObserver.supportedEntryTypes?.includes("longtask")
-    ) return;
-    this.editorLongTaskObserver = new PerformanceObserver(list => {
-      if (
-        !this.isDeveloperLogEnabled("performance")
-        || performance.now() - this.editorLastInputAt > 1_500
-      ) return;
-      for (const entry of list.getEntries()) {
-        this.performanceDiagnostics.record({
-          name: "editor.long-task",
-          milliseconds: entry.duration,
-          detail: {
-            inputAgeMs: Math.max(0, entry.startTime - this.editorLastInputAt),
-            entryType: entry.entryType,
-          },
-        });
-      }
-    });
-    this.editorLongTaskObserver.observe({ type: "longtask", buffered: false });
-  }
-
-  private refreshEditorLayout(reason: string): void {
-    const editor = this.editorInstance;
-    if (!editor) return;
-    const refresh = () => {
-      if (this.editorInstance !== editor) return;
-      editor.requestMeasure();
-      this.appendDeveloperLog({
-        kind: "log",
-        source: "editor layout",
-        message: `Requested CodeMirror layout refresh after ${reason}.`
-      });
-    };
-    requestAnimationFrame(() => requestAnimationFrame(refresh));
-  }
-
-  private shouldForwardSyncSelectionUpdate(update: { selectionSet: boolean; transactions: readonly { isUserEvent(event: string): boolean }[] }): boolean {
-    if (!update.selectionSet) {
-      return false;
-    }
-
-    return update.transactions.some((transaction) =>
-      transaction.isUserEvent("select.pointer") ||
-      transaction.isUserEvent("select.search")
-    );
   }
 
   private initExplorer() {
@@ -3249,7 +3069,7 @@ export class TypsastraWorkspaceController {
     }
 
     this.updateWorkspaceViewportVisibility();
-    this.refreshEditorLayout("tab activation");
+    this.editorController.refreshLayout("tab activation");
     this.updateManualForwardSyncAction();
     if (options.focusEditor !== false) this.editorInstance.focus();
     this.saveWorkspaceState();
@@ -3824,7 +3644,7 @@ export class TypsastraWorkspaceController {
         this.settingsController.value.editor.wordWrap ? EditorView.lineWrapping : []
       )
     });
-    this.refreshEditorLayout("resize completed");
+    this.editorController.refreshLayout("resize completed");
   }
 
   private async performSaveActiveFile(intent: SaveIntent): Promise<void> {
