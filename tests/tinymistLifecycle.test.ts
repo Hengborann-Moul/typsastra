@@ -15,20 +15,27 @@ describe("Tinymist workspace lifecycle", () => {
 
   test("restarts for main-file changes and stops when a project closes", async () => {
     const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
+    const sessionSource = await Bun.file(
+      new URL("../src/session/documentSessionController.ts", import.meta.url),
+    ).text();
+    const typographySource = await Bun.file(
+      new URL("../src/typography/typographyController.ts", import.meta.url),
+    ).text();
 
     expect(source).toContain("mainChanged && this.lspClient");
     expect(source).toContain("preparePinnedMainTypography(path)");
-    expect(source).toContain("scaled_workspace_font_set_status");
+    expect(typographySource).toContain("scaled_workspace_font_set_status");
     expect(source).toContain("activate_scaled_workspace_fonts");
     expect(source).toContain("synchronizeDocumentTypography(typography)");
-    expect(source).toContain("ownsWorkspaceTypography && !await this.confirmTypographyScaleRange(config)");
+    expect(source).toContain("ownsWorkspaceTypography && !await this.typographyController.confirmScaleRange(config)");
     expect(source).toContain("if (!this.isPinnedMainFile(filePath))");
     expect(source.indexOf("preparePinnedMainTypography(path)")).toBeLessThan(
       source.indexOf("this.pinnedMainFilePath = path", source.indexOf("preparePinnedMainTypography(path)"))
     );
     expect(source).toContain('restartTinymistSession("Restarting Tinymist for the new main file..."');
     expect(source).toContain('stopTinymistSession("Project closed")');
-    expect(source).toContain("tinymistLifecycleQueue");
+    expect(sessionSource).toContain("private lifecycleQueue: Promise<void>");
+    expect(sessionSource).toContain("runExclusive(operation: () => Promise<void>)");
     const setMainStart = source.indexOf("private async setPinnedMainFile");
     const setMainEnd = source.indexOf("private async closeProject", setMainStart);
     const setMainSource = source.slice(setMainStart, setMainEnd);
@@ -52,7 +59,10 @@ describe("Tinymist workspace lifecycle", () => {
       tabDispatch,
     );
     const activeTabCommit = source.indexOf("this.activeFilePath = path;", tabDispatch);
-    const typographyResolve = source.indexOf("await this.effectiveDocumentTypography(path, tab.content)", tabDispatch);
+    const typographyResolve = source.indexOf(
+      "await this.typographyController.effective(path, tab.content)",
+      tabDispatch,
+    );
     expect(tabDispatch).toBeGreaterThan(activation);
     expect(activeTabCommit).toBeGreaterThan(tabDispatch);
     expect(activeTabCommit).toBeLessThan(typographyResolve);
@@ -85,9 +95,12 @@ describe("Tinymist workspace lifecycle", () => {
 
   test("corrects unsupported compiler-font scales after reporting them", async () => {
     const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
+    const typographySource = await Bun.file(
+      new URL("../src/typography/typographyController.ts", import.meta.url),
+    ).text();
     expect(source).toContain('userEvent: "input.typography-scale-correction"');
-    expect(source).toContain("this.resetUnsupportedInternalScales");
-    expect(source).toContain("Typsastra will reset their scale to 1×");
+    expect(source).toContain("this.typographyController.resetUnsupportedInternalScales");
+    expect(typographySource).toContain("Typsastra will reset their scale to 1×");
   });
 
   test("clears logs at user-requested lifecycle boundaries", async () => {

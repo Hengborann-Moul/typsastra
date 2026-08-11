@@ -48,10 +48,13 @@ describe("UI responsiveness safeguards", () => {
   });
 
   test("does not sample memory or build an unbounded promise chain for no-op file events", async () => {
-    const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
-    expect(source).not.toContain('logMemoryDiagnostics("workspace watcher: self-save suppressed")');
-    expect(source).not.toContain("workspaceChangeQueue");
-    expect(source).toContain("pendingWorkspaceChanges = new Map");
-    expect(source).toContain("pending.paths = [...new Set([...pending.paths, ...change.paths])]");
+    const appSource = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
+    const workspaceSource = await Bun.file(
+      new URL("../src/workspace/workspaceController.ts", import.meta.url),
+    ).text();
+    expect(appSource).not.toContain('logMemoryDiagnostics("workspace watcher: self-save suppressed")');
+    expect(workspaceSource).not.toContain("workspaceChangeQueue");
+    expect(workspaceSource).toContain("pendingChanges = new Map");
+    expect(workspaceSource).toContain("pending.paths = [...new Set([...pending.paths, ...change.paths])]");
   });
 });

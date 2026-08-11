@@ -49,7 +49,7 @@ describe("large-image preview recommendation", () => {
 
   test("registers the read-only raster metadata command", async () => {
     const backend = await Bun.file(new URL("../src-tauri/src/lib.rs", import.meta.url)).text();
-    expect(backend).toContain("#[tauri::command]\nfn typst_preview_image_profile(");
+    expect(backend).toMatch(/#\[tauri::command\]\r?\nfn typst_preview_image_profile\(/u);
     expect(backend).toMatch(/\.invoke_handler\(tauri::generate_handler!\[[\s\S]*typst_preview_image_profile,/);
     expect(backend).toContain("estimated_total_decoded_bytes");
     expect(backend).toContain("reference_count");

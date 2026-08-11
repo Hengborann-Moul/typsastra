@@ -315,10 +315,9 @@ export class ImageToolsController {
       this.sidebar.replaceChildren(controls, list, footer);
     }
 
-    controls = controls!;
-    list = list!;
-    footer = footer!;
-    explorer = explorer!;
+    if (!controls || !list || !footer || !explorer) {
+      throw new Error("Image Tools sidebar failed to initialize.");
+    }
 
     const search = controls.querySelector<HTMLInputElement>(".image-tool-search")!;
     const filter = controls.querySelector<HTMLSelectElement>(".image-tool-filter")!;

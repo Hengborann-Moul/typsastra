@@ -14,6 +14,7 @@ import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { editorMatchQuery, getEditorExtensions, themeCompartment, getThemeExtension, applyUIThemeVariables, wrapCompartment, lineNumbersCompartment, activeLineCompartment, closeBracketsCompartment, indentationGuidesCompartment, tabSizeCompartment, completionCompartment, languageCompartment, showZwsCompartment, showZeroWidthSpaces, visibleIndentationMarkers } from "./editor/extensions";
 import { typstLanguage } from "./editor/typstLanguage";
 import { createTypstAutocomplete } from "./editor/autocomplete";
+import { EditorController } from "./editor/editorController";
 import {
   mergeDiscoveredSurroundWithOptions,
   SURROUND_WITH_OPTIONS,
@@ -23,11 +24,14 @@ import {
 import { cursorRowColumn } from "./editor/verticalCursor";
 import { isForwardSyncContentPosition } from "./editor/forwardSyncEligibility";
 import type { EditorFoldRange } from "./editor/folding";
-import { editorDiagnosticsStateField, looksLikeStalePrefixDiagnostic, setEditorDiagnosticsEffect } from "./editor/diagnostics";
+import { looksLikeStalePrefixDiagnostic, setEditorDiagnosticsEffect } from "./editor/diagnostics";
 import type { EditorDiagnostic, EditorDiagnosticSeverity } from "./editor/diagnostics";
 import { WorkspaceExplorer } from "./components/explorer";
+import { SidebarController } from "./sidebar/sidebarController";
+import { TypographyController } from "./typography/typographyController";
 import { ImageToolsController, type ProjectImageReference } from "./components/imageTools";
 import { TinymistLspClient } from "./compiler/lsp";
+import { DocumentSessionController } from "./session/documentSessionController";
 import { isTinymistStoppedRequestError, type EditorTextEdit, type LspDiagnostic, type LspInverseSyncResult, type LspLogEntry, type LspSourcePosition, type LspStatus, type PreviewDocumentPosition } from "./compiler/lsp";
 import {
   parsePreviewCompilerFailure,
@@ -43,8 +47,9 @@ import { SettingsController } from "./settingsController";
 import { fileNameFromPath, filePathFromUri, filePathKey, filePathToUri, nativeFilePath, relativeFilePath, remapFilePath } from "./platform/paths";
 import { isBinaryImagePath, isMarkdownDocumentPath, isSupportedInAppPath, isTypstDocumentPath, fileExtension } from "./platform/fileTypes";
 import { WysiwymAdapter } from "./wysiwym/adapter";
-import { PreviewFrame, type PreviewClickPoint, type PreviewInteractionStatus, type PreviewPageStatus, type PreviewSurface } from "./preview/previewFrame";
-import { MarkdownPreviewFrame, type MarkdownResource } from "./preview/markdownPreviewFrame";
+import type { PreviewFrame, PreviewClickPoint, PreviewInteractionStatus, PreviewPageStatus, PreviewSurface } from "./preview/previewFrame";
+import type { MarkdownPreviewFrame, MarkdownResource } from "./preview/markdownPreviewFrame";
+import { PreviewController } from "./preview/previewController";
 import { PreviewSyncController } from "./preview/previewSyncController";
 import {
   tinymistDataPlaneFrameConfirmsSourceMap,
@@ -74,13 +79,12 @@ import {
 } from "./workspace/workspaceStateStore";
 import { RecentProjectsController, recentProjectShortcutIndex } from "./workspace/recentProjectsController";
 import {
-  WorkspaceWatcher,
   acceptedExternalChangePaths,
   excludeManagedWorkspacePaths,
   shouldSuppressWorkspaceSelfSave,
   type WorkspaceChange
 } from "./workspace/workspaceWatcher";
-import { workspaceViewportState } from "./workspace/workspaceVisibility";
+import { WorkspaceController } from "./workspace/workspaceController";
 import { formatFileSize, largeFileOpeningNotice, largeMainPreviewOpeningNotice, type LargeFileOpeningNotice } from "./workspace/largeFileOpening";
 import { installWelcomeKeyboardNavigation } from "./workspace/welcomeNavigation";
 import { PerformanceDiagnostics, type PerformanceMetric } from "./performance/diagnostics";
@@ -94,8 +98,6 @@ import {
   parseDocumentScripts,
   documentScriptsEdit,
   typographyEdit,
-  typographyScaleExceedsFineAdjustment,
-  unsupportedTypstInternalFontScales,
   type DocumentScriptFont,
   type DocumentTypography
 } from "./editor/documentTypography";
@@ -114,7 +116,7 @@ import { AppUpdateController } from "./appUpdateController";
 import { releaseSummaryForVersion, shouldShowReleaseSummary } from "./releaseNotes";
 import { WebviewStorageController } from "./webviewStorageController";
 import { SystemResumeMonitor } from "./platform/systemResume";
-import { imageOptimizationWarningField, setImageOptimizationWarningsEffect, type ImageOptimizationWarning } from "./editor/imageWarnings";
+import { setImageOptimizationWarningsEffect, type ImageOptimizationWarning } from "./editor/imageWarnings";
 import {
   captureEditorUndoHistory,
   createTabEditorState,
@@ -123,7 +125,6 @@ import {
 
 import {
   ensureTypographyTemplateApplication,
-  effectiveTemplateTypography,
   externalReferenceLabels,
   findLocalTemplateApplication,
   findTemplateFunctionName,
@@ -384,19 +385,6 @@ type ActivateEditorTabOptions = {
   largeFileConfirmed?: boolean;
 };
 
-type FontVariantLimitWarning = {
-  family: string;
-  cachedVariants: number;
-  requestedScale: number;
-  recommendedLimit: number;
-};
-
-type ScaledFontSetStatus = {
-  updateRequired: boolean;
-  generationRequired: boolean;
-  variantLimitWarnings: FontVariantLimitWarning[];
-};
-
 type ForwardSyncTarget = {
   filepath: string;
   line: number;
@@ -434,8 +422,6 @@ export class TypsastraWorkspaceController {
   private readonly startupStart = performance.now();
   private readonly startupTimings: StartupTimingEntry[] = [];
   private readonly loggedNativeStartupTimings = new Set<string>();
-  private sidebarVisible = true;
-  private activeSidebarTool: "explorer" | "images" = "explorer";
   private activeMode: EditorMode = "CODE";
   private activeFilePath: string | null = null;
   private previewRootPath: string | null = null;
@@ -473,17 +459,10 @@ export class TypsastraWorkspaceController {
   private selectedWorkspaceToolchain: { tinymistVersion: string; typstVersion: string } | null = null;
   private currentVersion = 1;
   private isLoadingFile = false;
-  private lspReady = false;
   private readonly lspSyncDebounceMs = 50;
   private pendingEditorMutationTimer: number | null = null;
   private pendingEditorMutation: { path: string; doc: Text } | null = null;
   private forwardSyncDebounceMs = 120;
-  private pendingLspSyncTimer: number | null = null;
-  private pendingLspSyncPath: string | null = null;
-  private pendingLspSyncText: string | null = null;
-  private pendingLspSyncVersion: number | null = null;
-  private lspSyncRequestGenerations = new Map<string, number>();
-  private tinymistLifecycleQueue: Promise<void> = Promise.resolve();
   private latestDocumentVersion = 1;
   private diagnosticWaitStartedAt: number | null = null;
   private readonly lspDiagnosticsByFile = new Map<string, LspDiagnostic[]>();
@@ -496,8 +475,6 @@ export class TypsastraWorkspaceController {
   private readonly openedDocumentUris = new Set<string>();
   private lastKhmerRenderPrepState: boolean | undefined = undefined;
   private lastPreviewRenderMode: PreviewRefreshStyle | undefined = undefined;
-  private readonly pendingWorkspaceChanges = new Map<string, WorkspaceChange>();
-  private workspaceChangeDrainRunning = false;
   private projectImportQueue: Promise<void> = Promise.resolve();
   private saveInProgress: Promise<void> | null = null;
   private saveInProgressIntent: SaveIntent | null = null;
@@ -571,7 +548,6 @@ export class TypsastraWorkspaceController {
   private externalPreviewRefreshPending = false;
   private readonly managedPreviewPdfPathKeys = new Set<string>();
   private readonly managedImageToolPathKeys = new Set<string>();
-  private tinymistRestartSequence = 0;
   private readonly settingsController = new SettingsController(
     settings => this.applySettingsToRuntime(settings),
     providers => this.handleLanguageProvidersChanged(providers),
@@ -597,11 +573,7 @@ export class TypsastraWorkspaceController {
 
   private editorInstance!: EditorView;
   private editorExtensions: Extension = [];
-  private editorCaretScrollMarker: HTMLElement | null = null;
-  private editorDiagnosticScrollMarkerLayer: HTMLElement | null = null;
-  private editorMatchScrollMarkerFrame: number | null = null;
-  private editorMatchScrollMarkerGeneration = 0;
-  private editorMatchScrollMarkerLines = new Set<number>();
+  private readonly editorController = new EditorController();
   private isComposing = false;
   private editorInputSequence = 0;
   private editorInputStartedAt: number | null = null;
@@ -620,7 +592,33 @@ export class TypsastraWorkspaceController {
     event => this.appendSpellcheckDebug(event),
   );
   private explorer!: WorkspaceExplorer;
-  private lspClient!: TinymistLspClient;
+  private readonly documentSessionController = new DocumentSessionController({
+    createClient: () => this.createTinymistClient(),
+    resetSessionState: () => this.resetTinymistSessionState(),
+    onConnected: () => this.handleTinymistConnected(),
+    onRestarted: () => {
+      // Temporary discovery documents can interfere with restoration of the
+      // real workspace document immediately after a restart.
+      this.surroundWithOptions = SURROUND_WITH_OPTIONS;
+    },
+    setStoppedStatus: message => this.setLspStatus({ kind: "stopped", message }),
+    setStartingStatus: message => this.setLspStatus({ kind: "starting", message }),
+    logLifecycle: message => this.appendDeveloperLog({
+      kind: "info",
+      source: "lsp lifecycle",
+      message,
+    }),
+    logConnectionFailure: error => console.warn("Tinymist LSP instance offline.", error),
+  });
+  private get lspClient(): TinymistLspClient {
+    return this.documentSessionController.client;
+  }
+  private get lspReady(): boolean {
+    return this.documentSessionController.ready;
+  }
+  private set lspReady(ready: boolean) {
+    this.documentSessionController.setReady(ready);
+  }
   private surroundWithOptions: readonly SurroundWithOption[] = SURROUND_WITH_OPTIONS;
   private surroundWithDiscoveryGeneration = 0;
 
@@ -648,38 +646,61 @@ export class TypsastraWorkspaceController {
     (source, imagePath) => this.renderImageToolPreview(source, imagePath),
     (paths, phase) => this.handleImageToolFilesWritten(paths, phase),
   );
-  private readonly previewFrame = new PreviewFrame(this.previewPane, point => {
-    void this.handlePdfPreviewClick(point);
-  }, status => {
-    this.reportPreviewInteractionStatus(status);
-  }, zoomPercent => {
-    this.updatePreviewZoomLabel(zoomPercent);
-  }, metric => {
-    this.performanceDiagnostics.recordFirst(metric) ?? this.performanceDiagnostics.record(metric);
-  }, status => {
-    this.updatePreviewPageStatus(status);
-  }, id => {
-    return this.loadDraftPreviewImage(id);
-  }, scrollTop => {
-    this.previewScrollTop = Math.max(0, scrollTop);
-    if (!this.workspaceRootPath || !this.workspaceMetadata) return;
-    if (this.previewScrollSaveTimer !== null) window.clearTimeout(this.previewScrollSaveTimer);
-    this.previewScrollSaveTimer = window.setTimeout(() => {
-      this.previewScrollSaveTimer = null;
-      void this.saveWorkspaceState();
-    }, 750);
-  }, (stage, detail) => {
-    // The undocked preview deliberately skips CodeMirror and the rest of the
-    // workspace bootstrap. Its PDF lifecycle is already represented by the
-    // main window, so do not run workspace memory diagnostics from this
-    // preview-only controller.
-    if (isPreviewOnlyWindow()) return;
-    return this.logMemoryDiagnostics(`PDF ${stage}`, detail);
+  private readonly sidebarController = new SidebarController({
+    hasWorkspace: () => !!this.workspaceRootPath,
+    isWorkspaceLoading: () => this.workspaceLoading,
+    isActiveSurfaceNonText: () => {
+      const path = this.activeFilePath;
+      return !!path && (
+        !this.isInternallySupportedPath(path)
+        || isBinaryImagePath(path)
+        || fileExtension(path) === "pdf"
+      );
+    },
+    invalidatePreview: reason => this.invalidatePreviewWork(reason),
+    showImageTools: () => this.imageToolsController.show(),
+    hideImageTools: () => this.imageToolsController.hide(),
+    showRestoringPreview: () => this.previewFrame.setMessage(
+      `<div class="preview-disabled-placeholder"><div class="guardrail-placeholder-content">` +
+      `<div class="preview-disabled-title preview-accent-title">Restoring Preview</div>` +
+      `<div class="preview-disabled-msg">Preparing the active document preview.</div>` +
+      `</div></div>`,
+    ),
+    restoreDocumentPreview: () => void this.refreshActivePreviewRoot(false),
+    setMainPreviewVisibleWhileUndocked: visible =>
+      this.layoutController.setMainPreviewVisibleWhileUndocked(visible),
+    reconcileDockedPaneWidths: () => this.layoutController.reconcileDockedPaneWidths(),
+    persist: () => void this.saveWorkspaceState(),
+  }, this.codeRenderPane, this.previewPane);
+  private readonly previewController = new PreviewController(this.previewPane, {
+    onPreviewClick: point => void this.handlePdfPreviewClick(point),
+    onInteractionStatus: status => this.reportPreviewInteractionStatus(status),
+    onZoomChanged: zoomPercent => this.updatePreviewZoomLabel(zoomPercent),
+    onPerformance: metric => {
+      this.performanceDiagnostics.recordFirst(metric) ?? this.performanceDiagnostics.record(metric);
+    },
+    onPageChanged: status => this.updatePreviewPageStatus(status),
+    loadDraftImage: id => this.loadDraftPreviewImage(id),
+    onScrollPositionChanged: scrollTop => {
+      this.previewScrollTop = Math.max(0, scrollTop);
+      if (!this.workspaceRootPath || !this.workspaceMetadata) return;
+      if (this.previewScrollSaveTimer !== null) window.clearTimeout(this.previewScrollSaveTimer);
+      this.previewScrollSaveTimer = window.setTimeout(() => {
+        this.previewScrollSaveTimer = null;
+        void this.saveWorkspaceState();
+      }, 750);
+    },
+    onLoadStage: (stage, detail) => {
+      // Preview-only windows skip the workspace bootstrap. Their PDF lifecycle
+      // is already represented by the main window's diagnostics.
+      if (isPreviewOnlyWindow()) return;
+      return this.logMemoryDiagnostics(`PDF ${stage}`, detail);
+    },
+    resolveMarkdownImage: (documentPath, source) => this.resolveMarkdownImage(documentPath, source),
+    openMarkdownLink: (documentPath, href) => this.openMarkdownLink(documentPath, href),
   });
-  private readonly markdownPreviewFrame = new MarkdownPreviewFrame(this.previewPane, {
-    resolveImage: (documentPath, source) => this.resolveMarkdownImage(documentPath, source),
-    openLink: (documentPath, href) => this.openMarkdownLink(documentPath, href),
-  });
+  private get previewFrame(): PreviewFrame { return this.previewController.pdf; }
+  private get markdownPreviewFrame(): MarkdownPreviewFrame { return this.previewController.markdown; }
   private readonly previewSyncController = new PreviewSyncController({
     getEditor: () => this.editorInstance,
     getClient: () => this.lspClient,
@@ -701,6 +722,22 @@ export class TypsastraWorkspaceController {
     () => this.beginHorizontalPaneResize(),
     () => this.endHorizontalPaneResize()
   );
+  private readonly workspaceController = new WorkspaceController({
+    dockPreview: () => this.layoutController.dockPreview(),
+    applySidebarVisibility: () => this.sidebarController.applyVisibility(),
+    pathKey: filePathKey,
+    handleWorkspaceChange: change => this.handleWorkspaceChange(change),
+    reportWatchError: error => this.reportWorkspaceWatchError(error),
+  });
+  private readonly typographyController = new TypographyController({
+    getWorkspaceRootPath: () => this.workspaceRootPath,
+    readWorkspaceText: path => this.workspaceText(path),
+    logWarning: message => this.appendDeveloperLog({
+      kind: "warning",
+      source: "typography",
+      message,
+    }),
+  });
   private readonly documentLanguageService = new DocumentLanguageService();
   private readonly workspaceStateStore = new WorkspaceStateStore();
   private readonly recentProjectsController = new RecentProjectsController(
@@ -715,10 +752,6 @@ export class TypsastraWorkspaceController {
         }
       );
     }
-  );
-  private readonly workspaceWatcher = new WorkspaceWatcher(
-    change => this.enqueueWorkspaceChange(change),
-    error => this.reportWorkspaceWatchError(error)
   );
   private readonly editorToolbarController = new EditorToolbarController({
     getMode: () => this.activeMode,
@@ -742,7 +775,7 @@ export class TypsastraWorkspaceController {
     getExplorerForElement: element => element.closest(".image-tool-list")
       ? this.imageToolsController.getExplorer()
       : this.explorer,
-    refreshSecondaryExplorer: () => this.activeSidebarTool === "images"
+    refreshSecondaryExplorer: () => this.sidebarController.activeTool === "images"
       ? this.imageToolsController.refresh()
       : undefined,
     getPreviewFrame: () => this.previewFrame.element,
@@ -1121,106 +1154,15 @@ export class TypsastraWorkspaceController {
   }
 
   private updateWorkspaceViewportVisibility() {
-    const welcomeScreen = document.getElementById("welcome-screen");
-    const inputWrapper = document.getElementById("input-container-wrapper");
-    const previewWrapper = document.getElementById("preview-container-wrapper");
-    const resizer = document.getElementById("editor-preview-resizer");
-    const explorerSidebar = document.getElementById("explorer-sidebar");
-    const explorerResizer = document.getElementById("explorer-resizer");
-    const sidebarActivityBar = document.getElementById("sidebar-activity-bar");
-    const appMenus = document.getElementById("app-menus");
-    const loading = document.getElementById("workspace-loading");
-    const statusBar = document.getElementById("status-bar");
-    const viewport = workspaceViewportState(this.activeFilePath, this.workspaceRootPath, this.workspaceLoading);
-    loading?.classList.toggle("hidden", !viewport.showLoading);
-    statusBar?.classList.toggle("welcome-screen-active", viewport.showWelcome);
-
-    if (viewport.showWelcome) {
-      welcomeScreen?.classList.remove("hidden");
-    } else {
-      welcomeScreen?.classList.add("hidden");
-    }
-
-    if (viewport.showEditor) {
-      inputWrapper?.classList.remove("hidden");
-      previewWrapper?.classList.remove("hidden");
-      resizer?.classList.remove("hidden");
-      this.layoutController.dockPreview();
-    } else {
-      inputWrapper?.classList.add("hidden");
-      previewWrapper?.classList.add("hidden");
-      resizer?.classList.add("hidden");
-    }
-
-    if (viewport.showWorkspaceChrome) {
-      sidebarActivityBar?.classList.remove("hidden");
-      this.applySidebarVisibility();
-      appMenus?.classList.remove("hidden");
-    } else {
-      explorerSidebar?.classList.add("hidden");
-      explorerResizer?.classList.add("hidden");
-      sidebarActivityBar?.classList.add("hidden");
-      appMenus?.classList.add("hidden");
-    }
-  }
-
-  private toggleSidebar(): void {
-    if (!this.workspaceRootPath) return;
-    this.sidebarVisible = !this.sidebarVisible;
-    this.applySidebarVisibility();
-    void this.saveWorkspaceState();
-  }
-
-  private setSidebarTool(tool: "explorer" | "images", persist = true): void {
-    if (!this.workspaceRootPath) return;
-    const toolChanged = this.activeSidebarTool !== tool;
-    this.activeSidebarTool = tool;
-    this.sidebarVisible = true;
-
-    const showingImages = tool === "images";
-    document.body.classList.toggle("image-tools-active", showingImages);
-    document.getElementById("explorer-sidebar-content")?.classList.toggle("hidden", showingImages);
-    document.getElementById("image-tools-sidebar-content")?.classList.toggle("hidden", !showingImages);
-    const explorerButton = document.getElementById("sidebar-explorer-button") as HTMLButtonElement | null;
-    const imagesButton = document.getElementById("sidebar-images-button") as HTMLButtonElement | null;
-    explorerButton?.classList.toggle("active", !showingImages);
-    imagesButton?.classList.toggle("active", showingImages);
-    explorerButton?.setAttribute("aria-pressed", String(!showingImages));
-    imagesButton?.setAttribute("aria-pressed", String(showingImages));
-
-    this.codeRenderPane.classList.toggle("hidden", showingImages);
-    document.getElementById("image-viewer-pane")?.classList.add("hidden");
-    this.previewPane.classList.remove("hidden");
-    this.layoutController.setMainPreviewVisibleWhileUndocked(showingImages);
-    if (showingImages) {
-      if (toolChanged) this.invalidatePreviewWork("switched to Image Tools");
-      this.imageToolsController.show();
-    } else {
-      this.imageToolsController.hide();
-      const path = this.activeFilePath;
-      const nonTextSurface = !!path && (
-        !this.isInternallySupportedPath(path)
-        || isBinaryImagePath(path)
-        || fileExtension(path) === "pdf"
-      );
-      this.codeRenderPane.classList.toggle("hidden", nonTextSurface);
-      document.getElementById("image-viewer-pane")?.classList.toggle("hidden", !nonTextSurface);
-      if (toolChanged) {
-        this.previewFrame.setMessage(
-          `<div class="preview-disabled-placeholder"><div class="guardrail-placeholder-content">` +
-          `<div class="preview-disabled-title preview-accent-title">Restoring Preview</div>` +
-          `<div class="preview-disabled-msg">Preparing the active document preview.</div>` +
-          `</div></div>`
-        );
-      }
-      void this.refreshActivePreviewRoot(false);
-    }
-    this.applySidebarVisibility();
-    if (persist) void this.saveWorkspaceState();
+    this.workspaceController.updateViewport({
+      activeFilePath: this.activeFilePath,
+      workspaceRootPath: this.workspaceRootPath,
+      loading: this.workspaceLoading,
+    });
   }
 
   private async navigateToImageReference(reference: ProjectImageReference): Promise<void> {
-    this.setSidebarTool("explorer");
+    this.sidebarController.setTool("explorer");
     if (filePathKey(reference.sourcePath) !== filePathKey(this.activeFilePath ?? "")) {
       await this.loadFile(reference.sourcePath, { focusEditor: false });
     }
@@ -1234,7 +1176,7 @@ export class TypsastraWorkspaceController {
   }
 
   private async navigateToImageTool(imagePath: string): Promise<void> {
-    this.setSidebarTool("images");
+    this.sidebarController.setTool("images");
     await this.imageToolsController.selectImage(imagePath);
   }
 
@@ -1258,11 +1200,11 @@ export class TypsastraWorkspaceController {
 
   private restoreDefaultLayout(): void {
     if (!this.workspaceRootPath) return;
-    this.sidebarVisible = true;
+    this.sidebarController.setVisible(true);
 
     const explorerSidebar = document.getElementById("explorer-sidebar");
     if (explorerSidebar) explorerSidebar.style.width = `${DEFAULT_EXPLORER_WIDTH_PX}px`;
-    this.applySidebarVisibility();
+    this.sidebarController.applyVisibility();
 
     const inputWrapper = document.getElementById("input-container-wrapper");
     const previewWrapper = document.getElementById("preview-container-wrapper");
@@ -1295,21 +1237,6 @@ export class TypsastraWorkspaceController {
 
     this.updateWorkspaceViewportVisibility();
     this.saveWorkspaceState();
-  }
-
-  private applySidebarVisibility(): void {
-    const explorerSidebar = document.getElementById("explorer-sidebar");
-    const explorerResizer = document.getElementById("explorer-resizer");
-    const sidebarToggle = document.getElementById("sidebar-toggle-button") as HTMLButtonElement | null;
-    const visible = this.sidebarVisible && !this.workspaceLoading;
-    
-    explorerSidebar?.classList.toggle("hidden", !visible);
-    if (explorerSidebar) explorerSidebar.style.display = "";
-    explorerResizer?.classList.toggle("hidden", !visible);
-    this.layoutController.reconcileDockedPaneWidths();
-    sidebarToggle?.setAttribute("aria-expanded", String(this.sidebarVisible));
-    sidebarToggle?.setAttribute("aria-label", this.sidebarVisible ? "Hide sidebar" : "Show sidebar");
-    if (sidebarToggle) sidebarToggle.title = this.sidebarVisible ? "Hide sidebar" : "Show sidebar";
   }
 
   private applySettingsToRuntime(settings: AppSettings) {
@@ -1587,10 +1514,10 @@ export class TypsastraWorkspaceController {
         }
         if (update.selectionSet || update.docChanged) {
           this.updateCursorPositionStatus();
-          this.updateEditorCaretScrollMarker();
+          this.editorController.updateCaretMarker();
         }
         if (update.viewportChanged) {
-          this.updateEditorCaretScrollMarker();
+          this.editorController.updateCaretMarker();
           const topVisiblePosition = update.view.lineBlockAtHeight(update.view.scrollDOM.scrollTop).from;
           this.documentOutlineController.setCursorPosition(topVisiblePosition, this.activeFilePath);
         }
@@ -1608,10 +1535,10 @@ export class TypsastraWorkspaceController {
           : previousMatchQuery === null || !currentMatchQuery.eq(previousMatchQuery);
         
         if (update.docChanged || update.geometryChanged || diagnosticsChanged) {
-          this.updateEditorDiagnosticScrollMarkers();
+          this.editorController.updateDiagnosticMarkers();
         }
         if (update.docChanged || update.selectionSet || matchQueryChanged) {
-          this.scheduleEditorMatchScrollMarkers();
+          this.editorController.scheduleMatchMarkers();
         }
         if (!this.suppressFoldStatePersistence && update.transactions.some(transaction =>
           transaction.effects.some(effect => effect.is(foldEffect) || effect.is(unfoldEffect))
@@ -1639,37 +1566,7 @@ export class TypsastraWorkspaceController {
       parent: this.codeRenderPane
     });
 
-    const caretScrollMarker = document.createElement("div");
-    caretScrollMarker.className = "editor-caret-scroll-marker";
-    caretScrollMarker.setAttribute("aria-hidden", "true");
-    Object.assign(caretScrollMarker.style, {
-      position: "absolute",
-      right: "0px",
-      width: "15px",
-      height: "2px",
-      background: TYPSASTRA_GREEN,
-      pointerEvents: "none",
-      zIndex: "20"
-    });
-    this.editorInstance.dom.appendChild(caretScrollMarker);
-    this.editorCaretScrollMarker = caretScrollMarker;
-
-    const diagnosticScrollMarkerLayer = document.createElement("div");
-    diagnosticScrollMarkerLayer.className = "editor-diagnostic-scroll-marker-layer";
-    diagnosticScrollMarkerLayer.setAttribute("aria-hidden", "true");
-    
-    Object.assign(diagnosticScrollMarkerLayer.style, {
-      position: "absolute",
-      top: "0",
-      right: "2px",
-      width: "5px",
-      height: "100%",
-      pointerEvents: "none",
-      zIndex: "19"
-    });
-    
-    this.editorInstance.dom.appendChild(diagnosticScrollMarkerLayer);
-    this.editorDiagnosticScrollMarkerLayer = diagnosticScrollMarkerLayer;
+    this.editorController.install(this.editorInstance);
 
     listen<DraftThumbnailQueueMetric>("draft-thumbnail-queue-metric", event => {
       const metric = event.payload;
@@ -1771,163 +1668,7 @@ export class TypsastraWorkspaceController {
     }, { passive: true });
     this.editorFontManager.updateDocument(initialDocument);
     this.updateCursorPositionStatus();
-    this.updateEditorCaretScrollMarker();
-    this.updateEditorDiagnosticScrollMarkers();
-    this.scheduleEditorMatchScrollMarkers();
-  }
-
-  private updateEditorCaretScrollMarker(): void {
-    const marker = this.editorCaretScrollMarker;
-    const editor = this.editorInstance;
-    if (!marker || !editor) return;
-  
-    const doc = editor.state.doc;
-    if (doc.lines <= 1) {
-      marker.style.display = "none";
-      return;
-    }
-  
-    const caret = editor.state.selection.main.head;
-    const caretLine = doc.lineAt(caret).number;
-    const documentRatio = (caretLine - 1) / Math.max(1, doc.lines - 1);
-    const documentHeight = Math.max(0, editor.contentHeight - editor.defaultLineHeight);
-    const scrollHeight = editor.scrollDOM.scrollHeight;
-    const ratio = documentRatio * (documentHeight / Math.max(1, scrollHeight));
-    const trackHeight = editor.scrollDOM.clientHeight;
-    const markerHeight = 2;
-    const top = ratio * Math.max(0, trackHeight - markerHeight);
-  
-    marker.style.display = "";
-    marker.style.top = `${top}px`;
-    marker.title = `Caret: line ${caretLine}`;
-  }
-
-  private updateEditorDiagnosticScrollMarkers(): void {
-    const layer = this.editorDiagnosticScrollMarkerLayer;
-    const editor = this.editorInstance;
-    if (!layer || !editor) return;
-  
-    const diagnostics = editor.state.field(editorDiagnosticsStateField, false) ?? [];
-    const imageWarnings = editor.state.field(imageOptimizationWarningField, false);
-    const doc = editor.state.doc;
-    const trackHeight = editor.scrollDOM.clientHeight;
-    const markerHeight = 5;
-    const documentHeight = Math.max(0, editor.contentHeight - editor.defaultLineHeight);
-    const scrollHeight = editor.scrollDOM.scrollHeight;
-    const documentTrackRatio = documentHeight / Math.max(1, scrollHeight);
-  
-    layer.style.height = `${trackHeight}px`;
-    layer.replaceChildren();
-  
-    if (doc.lines <= 1) return;
-  
-    const lineMarkers = new Map<number, "error" | "warning" | "info">();
-
-    for (const line of this.editorMatchScrollMarkerLines) {
-      if (line >= 1 && line <= doc.lines) lineMarkers.set(line, "info");
-    }
-  
-    for (const diagnostic of diagnostics) {
-      if (diagnostic.severity !== "error" && diagnostic.severity !== "warning") continue;
-  
-      const position = Math.max(0, Math.min(diagnostic.from, doc.length));
-      const line = doc.lineAt(position).number;
-      const existing = lineMarkers.get(line);
-  
-      if (!existing || diagnostic.severity === "error") {
-        lineMarkers.set(line, diagnostic.severity);
-      }
-    }
-  
-    imageWarnings?.between(0, doc.length, (from) => {
-      const position = Math.max(0, Math.min(from, doc.length));
-      const line = doc.lineAt(position).number;
-  
-      if (!lineMarkers.has(line)) {
-        lineMarkers.set(line, "warning");
-      }
-    });
-  
-    for (const [line, severity] of lineMarkers) {
-      const documentRatio = (line - 1) / Math.max(1, doc.lines - 1);
-      const ratio = documentRatio * documentTrackRatio;
-      const top = ratio * Math.max(0, trackHeight - markerHeight);
-  
-      const marker = document.createElement("div");
-      marker.className = `editor-diagnostic-scroll-marker editor-diagnostic-scroll-marker-${severity}`;
-  
-      Object.assign(marker.style, {
-        position: "absolute",
-        right: "0",
-        top: `${top}px`,
-        width: "5px",
-        height: `${markerHeight}px`,
-        backgroundColor: severity === "error"
-          ? "#f14c4c"
-          : severity === "warning"
-            ? "#cca700"
-            : "#3794ff",
-        pointerEvents: "none"
-      });
-  
-      layer.appendChild(marker);
-    }
-  }
-
-  private scheduleEditorMatchScrollMarkers(): void {
-    const editor = this.editorInstance;
-    if (!editor) return;
-
-    const generation = ++this.editorMatchScrollMarkerGeneration;
-    if (this.editorMatchScrollMarkerFrame !== null) {
-      cancelAnimationFrame(this.editorMatchScrollMarkerFrame);
-      this.editorMatchScrollMarkerFrame = null;
-    }
-
-    const state = editor.state;
-    const query = editorMatchQuery(state);
-    const lines = new Set<number>();
-    const selection = state.selection.main;
-    if (query && !selection.empty) {
-      const selectedMatch = query.getCursor(state, selection.from, selection.to).next();
-      if (
-        !selectedMatch.done
-        && selectedMatch.value.from === selection.from
-        && selectedMatch.value.to === selection.to
-      ) {
-        lines.add(state.doc.lineAt(selection.from).number);
-      }
-    }
-    this.editorMatchScrollMarkerLines = new Set(lines);
-    this.updateEditorDiagnosticScrollMarkers();
-    if (!query) return;
-
-    const cursor = query.getCursor(state);
-    let completedFrames = 0;
-    const scan = () => {
-      // Query/document/selection changes increment the generation and cancel
-      // this scan. Do not compare EditorState identity here: CodeMirror can
-      // create an equivalent follow-up state for unrelated view effects.
-      if (generation !== this.editorMatchScrollMarkerGeneration) return;
-      const startedAt = performance.now();
-      for (let processed = 0; processed < 500 && performance.now() - startedAt < 4; processed += 1) {
-        const result = cursor.next();
-        if (result.done) {
-          this.editorMatchScrollMarkerFrame = null;
-          this.editorMatchScrollMarkerLines = lines;
-          this.updateEditorDiagnosticScrollMarkers();
-          return;
-        }
-        lines.add(state.doc.lineAt(result.value.from).number);
-      }
-      completedFrames += 1;
-      if (completedFrames === 1 || completedFrames % 4 === 0) {
-        this.editorMatchScrollMarkerLines = new Set(lines);
-        this.updateEditorDiagnosticScrollMarkers();
-      }
-      this.editorMatchScrollMarkerFrame = requestAnimationFrame(scan);
-    };
-    this.editorMatchScrollMarkerFrame = requestAnimationFrame(scan);
+    this.editorController.updateAll();
   }
 
   private updateCursorPositionStatus(): void {
@@ -2437,7 +2178,7 @@ export class TypsastraWorkspaceController {
     const imageReferenceSourcePaths = updateImageReferences
       ? this.imageToolsController.referenceSourcePathsForImage(oldPath)
       : [];
-    if (workspaceRoot) this.workspaceWatcher.stop();
+    if (workspaceRoot) this.workspaceController.stopWatching();
     if (imageReferenceSourcePaths.length > 0) {
       await this.handleImageToolFilesWritten(imageReferenceSourcePaths, "before");
     }
@@ -2486,9 +2227,9 @@ export class TypsastraWorkspaceController {
       this.pinnedMainFilePath = this.pinnedMainFilePath
         ? remapFilePath(this.pinnedMainFilePath, oldPath, newPath)
         : null;
-      this.pendingLspSyncPath = this.pendingLspSyncPath
-        ? remapFilePath(this.pendingLspSyncPath, oldPath, newPath)
-        : null;
+      this.documentSessionController.remapPendingSyncPath(path =>
+        remapFilePath(path, oldPath, newPath)
+      );
 
       // Preview roots and task identities include the source path. Keeping any
       // of them after a rename lets stale and current sessions alternate.
@@ -2557,7 +2298,7 @@ export class TypsastraWorkspaceController {
       }
     } finally {
       if (workspaceRoot && this.workspaceRootPath === workspaceRoot) {
-        await this.workspaceWatcher.start(workspaceRoot);
+        await this.workspaceController.startWatching(workspaceRoot);
       }
     }
   }
@@ -3006,7 +2747,7 @@ export class TypsastraWorkspaceController {
       cancelAction: "close"
     });
     if (action === "view-images") {
-      this.setSidebarTool("images");
+      this.sidebarController.setTool("images");
       if (optimizationCandidates[0]) {
         await this.imageToolsController.selectImage(optimizationCandidates[0].path);
       }
@@ -3267,7 +3008,7 @@ export class TypsastraWorkspaceController {
     }
     this.acceptedTypographyScales.set(
       filePathKey(path),
-      this.documentTypographyFromText(tab.content)?.fonts.map(font => ({ ...font })) ?? []
+      this.typographyController.fromText(tab.content)?.fonts.map(font => ({ ...font })) ?? []
     );
     this.currentVersion = tab.version;
     this.latestDocumentVersion = tab.latestVersion;
@@ -3398,7 +3139,7 @@ export class TypsastraWorkspaceController {
     this.publishImageOptimizationWarnings();
     this.renderEditorTabs();
     this.restoreEditorTabViewport(tab, path);
-    const activeTypography = await this.effectiveDocumentTypography(path, tab.content);
+    const activeTypography = await this.typographyController.effective(path, tab.content);
     if (activeTypography) {
       this.editorToolbarController.synchronizeDocumentTypography(activeTypography);
     }
@@ -3523,43 +3264,34 @@ export class TypsastraWorkspaceController {
   }
 
   private async initLsp(shouldConnect = true) {
-    if (!this.lspClient) {
-      this.lspClient = new TinymistLspClient(
-        () => {
-          if (!this.workspaceRootPath) return null;
-          return this.workspaceRootPath;
-        },
-        () => {},
-        (status) => this.setLspStatus(status),
-        (uri, position) => this.handleInverseSync(uri, position),
-        (uri, diagnostics, version) => this.handleLspDiagnostics(uri, diagnostics, version),
-        (entry) => this.appendLspLog(entry),
-        (items) => this.documentOutlineController.updatePreviewPositions(items),
-        (context) => this.handlePreviewStartupFailure(context)
-      );
-      this.lspClient.setEditorView(this.editorInstance);
-    }
-    if (!shouldConnect) {
-      this.lspReady = false;
-      this.setLspStatus({ kind: "stopped", message: "Compiler preview (LSP unavailable)" });
-      return;
-    }
-    try {
-      await this.lspClient.connect();
-      this.lspReady = true;
-      void this.discoverSurroundWithOptions();
-      this.pdfSyncPreviewTaskKey = null;
-      this.pdfSyncRegisteredTaskId = null;
-      this.pdfSourceMapStartup = null;
-      this.pdfSourceMapStartupKey = null;
-      this.clearPdfSourceMapDocumentReadiness();
-      this.pdfSyncSocket?.close();
-      this.pdfSyncSocket = null;
-      this.pdfSyncSocketUrl = "";
-    } catch (e) {
-      this.lspReady = false;
-      console.warn("Tinymist LSP instance offline.", e);
-    }
+    await this.documentSessionController.initialize(shouldConnect);
+  }
+
+  private createTinymistClient(): TinymistLspClient {
+    const client = new TinymistLspClient(
+      () => this.workspaceRootPath,
+      () => {},
+      status => this.setLspStatus(status),
+      (uri, position) => this.handleInverseSync(uri, position),
+      (uri, diagnostics, version) => this.handleLspDiagnostics(uri, diagnostics, version),
+      entry => this.appendLspLog(entry),
+      items => this.documentOutlineController.updatePreviewPositions(items),
+      context => this.handlePreviewStartupFailure(context),
+    );
+    client.setEditorView(this.editorInstance);
+    return client;
+  }
+
+  private handleTinymistConnected(): void {
+    void this.discoverSurroundWithOptions();
+    this.pdfSyncPreviewTaskKey = null;
+    this.pdfSyncRegisteredTaskId = null;
+    this.pdfSourceMapStartup = null;
+    this.pdfSourceMapStartupKey = null;
+    this.clearPdfSourceMapDocumentReadiness();
+    this.pdfSyncSocket?.close();
+    this.pdfSyncSocket = null;
+    this.pdfSyncSocketUrl = "";
   }
 
   private async discoverSurroundWithOptions(): Promise<void> {
@@ -3606,12 +3338,6 @@ export class TypsastraWorkspaceController {
     }
   }
 
-  private queueTinymistLifecycle(operation: () => Promise<void>): Promise<void> {
-    const next = this.tinymistLifecycleQueue.then(operation, operation);
-    this.tinymistLifecycleQueue = next.catch(() => {});
-    return next;
-  }
-
   private resetTinymistSessionState(): void {
     this.surroundWithDiscoveryGeneration += 1;
     this.surroundWithOptions = SURROUND_WITH_OPTIONS;
@@ -3641,53 +3367,11 @@ export class TypsastraWorkspaceController {
   }
 
   private stopTinymistSession(statusMessage: string): Promise<void> {
-    return this.queueTinymistLifecycle(async () => {
-      this.resetTinymistSessionState();
-      if (this.lspClient) await this.lspClient.stop();
-      this.setLspStatus({ kind: "stopped", message: statusMessage });
-    });
+    return this.documentSessionController.stop(statusMessage);
   }
 
   private restartTinymistSession(statusMessage: string): Promise<void> {
-    return this.queueTinymistLifecycle(async () => {
-      const sequence = ++this.tinymistRestartSequence;
-      this.appendDeveloperLog({
-        kind: "info",
-        source: "lsp lifecycle",
-        message: `Tinymist restart ${sequence} requested: ${statusMessage}`
-      });
-      this.resetTinymistSessionState();
-      this.setLspStatus({ kind: "starting", message: statusMessage });
-      if (!this.lspClient) {
-        await this.initLsp();
-        this.appendDeveloperLog({
-          kind: "info",
-          source: "lsp lifecycle",
-          message: `Tinymist restart ${sequence} completed through LSP initialization.`
-        });
-        return;
-      }
-      await this.lspClient.restart();
-      this.lspReady = true;
-      // Do not run Surround With discovery immediately after a restart.
-      // It opens a temporary Typst document and requests completion while
-      // the real workspace document is still being restored.
-      //
-      // Built-in Surround With options remain available from
-      // SURROUND_WITH_OPTIONS.
-      this.surroundWithOptions = SURROUND_WITH_OPTIONS;
-      
-      this.appendDeveloperLog({
-        kind: "info",
-        source: "lsp lifecycle",
-        message: `Tinymist restart ${sequence} completed.`
-      });
-      this.appendDeveloperLog({
-        kind: "info",
-        source: "lsp lifecycle",
-        message: `Tinymist restart ${sequence} completed.`
-      });
-    });
+    return this.documentSessionController.restart(statusMessage);
   }
 
   private recoverTinymistPreviewAfterUnexpectedStop(
@@ -4069,7 +3753,7 @@ export class TypsastraWorkspaceController {
 
       this.previewFrame.resumeResizeLayout();
       this.previewFrame.syncTheme();
-      if (this.workspaceRootPath) this.applySidebarVisibility();
+      if (this.workspaceRootPath) this.sidebarController.applyVisibility();
       this.layoutController.reconcileDockedPaneWidths();
 
       // The first post-resume frame can still use the pre-suspend display
@@ -4115,8 +3799,8 @@ export class TypsastraWorkspaceController {
   private remeasureWorkspaceAfterResume(reason: string): void {
     this.layoutController.reconcileDockedPaneWidths();
     this.editorInstance?.requestMeasure();
-    this.updateEditorCaretScrollMarker();
-    this.updateEditorDiagnosticScrollMarkers();
+    this.editorController.updateCaretMarker();
+    this.editorController.updateDiagnosticMarkers();
     this.previewFrame.syncTheme();
     this.appendDeveloperLog({
       kind: "log",
@@ -4338,8 +4022,8 @@ export class TypsastraWorkspaceController {
   ): Promise<boolean> {
     if (!this.activeFilePath) return false;
     const ownsWorkspaceTypography = this.isPinnedMainFile(this.activeFilePath);
-    if (ownsWorkspaceTypography && !await this.confirmTypographyScaleRange(config)) return false;
-    if (ownsWorkspaceTypography && !await this.confirmTypographyVariantLimit(config)) return false;
+    if (ownsWorkspaceTypography && !await this.typographyController.confirmScaleRange(config)) return false;
+    if (ownsWorkspaceTypography && !await this.typographyController.confirmVariantLimit(config)) return false;
     const typographyDocumentKey = filePathKey(this.activeFilePath);
     const previousAcceptedScale = this.acceptedTypographyScales.get(typographyDocumentKey) ?? [];
     this.acceptedTypographyScales.set(typographyDocumentKey, config.fonts.map(font => ({ ...font })));
@@ -4455,124 +4139,10 @@ export class TypsastraWorkspaceController {
     }
   }
 
-  private typographyScaleRangeWarning(config: DocumentTypography): string | null {
-    const outsideFineRange = config.fonts.filter(font =>
-      typographyScaleExceedsFineAdjustment(font.scale)
-    );
-    if (outsideFineRange.length === 0) return null;
-    return `The following font scales exceed the recommended 0.90×–1.10× fine-adjustment range:\n\n${outsideFineRange.map(font => `${font.family}: ${font.scale}×`).join("\n")}\n\nFont scaling is intended for small optical adjustments between script families, not for doubling or substantially changing text size. Beyond ±10%, accurate representation is not guaranteed and results vary from one font to another. Use the document text size for larger size changes.\n\nContinue anyway?`;
-  }
-
-  private async unsupportedInternalScaleError(config: DocumentTypography): Promise<{
-    message: string;
-    fonts: DocumentScriptFont[];
-  } | null> {
-    const catalog = await invoke<{ all: string[] }>("list_system_fonts", {
-      workspaceRootPath: this.workspaceRootPath
-    });
-    const unsupported = unsupportedTypstInternalFontScales(config.fonts, catalog.all);
-    if (unsupported.length === 0) return null;
-    return {
-      fonts: unsupported,
-      message: `The following fonts are provided internally by the Typst compiler and cannot be scaled by Typsastra:\n\n${unsupported.map(font => `${font.family}: ${font.scale}×`).join("\n")}\n\nTypsastra will reset their scale to 1×. Install the corresponding font family locally before using a custom scale. Typsastra will not generate or extract variants from compiler-embedded fonts.`,
-    };
-  }
-
-  private resetUnsupportedInternalScales(
-    config: DocumentTypography,
-    unsupported: readonly DocumentScriptFont[],
-  ): DocumentTypography {
-    return {
-      ...config,
-      fonts: config.fonts.map(font => ({
-        ...font,
-        scale: unsupported.some(candidate =>
-          candidate.script === font.script && candidate.family === font.family
-        ) ? 1 : font.scale,
-      })),
-    };
-  }
-
-  private documentTypographyFromText(text: string): DocumentTypography | null {
-    const managed = parseTypographyBlock(text);
-    if (managed) return managed;
-    const fonts = parseDocumentScripts(text);
-    return fonts.length > 0 ? { baseSizePt: 11, fonts } : null;
-  }
-
-  private async effectiveDocumentTypography(
-    path: string,
-    text: string
-  ): Promise<DocumentTypography | null> {
-    const localTypography = parseTypographyBlock(text);
-    if (localTypography) return localTypography;
-
-    const application = findLocalTemplateApplication(text);
-    if (application) {
-      try {
-        const templatePath = await join(await dirname(path), application.importPath);
-        const insideWorkspace = !this.workspaceRootPath
-          || relativeFilePath(this.workspaceRootPath, templatePath) !== null;
-        if (insideWorkspace && await invoke<boolean>("workspace_path_exists", { path: templatePath })) {
-          const templateText = await this.workspaceText(templatePath);
-          const templateTypography = effectiveTemplateTypography(text, templateText);
-          if (templateTypography) return templateTypography;
-        }
-      } catch (error) {
-        this.appendDeveloperLog({
-          kind: "warning",
-          source: "typography",
-          message: `Could not resolve typography from ${application.importPath}: ${String(error)}`
-        });
-      }
-    }
-
-    return this.documentTypographyFromText(text);
-  }
-
-  private async confirmTypographyScaleRange(config: DocumentTypography): Promise<boolean> {
-    const warning = this.typographyScaleRangeWarning(config);
-    if (!warning) return true;
-    return confirm(warning, {
-      title: "Large Font Scale Adjustment",
-      kind: "warning"
-    });
-  }
-
-  private async scaledFontSetStatus(config: DocumentTypography): Promise<ScaledFontSetStatus> {
-    if (!this.workspaceRootPath) {
-      return { updateRequired: false, generationRequired: false, variantLimitWarnings: [] };
-    }
-    return invoke<ScaledFontSetStatus>("scaled_workspace_font_set_status", {
-      workspaceRootPath: this.workspaceRootPath,
-      fonts: config.fonts
-    });
-  }
-
-  private typographyVariantLimitWarning(status: ScaledFontSetStatus): string | null {
-    if (status.variantLimitWarnings.length === 0) return null;
-    const variants = status.variantLimitWarnings.map(warning =>
-      `${warning.family}: ${warning.cachedVariants} cached variants; requested ${warning.requestedScale}×`
-    ).join("\n");
-    const limit = Math.min(...status.variantLimitWarnings.map(warning => warning.recommendedLimit));
-    return `Typsastra recommends keeping no more than ${limit} scaled variants per font face. This change would add another variant for:\n\n${variants}\n\nExisting variants will not be deleted automatically. Advanced font-variant management is planned for a future update, where variants can be deleted or renewed.\n\nCreate the additional variant anyway?`;
-  }
-
-  private async confirmTypographyVariantLimit(config: DocumentTypography): Promise<boolean> {
-    const warning = this.typographyVariantLimitWarning(await this.scaledFontSetStatus(config));
-    if (!warning) return true;
-    return confirm(warning, {
-      title: "Font Variant Cache Limit",
-      kind: "warning",
-      okLabel: "Create Variant",
-      cancelLabel: "Cancel"
-    });
-  }
-
   private async prepareWorkspaceTypographyFont(config: DocumentTypography): Promise<boolean> {
     if (!this.workspaceRootPath) return false;
     const scaled = config.fonts.filter(font => Math.abs(font.scale - 1) > 0.0001);
-    const status = await this.scaledFontSetStatus(config);
+    const status = await this.typographyController.scaledFontSetStatus(config);
     if (!status.updateRequired) return false;
     this.typographyFontUpdateInProgress = true;
     if (scaled.length === 0) {
@@ -5721,17 +5291,12 @@ export class TypsastraWorkspaceController {
       ) {
         void this.refreshActivePreviewRoot();
       }
-      this.pendingLspSyncPath = this.activeFilePath;
-      this.pendingLspSyncText = rawText;
-      this.pendingLspSyncVersion = version;
-
-      if (this.pendingLspSyncTimer) {
-        window.clearTimeout(this.pendingLspSyncTimer);
-      }
-
-      this.pendingLspSyncTimer = window.setTimeout(
+      this.documentSessionController.queueDocumentSync(
+        this.activeFilePath,
+        rawText,
+        version,
+        this.lspSyncDebounceMs,
         () => void this.flushPendingLspSync(),
-        this.lspSyncDebounceMs
       );
     }
     if (
@@ -5789,7 +5354,7 @@ export class TypsastraWorkspaceController {
     }
     const filePath = this.activeFilePath;
     const documentKey = filePathKey(filePath);
-    const config = this.documentTypographyFromText(this.editorInstance.state.doc.toString());
+    const config = this.typographyController.fromText(this.editorInstance.state.doc.toString());
     if (!config) return;
     const previousFonts = this.acceptedTypographyScales.get(documentKey) ?? [];
     const signature = (fonts: DocumentScriptFont[]) => JSON.stringify(fonts.map(font => ({
@@ -5812,7 +5377,7 @@ export class TypsastraWorkspaceController {
       });
       return;
     }
-    const unsupportedInternalScale = await this.unsupportedInternalScaleError(config);
+    const unsupportedInternalScale = await this.typographyController.unsupportedInternalScaleError(config);
     if (unsupportedInternalScale) {
       const errorKey = `${documentKey}\u0000${signature(config.fonts)}`;
       if (this.lastTypographyInternalScaleError !== errorKey) {
@@ -5829,12 +5394,12 @@ export class TypsastraWorkspaceController {
       }
       if (!this.activeFilePath || filePathKey(this.activeFilePath) !== documentKey) return;
       const currentText = this.editorInstance.state.doc.toString();
-      const currentConfig = this.documentTypographyFromText(currentText);
+      const currentConfig = this.typographyController.fromText(currentText);
       if (!currentConfig || signature(currentConfig.fonts) !== signature(config.fonts)) {
         this.scheduleManualTypographyScaleCheck();
         return;
       }
-      const corrected = this.resetUnsupportedInternalScales(currentConfig, unsupportedInternalScale.fonts);
+      const corrected = this.typographyController.resetUnsupportedInternalScales(currentConfig, unsupportedInternalScale.fonts);
       const edit = parseTypographyBlock(currentText)
         ? typographyEdit(currentText, corrected)
         : documentScriptsEdit(currentText, corrected.fonts);
@@ -5870,8 +5435,10 @@ export class TypsastraWorkspaceController {
     this.typographyScaleConfirmationOpen = true;
     let accepted = false;
     try {
-      const rangeWarning = this.typographyScaleRangeWarning(config);
-      const variantWarning = this.typographyVariantLimitWarning(await this.scaledFontSetStatus(config));
+      const rangeWarning = this.typographyController.scaleRangeWarning(config);
+      const variantWarning = this.typographyController.variantLimitWarning(
+        await this.typographyController.scaledFontSetStatus(config),
+      );
       const warning = [rangeWarning, variantWarning].filter((value): value is string => Boolean(value)).join("\n\n");
       accepted = await confirm(
         warning
@@ -5889,7 +5456,7 @@ export class TypsastraWorkspaceController {
 
     if (!this.activeFilePath || filePathKey(this.activeFilePath) !== documentKey) return;
     const currentText = this.editorInstance.state.doc.toString();
-    const currentConfig = this.documentTypographyFromText(currentText);
+    const currentConfig = this.typographyController.fromText(currentText);
     if (!currentConfig || signature(currentConfig.fonts) !== signature(config.fonts)) {
       this.scheduleManualTypographyScaleCheck();
       return;
@@ -5945,25 +5512,16 @@ export class TypsastraWorkspaceController {
     // the latest editor snapshot even when routine on-save synchronization is
     // waiting for an input pause.
     this.flushEditorContentMutation();
-    if (this.pendingLspSyncTimer) {
-      window.clearTimeout(this.pendingLspSyncTimer);
-      this.pendingLspSyncTimer = null;
-    }
-
-    if (!this.pendingLspSyncPath || this.pendingLspSyncText === null || !this.lspReady || !this.lspClient) {
-      return;
-    }
-
-    const path = this.pendingLspSyncPath;
-    const text = this.pendingLspSyncText;
-    const pendingVersion = this.pendingLspSyncVersion;
-    const requestKey = filePathKey(path);
-    const expectedGeneration = (this.lspSyncRequestGenerations.get(requestKey) ?? 0) + 1;
-    this.lspSyncRequestGenerations.set(requestKey, expectedGeneration);
-
-    this.pendingLspSyncPath = null;
-    this.pendingLspSyncText = null;
-    this.pendingLspSyncVersion = null;
+    if (!this.lspReady || !this.lspClient) return;
+    const pending = this.documentSessionController.takePendingSync(filePathKey);
+    if (!pending) return;
+    const {
+      path,
+      text,
+      version: pendingVersion,
+      requestKey,
+      generation: expectedGeneration,
+    } = pending;
 
     this.previewSyncController.reset();
     if (this.workspaceRootPath && this.previewStandalone && this.effectivePreviewRenderMode === "on-type") {
@@ -5976,7 +5534,7 @@ export class TypsastraWorkspaceController {
       target = await this.prepareTemplateAwarePreview(target, path, text);
     }
     
-    if (this.lspSyncRequestGenerations.get(requestKey) !== expectedGeneration) {
+    if (!this.documentSessionController.isSyncRequestCurrent(requestKey, expectedGeneration)) {
       return;
     }
 
@@ -6089,13 +5647,7 @@ export class TypsastraWorkspaceController {
 
 
   private clearPendingLspSync() {
-    if (this.pendingLspSyncTimer) {
-      window.clearTimeout(this.pendingLspSyncTimer);
-      this.pendingLspSyncTimer = null;
-    }
-    this.pendingLspSyncPath = null;
-    this.pendingLspSyncText = null;
-    this.pendingLspSyncVersion = null;
+    this.documentSessionController.clearPendingSync();
   }
 
   private isLspSyncVersionCurrent(path: string, version: number): boolean {
@@ -6103,14 +5655,7 @@ export class TypsastraWorkspaceController {
     if (activeTab && filePathKey(activeTab.path) === filePathKey(path) && activeTab.latestVersion > version) {
       return false;
     }
-    if (
-      this.pendingLspSyncPath &&
-      filePathKey(this.pendingLspSyncPath) === filePathKey(path) &&
-      typeof this.pendingLspSyncVersion === "number" &&
-      this.pendingLspSyncVersion > version
-    ) {
-      return false;
-    }
+    if (this.documentSessionController.hasNewerPendingSync(path, version, filePathKey)) return false;
     return true;
   }
 
@@ -7657,7 +7202,7 @@ export class TypsastraWorkspaceController {
       return version >= this.latestDocumentVersion;
     }
 
-    if (this.pendingLspSyncPath && filePathKey(this.pendingLspSyncPath) === filePathKey(originalPath)) {
+    if (this.documentSessionController.hasPendingSyncFor(originalPath, filePathKey)) {
       return false;
     }
     // Tinymist currently omits `params.version` from diagnostics. Once the
@@ -7914,8 +7459,8 @@ export class TypsastraWorkspaceController {
         layout: {
           inputContainerWidthPct: this.layoutController.getDockedInputWidthPct(),
           explorerSidebarWidthPx: explorerSidebar?.style.width ? parseInt(explorerSidebar.style.width, 10) : DEFAULT_EXPLORER_WIDTH_PX,
-          sidebarVisible: this.sidebarVisible,
-          activeSidebarTool: this.activeSidebarTool
+          sidebarVisible: this.sidebarController.visible,
+          activeSidebarTool: this.sidebarController.activeTool
         },
         selectedToolchain: this.selectedWorkspaceToolchain,
         previewContentMode: this.previewContentMode,
@@ -7979,8 +7524,10 @@ export class TypsastraWorkspaceController {
       this.layoutController.setDockedInputWidthPct(state.layout.inputContainerWidthPct);
       inputContainer!.style.width = `${state.layout.inputContainerWidthPct}%`;
       if (previewContainerWrapper) previewContainerWrapper.style.width = `${100 - state.layout.inputContainerWidthPct}%`;
-      this.sidebarVisible = state.layout.sidebarVisible;
-      this.activeSidebarTool = state.layout.activeSidebarTool;
+      this.sidebarController.restore({
+        visible: state.layout.sidebarVisible,
+        activeTool: state.layout.activeSidebarTool,
+      });
       const pinnedMainFilePath = await this.absoluteWorkspacePath(workspacePath, project.mainFile);
       this.pinnedMainFilePath = pinnedMainFilePath
         && await invoke<boolean>("workspace_path_exists", { path: pinnedMainFilePath })
@@ -7995,7 +7542,6 @@ export class TypsastraWorkspaceController {
       if (project.mainFile && !this.pinnedMainFilePath) metadata.project.mainFile = null;
       const explorerSidebar = document.getElementById("explorer-sidebar");
       if (explorerSidebar) explorerSidebar.style.width = `${state.layout.explorerSidebarWidthPx}px`;
-      this.setSidebarTool(this.activeSidebarTool, false);
 
       const restoredTabs = await Promise.all(state.openTabs.map(async tabInfo => ({
         tabInfo,
@@ -8171,7 +7717,7 @@ export class TypsastraWorkspaceController {
         await this.lspClient.notifyWorkspaceFilesChanged(changes);
       }
       await this.explorer.loadWorkspace(workspaceRoot);
-      if (this.activeSidebarTool === "images") {
+      if (this.sidebarController.activeTool === "images") {
         void this.imageToolsController.refresh();
       }
       if (this.workspaceRootPath !== workspaceRoot) return;
@@ -8180,51 +7726,6 @@ export class TypsastraWorkspaceController {
     } finally {
       this.externalPreviewRefreshPending = false;
       this.updateManualForwardSyncAction();
-    }
-  }
-
-  private enqueueWorkspaceChange(change: WorkspaceChange): void {
-    // Cloud-backed folders may publish the same metadata-only modification
-    // indefinitely. A Promise.then chain retains one closure per event and can
-    // grow without bound while a slower refresh is running. Keep at most one
-    // pending batch per root/kind and merge its paths instead.
-    const batchKey = `${filePathKey(change.rootPath)}\u0000${change.kind}`;
-    // Preserve the old/new pairing of independent rename events. Repeated
-    // notifications for the same rename still collapse to one batch.
-    const key = change.kind === "rename"
-      ? `${batchKey}\u0000${change.paths.map(filePathKey).join("\u0000")}`
-      : batchKey;
-    const pending = this.pendingWorkspaceChanges.get(key);
-    if (pending) {
-      pending.paths = [...new Set([...pending.paths, ...change.paths])];
-    } else {
-      this.pendingWorkspaceChanges.set(key, {
-        rootPath: change.rootPath,
-        kind: change.kind,
-        paths: [...new Set(change.paths)]
-      });
-    }
-    if (!this.workspaceChangeDrainRunning) void this.drainWorkspaceChanges();
-  }
-
-  private async drainWorkspaceChanges(): Promise<void> {
-    if (this.workspaceChangeDrainRunning) return;
-    this.workspaceChangeDrainRunning = true;
-    try {
-      while (this.pendingWorkspaceChanges.size > 0) {
-        const changes = [...this.pendingWorkspaceChanges.values()];
-        this.pendingWorkspaceChanges.clear();
-        for (const change of changes) {
-          try {
-            await this.handleWorkspaceChange(change);
-          } catch (error) {
-            this.reportWorkspaceWatchError(error);
-          }
-        }
-      }
-    } finally {
-      this.workspaceChangeDrainRunning = false;
-      if (this.pendingWorkspaceChanges.size > 0) void this.drainWorkspaceChanges();
     }
   }
 
@@ -8827,7 +8328,7 @@ export class TypsastraWorkspaceController {
   }
 
   private renderImageToolPreview(source: string | null, imagePath?: string): void {
-    if (this.activeSidebarTool !== "images") return;
+    if (this.sidebarController.activeTool !== "images") return;
     if (!source) {
       this.imageZoomIn = null;
       this.imageZoomOut = null;
@@ -8976,7 +8477,7 @@ export class TypsastraWorkspaceController {
   }
 
   private async refreshActivePreviewRoot(forceRender = false): Promise<void> {
-    if (this.activeSidebarTool === "images") return;
+    if (this.sidebarController.activeTool === "images") return;
     if (!this.activeFilePath) return;
     const path = this.activeFilePath;
     const ext = fileExtension(path);
@@ -9162,14 +8663,14 @@ export class TypsastraWorkspaceController {
       await this.explorer.loadWorkspace(selected, expandedDirectories);
       await this.restoreWorkspaceState(selected, this.workspaceMetadata);
       await this.imageToolsController.setWorkspace(selected, this.pinnedMainFilePath);
-      if (this.activeSidebarTool === "images") this.imageToolsController.show();
+      if (this.sidebarController.activeTool === "images") this.imageToolsController.show();
       if (this.activeFilePath) await this.explorer.revealPath(this.activeFilePath);
       await this.saveWorkspaceState();
       await this.explorer.loadWorkspace(selected);
-      await this.workspaceWatcher.start(selected);
+      await this.workspaceController.startWatching(selected);
       this.recentProjectsController.add(selected);
     } catch (error) {
-      this.workspaceWatcher.stop();
+      this.workspaceController.stopWatching();
       this.workspaceRootPath = null;
       this.workspaceMetadata = null;
       this.activeFilePath = null;
@@ -9216,7 +8717,7 @@ export class TypsastraWorkspaceController {
             this.editorInstance.scrollDOM.scrollTop = targetScrollTop;
             this.editorInstance.scrollDOM.scrollLeft = targetScrollLeft;
     
-            this.updateEditorCaretScrollMarker?.();
+            this.editorController.updateCaretMarker();
     
             this.appendDeveloperLog({
               kind: "info",
@@ -9697,9 +9198,9 @@ export class TypsastraWorkspaceController {
   private async preparePinnedMainTypography(path: string): Promise<DocumentTypography | null | false> {
     try {
       let source = await this.workspaceText(path);
-      let config = this.documentTypographyFromText(source);
+      let config = this.typographyController.fromText(source);
       if (config) {
-        const unsupportedInternalScale = await this.unsupportedInternalScaleError(config);
+        const unsupportedInternalScale = await this.typographyController.unsupportedInternalScaleError(config);
         if (unsupportedInternalScale) {
           this.appendLspLog({
             kind: "error",
@@ -9710,7 +9211,7 @@ export class TypsastraWorkspaceController {
             title: "Unsupported Built-in Font Scale",
             kind: "error",
           });
-          config = this.resetUnsupportedInternalScales(config, unsupportedInternalScale.fonts);
+          config = this.typographyController.resetUnsupportedInternalScales(config, unsupportedInternalScale.fonts);
           const edit = parseTypographyBlock(source)
             ? typographyEdit(source, config)
             : documentScriptsEdit(source, config.fonts);
@@ -9718,15 +9219,15 @@ export class TypsastraWorkspaceController {
           await this.writeWorkspaceText(path, source);
         }
       }
-      if (!this.workspaceRootPath) return await this.effectiveDocumentTypography(path, source) ?? config;
+      if (!this.workspaceRootPath) return await this.typographyController.effective(path, source) ?? config;
       const typography = config ?? { baseSizePt: 11, fonts: [] };
-      const status = await this.scaledFontSetStatus(typography);
-      if (!status.updateRequired) return await this.effectiveDocumentTypography(path, source) ?? config;
+      const status = await this.typographyController.scaledFontSetStatus(typography);
+      if (!status.updateRequired) return await this.typographyController.effective(path, source) ?? config;
 
       const scaledFonts = config?.fonts.filter(font => Math.abs(font.scale - 1) > 0.0001) ?? [];
       if (scaledFonts.length > 0 && status.generationRequired) {
-        const outsideFineRange = scaledFonts.some(font => typographyScaleExceedsFineAdjustment(font.scale));
-        const variantWarning = this.typographyVariantLimitWarning(status);
+        const outsideFineRange = this.typographyController.scaleRangeWarning(typography) !== null;
+        const variantWarning = this.typographyController.variantLimitWarning(status);
         const accepted = await confirm(
           `${fileNameFromPath(path)} contains a document typography directive that requires local font scaling:\n\n${scaledFonts.map(font => `${font.family}: ${font.scale}×`).join("\n")}\n\nTypsastra will generate the fonts in its private global cache before setting this file as main. No font data will be written into the project. Font scaling is intended for fine optical adjustment${outsideFineRange ? "; one or more values also exceed the recommended ±10% range, where accurate representation is not guaranteed and varies between fonts" : ""}.${variantWarning ? `\n\n${variantWarning}` : "\n\nPrepare the fonts and continue?"}`,
           {
@@ -9745,7 +9246,7 @@ export class TypsastraWorkspaceController {
         this.typographyFontUpdateInProgress = false;
         this.deferredTypographyPreviewContents = null;
       }
-      return await this.effectiveDocumentTypography(path, source) ?? config;
+      return await this.typographyController.effective(path, source) ?? config;
     } catch (error) {
       this.appendLspLog({
         kind: "error",
@@ -9775,7 +9276,7 @@ export class TypsastraWorkspaceController {
     this.pinnedMainFilePath = path;
     if (this.workspaceRootPath) {
       void this.imageToolsController.setWorkspace(this.workspaceRootPath, path).then(() => {
-        if (this.activeSidebarTool === "images") this.imageToolsController.show();
+        if (this.sidebarController.activeTool === "images") this.imageToolsController.show();
       });
     }
     if (!path) {
@@ -9876,8 +9377,7 @@ export class TypsastraWorkspaceController {
     }
 
     await this.saveWorkspaceState();
-    this.workspaceWatcher.stop();
-    this.pendingWorkspaceChanges.clear();
+    this.workspaceController.stopWatching();
 
     const previewTaskIds = new Set([
       this.previewTaskId,
@@ -9936,7 +9436,7 @@ export class TypsastraWorkspaceController {
     this.queuedManualForwardSync = null;
 
     this.workspaceRootPath = null;
-    this.activeSidebarTool = "explorer";
+    this.sidebarController.reset();
     document.body.classList.remove("image-tools-active");
     void this.imageToolsController.setWorkspace(null, null);
     this.workspaceMetadata = null;
@@ -10071,7 +9571,7 @@ export class TypsastraWorkspaceController {
       if (this.pdfSyncRegisteredTaskId && this.lspClient) {
         void this.lspClient.stopPreview(this.pdfSyncRegisteredTaskId).catch(() => {});
       }
-      this.workspaceWatcher.stop();
+      this.workspaceController.stopWatching();
       this.saveWorkspaceState();
       this.settingsController.flush();
     });
@@ -10490,19 +9990,19 @@ export class TypsastraWorkspaceController {
     });
 
     document.getElementById("action-toggle-sidebar")?.addEventListener("click", () => {
-      this.toggleSidebar();
+      this.sidebarController.toggle();
     });
 
     document.getElementById("sidebar-toggle-button")?.addEventListener("click", () => {
-      this.toggleSidebar();
+      this.sidebarController.toggle();
     });
 
     document.getElementById("sidebar-explorer-button")?.addEventListener("click", () => {
-      this.setSidebarTool("explorer");
+      this.sidebarController.setTool("explorer");
     });
 
     document.getElementById("sidebar-images-button")?.addEventListener("click", () => {
-      this.setSidebarTool("images");
+      this.sidebarController.setTool("images");
     });
 
     document.getElementById("action-restore-default-layout")?.addEventListener("click", () => {

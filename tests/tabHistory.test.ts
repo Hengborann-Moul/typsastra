@@ -97,7 +97,7 @@ describe("per-tab editor history", () => {
     const capture = source.indexOf("tab.scrollSnapshot = this.editorInstance.scrollSnapshot()", persist);
     const activation = source.indexOf("private async activateEditorTab");
     const restore = source.indexOf("this.restoreEditorTabViewport(tab, path)", activation);
-    const typography = source.indexOf("await this.effectiveDocumentTypography(path, tab.content)", activation);
+    const typography = source.indexOf("await this.typographyController.effective(path, tab.content)", activation);
 
     expect(capture).toBeGreaterThan(persist);
     expect(restore).toBeGreaterThan(activation);

@@ -42,15 +42,14 @@ describe("compiled PDF transport", () => {
 
   test("does not run workspace memory diagnostics from the preview-only window", async () => {
     const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
-    const previewFrame = source.indexOf("private readonly previewFrame = new PreviewFrame");
-    const diagnostics = source.indexOf(
-      'return this.logMemoryDiagnostics(`PDF ${stage}`, detail);',
-      previewFrame
-    );
-    const callback = source.slice(Math.max(previewFrame, diagnostics - 220), diagnostics);
+    const previewOwner = await Bun.file(
+      new URL("../src/preview/previewController.ts", import.meta.url),
+    ).text();
+    const diagnostics = source.indexOf('return this.logMemoryDiagnostics(`PDF ${stage}`, detail);');
+    const callback = source.slice(Math.max(0, diagnostics - 220), diagnostics);
 
-    expect(previewFrame).toBeGreaterThan(-1);
-    expect(diagnostics).toBeGreaterThan(previewFrame);
+    expect(previewOwner).toContain("readonly pdf: PreviewFrame");
+    expect(diagnostics).toBeGreaterThan(-1);
     expect(callback).toContain("if (isPreviewOnlyWindow()) return;");
   });
 
