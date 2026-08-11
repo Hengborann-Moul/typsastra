@@ -37,12 +37,15 @@ describe("Tinymist preview data plane", () => {
   });
 
   test("keeps retrying warm-up scheduling while a reloaded project initializes", async () => {
-    const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
-    const scheduleStart = source.indexOf("  private schedulePdfSourceMapWarmup");
+    const source = await Bun.file(
+      new URL("../src/preview/previewSyncController.ts", import.meta.url),
+    ).text();
+    const scheduleStart = source.indexOf("  public scheduleWarmup");
     const scheduleEnd = source.indexOf("\n  private ", scheduleStart + 10);
     const schedule = source.slice(scheduleStart, scheduleEnd);
-    expect(schedule).toContain("prerequisitesReady");
-    expect(schedule).toContain("this.lspReady");
+    expect(schedule).toContain("context.interactionBlocked");
+    expect(schedule).toContain("context.previewRunning");
+    expect(schedule).toContain("this.dependencies.isReady()");
     expect(schedule).toContain("window.setTimeout(attempt, 250)");
   });
 

@@ -13,7 +13,7 @@ import {
 
 export type SourceMapLogSource = "forward sync" | "inverse sync";
 
-type SourceMapSession = {
+export type SourceMapSession = {
   socket: WebSocket;
   taskId: string;
 };

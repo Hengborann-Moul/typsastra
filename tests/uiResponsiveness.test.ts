@@ -23,13 +23,19 @@ describe("UI responsiveness safeguards", () => {
 
   test("keeps PDF presentation and source-map warm-up out of active pane drags", async () => {
     const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
+    const previewSyncSource = await Bun.file(
+      new URL("../src/preview/previewSyncController.ts", import.meta.url),
+    ).text();
     const exportComplete = source.indexOf("Tinymist PDF export complete.");
     const resizeBoundary = source.indexOf("await this.waitForHorizontalPaneResizeEnd()", exportComplete);
     const presentation = source.indexOf("await this.loadPdfPath(", resizeBoundary);
     expect(exportComplete).toBeGreaterThan(-1);
     expect(resizeBoundary).toBeGreaterThan(exportComplete);
     expect(presentation).toBeGreaterThan(resizeBoundary);
-    expect(source).toContain("this.horizontalPaneResizeActive || this.pdfPreviewRunning");
+    expect(source).toContain("interactionBlocked: this.horizontalPaneResizeActive");
+    expect(previewSyncSource).toContain(
+      "context.interactionBlocked || context.previewRunning || !ready",
+    );
     expect(source).toContain("this.schedulePdfSourceMapWarmup(generation)");
   });
 

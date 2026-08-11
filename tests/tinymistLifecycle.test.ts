@@ -132,6 +132,9 @@ describe("Tinymist workspace lifecycle", () => {
     const sourceMapSource = await Bun.file(
       new URL("../src/preview/sourceMapSessionController.ts", import.meta.url),
     ).text();
+    const previewSyncSource = await Bun.file(
+      new URL("../src/preview/previewSyncController.ts", import.meta.url),
+    ).text();
 
     expect(isTinymistStoppedRequestError(
       new Error("Tinymist stopped before the LSP request completed.")
@@ -147,7 +150,8 @@ describe("Tinymist workspace lifecycle", () => {
     expect(source).toContain("this.tinymistPreviewRecoveryAttempts = 0");
     expect(source).toContain("this.sourceMapSessionController.reset()");
     expect(sourceMapSource).toContain("this.retryKey = null");
-    expect(source).toContain("window.clearTimeout(this.pdfSourceMapWarmupTimer)");
+    expect(source).toContain("this.previewSyncController.clearWarmup()");
+    expect(previewSyncSource).toContain("window.clearTimeout(this.warmupTimer)");
     expect(source).toContain("this.pdfPreviewSourceMapRootPath = null");
     expect(source).toContain("this.pdfPreviewSourceMapTaskId = null");
     expect(clientSource).toContain("private clearPreviewEndpoints(): void");

@@ -30,7 +30,7 @@ import { TypographyController } from "./typography/typographyController";
 import { ImageToolsController, type ProjectImageReference } from "./components/imageTools";
 import { TinymistLspClient } from "./compiler/lsp";
 import { DocumentSessionController } from "./session/documentSessionController";
-import { isTinymistStoppedRequestError, type EditorTextEdit, type LspDiagnostic, type LspInverseSyncResult, type LspLogEntry, type LspSourcePosition, type LspStatus, type PreviewDocumentPosition } from "./compiler/lsp";
+import { isTinymistStoppedRequestError, type EditorTextEdit, type LspDiagnostic, type LspInverseSyncResult, type LspLogEntry, type LspSourcePosition, type LspStatus } from "./compiler/lsp";
 import {
   parsePreviewCompilerFailure,
   relocatePreviewCompilerFailureMessage,
@@ -339,14 +339,6 @@ type ActivateEditorTabOptions = {
   largeFileConfirmed?: boolean;
 };
 
-type ForwardSyncTarget = {
-  filepath: string;
-  line: number;
-  character: number;
-};
-
-const PDF_SOURCE_MAP_READY_TIMEOUT_MS = 60_000;
-
 type LoadFileOptions = {
   temporary?: boolean;
   preservePreviewSession?: PreviewSessionState;
@@ -434,17 +426,8 @@ export class TypsastraWorkspaceController {
   private pdfLoadRequestGeneration = 0;
   private readonly blockedLargePdfPaths = new Set<string>();
   private previewPageStatus: PreviewPageStatus = { currentPage: 0, pageCount: 0 };
-  private pdfSourceMapWarmupTimer: number | null = null;
   private horizontalPaneResizeActive = false;
   private readonly horizontalPaneResizeWaiters = new Set<() => void>();
-  private pdfForwardSyncGeneration = 0;
-  private pendingPdfForwardSync: {
-    generation: number;
-    requestedAt: number;
-    expiresAt: number;
-  } | null = null;
-  private manualForwardSyncGeneration: number | null = null;
-  private queuedManualForwardSync: { path: string; cursor: number } | null = null;
   private pdfPreviewSourceMapRootPath: string | null = null;
   private pdfPreviewSourceMapTaskId: string | null = null;
   private pdfPreviewGeneratedFiles = new Map<string, { generatedPath: string; preparedText: string }>();
@@ -642,7 +625,13 @@ export class TypsastraWorkspaceController {
   });
   private get previewFrame(): PreviewFrame { return this.previewController.pdf; }
   private get markdownPreviewFrame(): MarkdownPreviewFrame { return this.previewController.markdown; }
-  private readonly previewSyncController = new PreviewSyncController({
+  private readonly sourceMapSessionController: SourceMapSessionController = new SourceMapSessionController({
+    log: (source, kind, message) => this.appendDeveloperLog({ kind, source, message }),
+    onPositionPayload: text => this.previewSyncController.handlePositionPayload(text),
+    activeFilePath: () => this.activeFilePath,
+    pathKey: filePathKey,
+  });
+  private readonly previewSyncController: PreviewSyncController = new PreviewSyncController({
     getEditor: () => this.editorInstance,
     getClient: () => this.lspClient,
     getActiveFilePath: () => this.activeFilePath,
@@ -652,14 +641,36 @@ export class TypsastraWorkspaceController {
     // TODO: Re-enable in prerelease v0.9.0 after improving performance and timeout reliability
     // isEnabled: () => this.settingsController.value.preview.cursorSync,
     isEnabled: () => false,
-    handleForwardPosition: (path, cursor) => this.handlePdfForwardSync(path, cursor),
-    mapForwardPosition: async () => null
-  });
-  private readonly sourceMapSessionController = new SourceMapSessionController({
+    handleForwardPosition: (path, cursor) => this.previewSyncController.handlePdfForward(path, cursor),
+    mapForwardPosition: async () => null,
+    sourceMap: this.sourceMapSessionController,
+    getPdfContext: () => ({
+      rootPath: this.pdfPreviewSourceMapRootPath ?? this.previewRootPath,
+      taskId: this.pdfPreviewSourceMapTaskId ?? this.previewTaskId,
+      previewUrl: this.previewFrame.currentUrl,
+      previewGeneration: this.pdfPreviewGeneration,
+      refreshStyle: previewRefreshStyle(this.effectivePreviewRenderMode),
+      timeoutMs: this.settingsController.value.preview.forwardSyncTimeoutMs,
+      externalRefreshPending: this.externalPreviewRefreshPending,
+      previewRunning: this.pdfPreviewRunning,
+      previewDisabled: this.previewDisabled,
+      interactionBlocked: this.horizontalPaneResizeActive,
+    }),
+    isForwardPositionEligible: (path, cursor) => !(
+      this.activeFilePath
+      && filePathKey(path) === filePathKey(this.activeFilePath)
+      && !isForwardSyncContentPosition(this.editorInstance.state, cursor)
+    ),
+    mapPdfForwardTarget: (path, cursor) => this.forwardSyncTarget(path, cursor),
+    setStatus: status => this.setLspStatus(status),
+    updateManualAction: (busy, available) => this.renderManualForwardSyncAction(busy, available),
     log: (source, kind, message) => this.appendDeveloperLog({ kind, source, message }),
-    onPositionPayload: text => this.handlePdfSourceMapPositionPayload(text),
-    activeFilePath: () => this.activeFilePath,
-    pathKey: filePathKey,
+    revealDocumentPosition: position => this.previewFrame.revealDocumentPosition(position, { ripple: true }),
+    emitForwardPosition: position => {
+      import("@tauri-apps/api/event").then(({ emit }) => {
+        emit("pdf-forward-sync", position);
+      }).catch(err => console.error("Error emitting pdf-forward-sync", err));
+    },
   });
   private readonly logConsoleController = new LogConsoleController(entry => this.navigateToLogEntry(entry));
   private readonly diagnosticsController = new DiagnosticsController(this.logConsoleController, {
@@ -927,7 +938,7 @@ export class TypsastraWorkspaceController {
     isPinnedMainFile: path => this.isPinnedMainFile(path),
     setPinnedMainFile: path => this.setPinnedMainFile(path),
     getPinnedMainFile: () => this.pinnedMainFilePath,
-    canRevealCursorInPreview: () => this.canRevealCursorInPreview()
+    canRevealCursorInPreview: () => this.previewSyncController.canRevealManually()
       && isForwardSyncContentPosition(
         this.editorInstance.state,
         this.editorInstance.state.selection.main.head
@@ -3209,10 +3220,7 @@ export class TypsastraWorkspaceController {
     this.previewSyncController.clearForward();
     this.clearDiagnostics();
     this.sourceMapSessionController.reset();
-    if (this.pdfSourceMapWarmupTimer !== null) {
-      window.clearTimeout(this.pdfSourceMapWarmupTimer);
-      this.pdfSourceMapWarmupTimer = null;
-    }
+    this.previewSyncController.clearWarmup();
     this.pdfPreviewSourceMapRootPath = null;
     this.pdfPreviewSourceMapTaskId = null;
   }
@@ -4508,7 +4516,7 @@ export class TypsastraWorkspaceController {
         previewPath,
         previewRefreshStyle(this.effectivePreviewRenderMode)
       ).taskId;
-      // Source-map tasks are reconciled lazily by ensurePdfSourceMapSocket.
+      // PreviewSyncController reconciles source-map tasks lazily during warm-up.
       // Never let optional cursor-sync lifecycle work block PDF presentation.
       this.pdfPreviewSourceMapRootPath = previewPath;
       this.pdfPreviewSourceMapTaskId = sourceMapTaskId;
@@ -5610,213 +5618,27 @@ export class TypsastraWorkspaceController {
     return true;
   }
 
-  private async handlePdfForwardSync(path: string, cursor: number, requestedGeneration?: number): Promise<boolean> {
-    const startedAt = performance.now();
-    const timeoutMs = this.settingsController.value.preview.forwardSyncTimeoutMs;
-    const deadline = startedAt + timeoutMs;
-    const generation = requestedGeneration ?? ++this.pdfForwardSyncGeneration;
-    const client = this.lspClient;
-    const rootPath = this.pdfPreviewSourceMapRootPath ?? this.previewRootPath;
-    const taskId = this.pdfPreviewSourceMapTaskId ?? this.previewTaskId;
-    if (
-      this.externalPreviewRefreshPending
-      || !client
-      || !rootPath
-      || !taskId
-      || !this.lspReady
-      || !this.previewFrame.currentUrl
-    ) {
-      this.appendDeveloperLog({
-        kind: "info",
-        source: "forward sync",
-        message: `Skipped forward sync: externalRefresh=${this.externalPreviewRefreshPending}, client=${!!client}, root=${rootPath ?? "n/a"}, task=${taskId ?? "n/a"}, lspReady=${this.lspReady}, preview=${this.previewFrame.currentUrl || "n/a"}.`
-      });
-      return false;
-    }
-    if (
-      this.activeFilePath
-      && filePathKey(path) === filePathKey(this.activeFilePath)
-      && !isForwardSyncContentPosition(this.editorInstance.state, cursor)
-    ) {
-      this.appendDeveloperLog({
-        kind: "info",
-        source: "forward sync",
-        message: `Skipped forward sync: source offset ${cursor} is not textual Typst content.`
-      });
-      return false;
-    }
-
-    const target = await this.forwardSyncTarget(path, cursor);
-    const localMappingMs = performance.now() - startedAt;
-    if (generation !== this.pdfForwardSyncGeneration) return false;
-    if (!target) {
-      this.appendDeveloperLog({
-        kind: "warning",
-        source: "forward sync",
-        message: `Skipped forward sync: could not map editor cursor ${cursor} for ${path}.`
-      });
-      return false;
-    }
-
-    const sessionStartedAt = performance.now();
-    const sourceMapStartup = this.ensurePdfSourceMapSocket(client, rootPath, taskId, "forward sync");
-    let startupTimer: number | null = null;
-    const sourceMapSession = await Promise.race([
-      sourceMapStartup,
-      new Promise<null>(resolve => {
-        startupTimer = window.setTimeout(() => resolve(null), Math.max(1, deadline - performance.now()));
-      })
-    ]);
-    if (startupTimer !== null) window.clearTimeout(startupTimer);
-    const sessionReadyMs = performance.now() - sessionStartedAt;
-    if (generation !== this.pdfForwardSyncGeneration) return false;
-    if (!sourceMapSession) {
-      this.appendDeveloperLog({
-        kind: "warning",
-        source: "forward sync",
-        message: `Skipped PDF forward sync: source-map socket unavailable within ${timeoutMs}ms.`
-      });
-      return false;
-    }
-
-    const documentReadyStartedAt = performance.now();
-    const documentReadyBudget = Math.max(1, deadline - performance.now());
-    const documentReady = await this.sourceMapSessionController.waitForDocument(
-      sourceMapSession.socket,
-      documentReadyBudget
-    );
-    const documentReadyMs = performance.now() - documentReadyStartedAt;
-    if (generation !== this.pdfForwardSyncGeneration) return false;
-    if (!documentReady) {
-      this.appendDeveloperLog({
-        kind: "warning",
-        source: "forward sync",
-        message: `Skipped PDF forward sync: source-map document did not become ready within ${timeoutMs}ms.`
-      });
-      return false;
-    }
-
-    const positionBudget = Math.max(1, deadline - performance.now());
-    const requestedAt = Date.now();
-    this.pendingPdfForwardSync = {
-      generation,
-      requestedAt,
-      expiresAt: requestedAt + positionBudget
-    };
-    window.setTimeout(() => {
-      if (this.pendingPdfForwardSync?.generation === generation) {
-        this.pendingPdfForwardSync = null;
-        this.appendDeveloperLog({
-          kind: "warning",
-          source: "forward sync",
-          message: "Forward sync timed out waiting for Tinymist source-map position."
-        });
-        this.finishManualForwardSync(generation, "Reveal in preview timed out");
-      }
-    }, positionBudget);
-
-    void client.scrollPreview(sourceMapSession.taskId, {
-      event: "panelScrollTo",
-      filepath: nativeFilePath(target.filepath),
-      line: target.line,
-      character: target.character
-    });
-    this.appendDeveloperLog({
-      kind: "info",
-      source: "forward sync",
-      message: `Requested one compiler preview position: ${target.filepath}:${target.line + 1}:${target.character}; localMappingMs=${localMappingMs.toFixed(1)}; sessionReadyMs=${sessionReadyMs.toFixed(1)}; documentReadyMs=${documentReadyMs.toFixed(1)}.`
-    });
-    return true;
-  }
-
   private revealCursorInPreviewManually(): void {
     const path = this.activeFilePath;
     if (!path?.toLowerCase().endsWith(".typ")) {
       this.setLspStatus({ kind: "preview-ready", message: "Open a Typst file to reveal it in preview" });
       return;
     }
-    const request = { path, cursor: this.editorInstance.state.selection.main.head };
-    if (this.manualForwardSyncGeneration !== null) {
-      // Tinymist source-map responses do not carry request IDs. Keep only the
-      // latest target and send it after the active request settles, so an old
-      // response can never be mistaken for a newer cursor position.
-      this.queuedManualForwardSync = request;
-      this.setLspStatus({ kind: "sync-pending", message: "Latest preview reveal queued" });
-      return;
-    }
-    if (!this.canRevealCursorInPreview()) {
-      this.setLspStatus({ kind: "preview-ready", message: "Wait for the compiled preview before revealing the cursor" });
-      return;
-    }
-    void this.runManualForwardSync(request);
-  }
-
-  private async runManualForwardSync(request: { path: string; cursor: number }): Promise<void> {
-    if (
-      this.activeFilePath
-      && filePathKey(request.path) === filePathKey(this.activeFilePath)
-      && !isForwardSyncContentPosition(this.editorInstance.state, request.cursor)
-    ) {
-      this.appendDeveloperLog({
-        kind: "info",
-        source: "forward sync",
-        message: `Reveal skipped: source offset ${request.cursor} is not textual Typst content.`
-      });
-      this.setLspStatus({
-        kind: "preview-ready",
-        message: "This source position does not produce preview text"
-      });
-      return;
-    }
-    const generation = ++this.pdfForwardSyncGeneration;
-    this.manualForwardSyncGeneration = generation;
-    this.pendingPdfForwardSync = null;
-    this.updateManualForwardSyncAction();
-    this.setLspStatus({ kind: "sync-pending", message: "Locating cursor in preview..." });
-    try {
-      const requested = await this.handlePdfForwardSync(request.path, request.cursor, generation);
-      if (!requested && generation === this.manualForwardSyncGeneration) {
-        this.finishManualForwardSync(generation, "Could not locate cursor in preview");
-      }
-    } catch (error) {
-      this.appendDeveloperLog({
-        kind: "warning",
-        source: "forward sync",
-        message: `Manual forward sync failed: ${String(error)}`
-      });
-      this.finishManualForwardSync(generation, "Could not locate cursor in preview");
-    }
-  }
-
-  private finishManualForwardSync(generation: number, statusMessage: string): void {
-    if (this.manualForwardSyncGeneration !== generation) return;
-    this.manualForwardSyncGeneration = null;
-    this.setLspStatus({ kind: "preview-ready", message: statusMessage });
-    this.updateManualForwardSyncAction();
-    const queued = this.queuedManualForwardSync;
-    this.queuedManualForwardSync = null;
-    if (queued) void this.runManualForwardSync(queued);
+    this.previewSyncController.requestManual(path, this.editorInstance.state.selection.main.head);
   }
 
   private cancelManualForwardSync(): void {
-    if (
-      this.manualForwardSyncGeneration === null
-      && this.pendingPdfForwardSync === null
-      && this.queuedManualForwardSync === null
-    ) return;
-    ++this.pdfForwardSyncGeneration;
-    this.pendingPdfForwardSync = null;
-    this.manualForwardSyncGeneration = null;
-    this.queuedManualForwardSync = null;
-    this.updateManualForwardSyncAction();
+    this.previewSyncController.cancelManual();
   }
 
   private updateManualForwardSyncAction(): void {
+    this.previewSyncController.refreshManualAction();
+  }
+
+  private renderManualForwardSyncAction(busy: boolean, available: boolean): void {
     const button = document.getElementById("preview-forward-sync-btn") as HTMLButtonElement | null;
     if (!button) return;
     const shortcut = navigator.userAgent.toLowerCase().includes("mac") ? "Option+Enter" : "Alt+Enter";
-    const busy = this.manualForwardSyncGeneration !== null;
-    const available = this.canRevealCursorInPreview();
     button.disabled = busy || !available;
     button.setAttribute("aria-busy", String(busy));
     button.title = busy
@@ -5826,18 +5648,7 @@ export class TypsastraWorkspaceController {
         : "Reveal cursor is available when a compiled preview is ready";
   }
 
-  private canRevealCursorInPreview(): boolean {
-    return Boolean(
-      this.activeFilePath?.toLowerCase().endsWith(".typ")
-      && this.lspReady
-      && this.previewFrame.currentUrl
-      && !this.pdfPreviewRunning
-      && !this.externalPreviewRefreshPending
-      && !this.previewDisabled
-    );
-  }
-
-  private async forwardSyncTarget(path: string, cursor: number): Promise<ForwardSyncTarget | null> {
+  private async forwardSyncTarget(path: string, cursor: number): Promise<{ filepath: string; line: number; character: number } | null> {
     const editor = this.editorInstance;
     const position = Math.max(0, Math.min(cursor, editor.state.doc.length));
     // Template-aware standalone wrappers use workspace-root (`/...`) imports.
@@ -5905,23 +5716,6 @@ export class TypsastraWorkspaceController {
     };
   }
 
-  private async ensurePdfSourceMapSocket(
-    client: TinymistLspClient,
-    rootPath: string,
-    taskId: string,
-    source: "forward sync" | "inverse sync",
-    background = false
-  ): Promise<{ socket: WebSocket; taskId: string } | null> {
-    return await this.sourceMapSessionController.ensureSession(
-      client,
-      nativeFilePath(rootPath),
-      taskId,
-      previewRefreshStyle(this.effectivePreviewRenderMode),
-      source,
-      background,
-    );
-  }
-
   private async handlePdfPreviewClick(point: PreviewClickPoint): Promise<void> {
     const isPreviewWindow = isPreviewOnlyWindow();
     if (isPreviewWindow) {
@@ -5942,57 +5736,7 @@ export class TypsastraWorkspaceController {
       });
       return;
     }
-    if (this.externalPreviewRefreshPending) {
-      this.appendDeveloperLog({
-        kind: "info",
-        source: "inverse sync",
-        message: "Skipped inverse sync while an externally changed preview revision is being prepared."
-      });
-      return;
-    }
-    const position = point.documentPosition;
-    const client = this.lspClient;
-    // The displayed PDF may have been compiled from the prepared render cache.
-    // Its physical coordinates are only meaningful to the source-map session
-    // for that exact generated entry file, not the original workspace preview.
-    const rootPath = this.pdfPreviewSourceMapRootPath ?? this.previewRootPath;
-    const taskId = this.pdfPreviewSourceMapTaskId ?? this.previewTaskId;
-    if (!position || !client || !rootPath || !taskId || !this.lspReady) {
-      this.appendDeveloperLog({
-        kind: "warning",
-        source: "inverse sync",
-        message: `Skipped PDF inverse sync: position=${!!position}, client=${!!client}, root=${rootPath ?? "n/a"}, task=${taskId ?? "n/a"}, lspReady=${this.lspReady}.`
-      });
-      return;
-    }
-
-    const sourceMapSession = await this.ensurePdfSourceMapSocket(client, rootPath, taskId, "inverse sync");
-    if (!sourceMapSession) {
-      this.appendDeveloperLog({
-        kind: "warning",
-        source: "inverse sync",
-        message: "Skipped PDF inverse sync: source-map socket unavailable."
-      });
-      return;
-    }
-    if (!await this.sourceMapSessionController.waitForDocument(
-      sourceMapSession.socket,
-      PDF_SOURCE_MAP_READY_TIMEOUT_MS,
-    )) {
-      this.appendDeveloperLog({
-        kind: "warning",
-        source: "inverse sync",
-        message: "Skipped PDF inverse sync: source-map document did not become ready."
-      });
-      return;
-    }
-    this.previewSyncController.recordPreviewClick(point);
-    this.appendDeveloperLog({
-      kind: "info",
-      source: "inverse sync",
-      message: `Sending compiler inverse position: page=${position.page_no}, x=${position.x.toFixed(2)}, y=${position.y.toFixed(2)}, root=${rootPath}.`
-    });
-    sourceMapSession.socket.send(`src-point ${JSON.stringify(position)}`);
+    await this.previewSyncController.sendInverse(point);
   }
 
   private async navigateToDraftPreviewImage(id: string): Promise<void> {
@@ -6019,36 +5763,6 @@ export class TypsastraWorkspaceController {
     });
   }
 
-  private handlePdfSourceMapPositionPayload(text: string): void {
-    const positions = parseTinymistPreviewPositions(text);
-    if (positions.length === 0) {
-      if (this.pendingPdfForwardSync) {
-        this.appendDeveloperLog({
-          kind: "info",
-          source: "forward sync",
-          message: `Ignored source-map payload without PDF position: ${sanitizeLogText(text).slice(0, 120)}`
-        });
-      }
-      return;
-    }
-
-    const pending = this.pendingPdfForwardSync;
-    if (!pending || Date.now() > pending.expiresAt) return;
-    const compilerLookupMs = Date.now() - pending.requestedAt;
-    this.pendingPdfForwardSync = null;
-
-    const position = positions[0];
-    this.appendDeveloperLog({
-      kind: "info",
-      source: "forward sync",
-      message: `Compiler document position: candidates=${positions.length}, page=${position.page_no}, x=${position.x.toFixed(2)}, y=${position.y.toFixed(2)}, lookupMs=${compilerLookupMs}.`
-    });
-    void this.previewFrame.revealDocumentPosition(position, { ripple: true });
-    this.finishManualForwardSync(pending.generation, "Cursor revealed in preview");
-    import("@tauri-apps/api/event").then(({ emit }) => {
-      emit("pdf-forward-sync", position);
-    }).catch(err => console.error("Error emitting pdf-forward-sync", err));
-  }
   private updatePreviewZoomLabel(zoomPercent?: number) {
     const label = document.getElementById("preview-zoom-label");
     if (!label) return;
@@ -6064,79 +5778,8 @@ export class TypsastraWorkspaceController {
     }
   }
 
-  private async warmPdfSourceMapSession(generation: number): Promise<void> {
-    const client = this.lspClient;
-    const rootPath = this.pdfPreviewSourceMapRootPath ?? this.previewRootPath;
-    const taskId = this.pdfPreviewSourceMapTaskId ?? this.previewTaskId;
-    if (!client || !rootPath || !taskId || !this.lspReady || generation !== this.pdfPreviewGeneration) return;
-    const startedAt = performance.now();
-    const session = await this.ensurePdfSourceMapSocket(client, rootPath, taskId, "forward sync", true);
-    if (!session || generation !== this.pdfPreviewGeneration) return;
-    const activePath = this.activeFilePath;
-    const cursor = this.editorInstance?.state.selection.main.head ?? 0;
-    const target = activePath?.toLowerCase().endsWith(".typ")
-      ? await this.forwardSyncTarget(activePath, cursor)
-      : null;
-    if (!target || generation !== this.pdfPreviewGeneration) return;
-
-    // One position probe is enough to make Tinymist materialize the source map.
-    // Repeated probes are especially expensive for long documents because each
-    // one can schedule another full vector update, even though the native bridge
-    // discards that vector payload. Let a manual sync retry later if this single
-    // background probe does not become ready.
-    const ready = await this.sourceMapSessionController.ensureWarm(
-      session.socket,
-      () => client.scrollPreview(session.taskId, {
-        event: "panelScrollTo",
-        filepath: nativeFilePath(target.filepath),
-        line: target.line,
-        character: target.character,
-      }),
-      PDF_SOURCE_MAP_READY_TIMEOUT_MS,
-    );
-    if (generation !== this.pdfPreviewGeneration) return;
-    this.appendDeveloperLog({
-      kind: ready ? "info" : "warning",
-      source: "forward sync",
-      message: ready
-        ? `Source-map session warmed after PDF presentation in ${(performance.now() - startedAt).toFixed(1)}ms.`
-        : `Source-map session did not become ready within ${PDF_SOURCE_MAP_READY_TIMEOUT_MS}ms.`
-    });
-  }
-
   private schedulePdfSourceMapWarmup(generation: number): void {
-    if (this.pdfSourceMapWarmupTimer !== null) {
-      window.clearTimeout(this.pdfSourceMapWarmupTimer);
-    }
-    const startedAt = performance.now();
-    const attempt = () => {
-      this.pdfSourceMapWarmupTimer = null;
-      if (generation !== this.pdfPreviewGeneration) return;
-      const prerequisitesReady = this.lspReady
-        && !!this.lspClient
-        && !!(this.pdfPreviewSourceMapRootPath ?? this.previewRootPath)
-        && !!(this.pdfPreviewSourceMapTaskId ?? this.previewTaskId);
-      const interactionBlocksWarmup = this.horizontalPaneResizeActive || this.pdfPreviewRunning;
-      if (
-        interactionBlocksWarmup
-        || !prerequisitesReady
-      ) {
-        if (performance.now() - startedAt >= PDF_SOURCE_MAP_READY_TIMEOUT_MS) {
-          this.appendDeveloperLog({
-            kind: "warning",
-            source: "forward sync",
-            message: "Source-map warm-up was not scheduled because project reload prerequisites did not become ready."
-          });
-          return;
-        }
-        this.pdfSourceMapWarmupTimer = window.setTimeout(attempt, 250);
-        return;
-      }
-      void this.warmPdfSourceMapSession(generation);
-    };
-    // PDF presentation and the first visible-page render have priority over
-    // optional cursor-sync preparation.
-    this.pdfSourceMapWarmupTimer = window.setTimeout(attempt, 250);
+    this.previewSyncController.scheduleWarmup(generation);
   }
 
   private initializePreviewPageControls(): void {
@@ -7778,14 +7421,11 @@ export class TypsastraWorkspaceController {
     this.publishImageOptimizationWarnings(null);
     this.lastTypographyInternalScaleError = "";
     this.pdfPreviewGeneration += 1;
-    this.pdfForwardSyncGeneration += 1;
+    this.previewSyncController.cancelManual();
     this.tinymistPreviewRecoveryAttempts = 0;
     this.tinymistPreviewRecovery = null;
     this.queuedPdfPreviewContents = null;
     this.queuedPdfPreviewForced = false;
-    this.pendingPdfForwardSync = null;
-    this.manualForwardSyncGeneration = null;
-    this.queuedManualForwardSync = null;
 
     this.workspaceRootPath = null;
     this.sidebarController.reset();
@@ -8736,66 +8376,4 @@ export class TypsastraWorkspaceController {
 
 function nextAnimationFrame(): Promise<void> {
   return new Promise(resolve => requestAnimationFrame(() => resolve()));
-}
-
-function sanitizeLogText(str: string): string {
-  return str.replace(/[\x00-\x1F\x7F-\x9F\uFFFD]/g, ".");
-}
-
-function parseTinymistPreviewPositions(data: string): PreviewDocumentPosition[] {
-  const positions: PreviewDocumentPosition[] = [];
-  const jumpPosition = parseTinymistJumpPosition(data);
-  if (jumpPosition) positions.push(jumpPosition);
-
-  const candidates = jsonPayloadCandidates(data);
-  for (const candidate of candidates) {
-    try {
-      collectPreviewPositions(JSON.parse(candidate), positions);
-    } catch {
-      // Keep trying the remaining payload shapes.
-    }
-  }
-  return positions;
-}
-
-function parseTinymistJumpPosition(data: string): PreviewDocumentPosition | null {
-  const match = data.trim().match(/^jump,\s*(\d+)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)/u);
-  if (!match) return null;
-  const pageNo = Number(match[1]);
-  const x = Number(match[2]);
-  const y = Number(match[3]);
-  if (!Number.isFinite(pageNo) || !Number.isFinite(x) || !Number.isFinite(y)) return null;
-  return { page_no: pageNo, x, y };
-}
-
-function jsonPayloadCandidates(data: string): string[] {
-  const trimmed = data.trim();
-  const candidates = [trimmed];
-  const comma = trimmed.indexOf(",");
-  if (comma >= 0) candidates.push(trimmed.slice(comma + 1).trim());
-  const firstObject = trimmed.indexOf("{");
-  if (firstObject >= 0) candidates.push(trimmed.slice(firstObject));
-  const firstArray = trimmed.indexOf("[");
-  if (firstArray >= 0) candidates.push(trimmed.slice(firstArray));
-  return [...new Set(candidates.filter(Boolean))];
-}
-
-function collectPreviewPositions(value: unknown, output: PreviewDocumentPosition[]): void {
-  if (Array.isArray(value)) {
-    for (const item of value) collectPreviewPositions(item, output);
-    return;
-  }
-  if (!value || typeof value !== "object") return;
-  const record = value as Record<string, unknown>;
-  const pageNo = typeof record.page_no === "number"
-    ? record.page_no
-    : typeof record.page === "number"
-      ? record.page
-      : undefined;
-  if (typeof pageNo === "number" && typeof record.x === "number" && typeof record.y === "number") {
-    output.push({ page_no: pageNo, x: record.x, y: record.y });
-  }
-  for (const item of Object.values(record)) {
-    collectPreviewPositions(item, output);
-  }
 }
