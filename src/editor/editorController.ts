@@ -1,10 +1,20 @@
+import type { Text, Transaction } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
+import {
+  foldAll,
+  foldEffect,
+  foldedRanges,
+  unfoldAll,
+  unfoldEffect,
+} from "@codemirror/language";
 import type { PerformanceMetric } from "../performance/diagnostics";
 import { editorDiagnosticsStateField } from "./diagnostics";
 import { editorMatchQuery } from "./extensions";
 import { imageOptimizationWarningField } from "./imageWarnings";
 import { cursorRowColumn } from "./verticalCursor";
 import { TYPSASTRA_GREEN } from "../ui/brandColors";
+import { isAltGraphKeyboardEvent } from "../ui/keyboardModifiers";
+import type { EditorFoldRange } from "./folding";
 
 type EditorInputProfile = {
   sequence: number;
@@ -19,6 +29,12 @@ export interface EditorControllerPort {
   logLayoutRefresh(reason: string): void;
   suppressPreviewSync(durationMs: number): void;
   revealPreviewAtCursor(cursor: number): void;
+  activePath(): string | null;
+  pathKey(path: string): string;
+  contentMutationDelay(): number;
+  onContentMutationStart(path: string): void;
+  onContentMutation(path: string, text: string, previewDebounceElapsedMs: number): void;
+  onFoldStateChanged(ranges: EditorFoldRange[]): void;
 }
 
 /** Owns editor-scroller annotations that are independent of document IO. */
@@ -35,6 +51,10 @@ export class EditorController {
   private lastInputAt = 0;
   private longTaskObserver: PerformanceObserver | null = null;
   private scrollbarPointerActive = false;
+  private readonly mutationKeysHeld = new Set<string>();
+  private pendingMutationTimer: number | null = null;
+  private pendingMutation: { path: string; doc: Text } | null = null;
+  private suppressFoldPersistence = false;
 
   constructor(private readonly port: EditorControllerPort) {}
 
@@ -129,8 +149,137 @@ export class EditorController {
       this.port.suppressPreviewSync(500);
     }, { passive: true });
 
+    editor.contentDOM.addEventListener("keydown", event => {
+      if (!this.isMutationKey(event)) return;
+      this.mutationKeysHeld.add(event.code || event.key);
+    }, { capture: true });
+    editor.contentDOM.addEventListener("keyup", event => {
+      if (!this.isMutationKey(event)) return;
+      this.mutationKeysHeld.delete(event.code || event.key);
+      if (this.mutationKeysHeld.size === 0 && this.pendingMutation) {
+        this.restartMutationTimer();
+      }
+    }, { capture: true });
+    window.addEventListener("blur", () => {
+      this.mutationKeysHeld.clear();
+      if (this.pendingMutation) this.restartMutationTimer();
+    });
+
     this.initializeLongTaskObserver();
     this.updateAll();
+  }
+
+  scheduleContentMutation(path: string, doc: Text): void {
+    if (this.pendingMutation === null) this.port.onContentMutationStart(path);
+    this.pendingMutation = { path, doc };
+    this.restartMutationTimer();
+  }
+
+  flushContentMutation(activePath: string | null, previewDebounceElapsedMs = 0): void {
+    if (this.pendingMutationTimer !== null) {
+      window.clearTimeout(this.pendingMutationTimer);
+      this.pendingMutationTimer = null;
+    }
+    const pending = this.pendingMutation;
+    this.pendingMutation = null;
+    const editor = this.editor;
+    if (
+      !pending
+      || !activePath
+      || !editor
+      || this.port.pathKey(pending.path) !== this.port.pathKey(activePath)
+      || pending.doc !== editor.state.doc
+    ) return;
+    this.port.onContentMutation(
+      pending.path,
+      pending.doc.toString(),
+      previewDebounceElapsedMs,
+    );
+  }
+
+  handleFoldTransactions(transactions: readonly Transaction[]): void {
+    if (
+      this.suppressFoldPersistence
+      || !transactions.some(transaction =>
+        transaction.effects.some(effect => effect.is(foldEffect) || effect.is(unfoldEffect))
+      )
+    ) return;
+    this.port.onFoldStateChanged(this.collectFoldRanges());
+  }
+
+  collectFoldRanges(): EditorFoldRange[] {
+    const editor = this.editor;
+    const ranges: EditorFoldRange[] = [];
+    if (!editor) return ranges;
+    foldedRanges(editor.state).between(0, editor.state.doc.length, (from, to) => {
+      if (from < to) ranges.push({ from, to });
+    });
+    return ranges;
+  }
+
+  restoreFoldState(explicit: boolean, ranges: unknown): EditorFoldRange[] {
+    const editor = this.editor;
+    if (!editor) return [];
+    this.suppressFoldPersistence = true;
+    try {
+      const normalized = explicit
+        ? this.normalizeFoldRanges(ranges, editor.state.doc.length)
+        : [];
+      this.applyFoldRanges(normalized);
+      return normalized;
+    } finally {
+      this.suppressFoldPersistence = false;
+    }
+  }
+
+  foldDocument(): void {
+    const editor = this.editor;
+    if (!editor) return;
+    foldAll(editor);
+    editor.focus();
+  }
+
+  unfoldDocument(): void {
+    const editor = this.editor;
+    if (!editor) return;
+    unfoldAll(editor);
+    editor.focus();
+  }
+
+  applyFoldRanges(ranges: readonly EditorFoldRange[]): void {
+    const editor = this.editor;
+    if (!editor) return;
+    const effects = [];
+    const docLength = editor.state.doc.length;
+    foldedRanges(editor.state).between(0, docLength, (from, to) => {
+      effects.push(unfoldEffect.of({ from, to }));
+    });
+    for (const range of this.normalizeFoldRanges(ranges, docLength)) {
+      effects.push(foldEffect.of(range));
+    }
+    if (effects.length > 0) editor.dispatch({ effects });
+  }
+
+  normalizeFoldRanges(value: unknown, docLength: number): EditorFoldRange[] {
+    if (!Array.isArray(value)) return [];
+    const ranges: EditorFoldRange[] = [];
+    for (let index = 0; index < value.length; index++) {
+      const item = value[index];
+      const range = typeof item === "object" && item !== null
+        ? item as Partial<EditorFoldRange>
+        : typeof item === "number" && typeof value[index + 1] === "number"
+          ? { from: item, to: value[++index] as number }
+          : null;
+      if (
+        range
+        && typeof range.from === "number"
+        && typeof range.to === "number"
+        && range.from >= 0
+        && range.to <= docLength
+        && range.from < range.to
+      ) ranges.push({ from: range.from, to: range.to });
+    }
+    return ranges;
   }
 
   beginInputProfile(): EditorInputProfile | null {
@@ -351,5 +500,25 @@ export class EditorController {
       }
     });
     this.longTaskObserver.observe({ type: "longtask", buffered: false });
+  }
+
+  private restartMutationTimer(): void {
+    if (this.pendingMutationTimer !== null) window.clearTimeout(this.pendingMutationTimer);
+    const delay = this.port.contentMutationDelay();
+    this.pendingMutationTimer = window.setTimeout(() => {
+      this.pendingMutationTimer = null;
+      if (this.mutationKeysHeld.size > 0) return;
+      this.flushContentMutation(this.port.activePath(), delay);
+    }, delay);
+  }
+
+  private isMutationKey(event: KeyboardEvent): boolean {
+    if (event.ctrlKey || event.metaKey) return false;
+    if (event.altKey && !isAltGraphKeyboardEvent(event)) return false;
+    return event.key.length === 1
+      || event.key === "Backspace"
+      || event.key === "Delete"
+      || event.key === "Enter"
+      || event.key === "Tab";
   }
 }

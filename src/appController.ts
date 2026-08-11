@@ -8,7 +8,7 @@ import { dirname, join } from "@tauri-apps/api/path";
 import { EditorState, type Extension, type Text } from "@codemirror/state";
 import { EditorView, highlightActiveLine, highlightActiveLineGutter, lineNumbers } from "@codemirror/view";
 import { undo, redo, undoDepth } from "@codemirror/commands";
-import { foldAll, foldEffect, foldedRanges, indentUnit, unfoldAll, unfoldEffect } from "@codemirror/language";
+import { indentUnit } from "@codemirror/language";
 import { closeBrackets, completionStatus } from "@codemirror/autocomplete";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { editorMatchQuery, getEditorExtensions, themeCompartment, getThemeExtension, applyUIThemeVariables, wrapCompartment, lineNumbersCompartment, activeLineCompartment, closeBracketsCompartment, indentationGuidesCompartment, tabSizeCompartment, completionCompartment, languageCompartment, showZwsCompartment, showZeroWidthSpaces, visibleIndentationMarkers } from "./editor/extensions";
@@ -102,7 +102,6 @@ import {
   parseDocumentScripts,
   documentScriptsEdit,
   typographyEdit,
-  type DocumentScriptFont,
   type DocumentTypography
 } from "./editor/documentTypography";
 import {
@@ -318,15 +317,12 @@ export class TypsastraWorkspaceController {
   private currentVersion = 1;
   private isLoadingFile = false;
   private readonly lspSyncDebounceMs = 50;
-  private pendingEditorMutationTimer: number | null = null;
-  private pendingEditorMutation: { path: string; doc: Text } | null = null;
   private forwardSyncDebounceMs = 120;
   private latestDocumentVersion = 1;
   private diagnosticWaitStartedAt: number | null = null;
   private openTabs: EditorTab[] = [];
   private readonly detectedPlainTextPaths = new Set<string>();
   private readonly classifiedUnknownPaths = new Set<string>();
-  private suppressFoldStatePersistence = false;
   private documentOutlineUpdateTimer: number | null = null;
   private documentOutlineUpdateGeneration = 0;
   private readonly openedDocumentUris = new Set<string>();
@@ -351,15 +347,7 @@ export class TypsastraWorkspaceController {
   private pdfPreviewRunning = false;
   private queuedPdfPreviewContents: string | null = null;
   private queuedPdfPreviewForced = false;
-  private typographyScaleCheckTimer: number | null = null;
-  private typographyScaleCheckGeneration = 0;
-  private typographyScaleConfirmationOpen = false;
-  private lastTypographyInternalScaleError = "";
-  private suppressTypographyScaleConfirmation = false;
-  private acceptedTypographyScales = new Map<string, DocumentScriptFont[]>();
-  private typographyFontUpdateInProgress = false;
   private exportInProgress = false;
-  private deferredTypographyPreviewContents: string | null = null;
   private lastPdfPath = "";
   private lastPdfIdentity = "";
   private lastPdfSessionKey = "";
@@ -374,11 +362,11 @@ export class TypsastraWorkspaceController {
   private externalPreviewRefreshPending = false;
   private readonly managedPreviewPdfPathKeys = new Set<string>();
   private readonly managedImageToolPathKeys = new Set<string>();
-  private readonly settingsController = new SettingsController(
+  private readonly settingsController: SettingsController = new SettingsController(
     settings => this.applySettingsToRuntime(settings),
     providers => this.handleLanguageProvidersChanged(providers),
-    () => this.handlePrivateFontDirectoriesChanged(),
-    () => this.handlePrivateFontDirectoriesChanged()
+    () => this.typographyController.privateFontDirectoriesChanged(),
+    () => this.typographyController.privateFontDirectoriesChanged()
   );
   private readonly toolchainController = new ToolchainController({
     getSelectedVersion: () => this.settingsController.value.toolchain.tinymistVersion,
@@ -418,9 +406,36 @@ export class TypsastraWorkspaceController {
     }),
     suppressPreviewSync: durationMs => this.previewSyncController.suppressForwardFor(durationMs),
     revealPreviewAtCursor: cursor => void this.previewSyncController.renderAtCursor(cursor),
+    activePath: () => this.activeFilePath,
+    pathKey: filePathKey,
+    contentMutationDelay: () => this.effectivePreviewRenderMode === "on-type"
+      ? Math.min(300, this.settingsController.value.preview.syncDebounceMs)
+      : 300,
+    onContentMutationStart: path => {
+      if (
+        this.effectivePreviewRenderMode === "on-type"
+        && activeFileCanRenderPreview(
+          path,
+          this.pinnedMainFilePath,
+          this.previewImported,
+          this.previewDisabled,
+        )
+      ) this.invalidatePreviewWork("editor input");
+    },
+    onContentMutation: (_path, text, previewDebounceElapsedMs) => {
+      this.configureDocumentLanguageTools(text);
+      this.editorFontManager.scheduleDocumentUpdate(text);
+      this.handleContentMutation(text, previewDebounceElapsedMs);
+    },
+    onFoldStateChanged: ranges => {
+      const tab = this.getActiveTab();
+      if (!tab) return;
+      tab.foldStateExplicit = true;
+      tab.foldRanges = ranges;
+      void this.saveWorkspaceState();
+    },
   });
   private isComposing = false;
-  private readonly editorInputKeysHeld = new Set<string>();
   private readonly editorFontManager = new EditorFontManager(() => this.editorInstance);
   private readonly markdownEditorLanguage = markdown({ base: markdownLanguage });
   private readonly spellcheckController = new SpellcheckController(
@@ -707,7 +722,7 @@ export class TypsastraWorkspaceController {
     updateForwardSyncAction: () => this.updateManualForwardSyncAction(),
     log: (kind, message) => this.appendDeveloperLog({ kind, source: "workspace", message }),
   });
-  private readonly typographyController = new TypographyController({
+  private readonly typographyController: TypographyController = new TypographyController({
     getWorkspaceRootPath: () => this.workspaceRootPath,
     readWorkspaceText: path => this.workspaceText(path),
     logWarning: message => this.appendDeveloperLog({
@@ -715,6 +730,37 @@ export class TypsastraWorkspaceController {
       source: "typography",
       message,
     }),
+    getActiveFilePath: () => this.activeFilePath,
+    getActiveDocumentText: () => this.editorInstance.state.doc.toString(),
+    dispatchDocumentEdit: (edit, userEvent) => this.editorInstance.dispatch({
+      changes: edit,
+      userEvent,
+    }),
+    synchronizeDocumentTypography: config =>
+      this.editorToolbarController.synchronizeDocumentTypography(config),
+    isPinnedMainFile: path => this.isPinnedMainFile(path),
+    getPinnedMainFilePath: () => this.pinnedMainFilePath,
+    isPreviewImported: () => this.previewImported,
+    getPreviewDebounceMs: () => this.settingsController.value.preview.syncDebounceMs,
+    getPreviewRootPath: () => this.previewRootPath,
+    getPreviewMainPath: () => this.previewMainPath,
+    isPreviewStandalone: () => this.previewStandalone,
+    isLargePreviewBlocked: () => Boolean(this.blockedLargePreviewRoot),
+    hasLspClient: () => Boolean(this.lspClient),
+    restartTinymistSession: status => this.restartTinymistSession(status),
+    restoreActiveDocumentAfterRestart: () => this.restoreActiveDocumentAfterTinymistRestart(),
+    refreshActivePreviewRoot: force => this.refreshActivePreviewRoot(force),
+    updatePinnedMain: (path, force) => this.updatePinnedMain(path, force),
+    recheckActiveDocumentAfterPin: text => this.recheckActiveDocumentAfterPin(text),
+    resetSourceMap: () => this.sourceMapSessionController.reset({ retry: false }),
+    setPreviewLoading: text => this.previewFrame.setLoading(text),
+    appendLog: (kind, source, text) => {
+      if (kind === "error") {
+        this.appendLspLog({ kind, source, message: text });
+      } else {
+        this.appendDeveloperLog({ kind, source, message: text });
+      }
+    },
   });
   private readonly documentLanguageService = new DocumentLanguageService();
   private readonly recentProjectsController = new RecentProjectsController(
@@ -740,7 +786,7 @@ export class TypsastraWorkspaceController {
     syncPreview: cursor => this.previewSyncController.renderAtCursor(cursor),
     applyTypography: (config, target) => this.applyTypography(config, target),
     getWorkspaceRoot: () => this.workspaceRootPath,
-    onWorkspacePrivateFontDirectoriesChanged: () => this.handlePrivateFontDirectoriesChanged()
+    onWorkspacePrivateFontDirectoriesChanged: () => this.typographyController.privateFontDirectoriesChanged()
     // TODO: Re-enable when the WYSIWYM layout is ready for use.
     // toggleMode: () => this.switchViewLayoutMode()
   });
@@ -898,7 +944,7 @@ export class TypsastraWorkspaceController {
   );
   private readonly webviewStorageController = new WebviewStorageController(() =>
     this.pdfPreviewRunning
-    || this.typographyFontUpdateInProgress
+    || this.typographyController.fontUpdateInProgress
     || this.exportInProgress
     || this.settingsController.isLanguageProviderOperationInProgress
     || this.toolchainController.isBusy
@@ -1543,16 +1589,7 @@ export class TypsastraWorkspaceController {
         if (update.docChanged || update.selectionSet || matchQueryChanged) {
           this.editorController.scheduleMatchMarkers();
         }
-        if (!this.suppressFoldStatePersistence && update.transactions.some(transaction =>
-          transaction.effects.some(effect => effect.is(foldEffect) || effect.is(unfoldEffect))
-        )) {
-          const tab = this.getActiveTab();
-          if (tab) {
-            tab.foldStateExplicit = true;
-            tab.foldRanges = this.collectCurrentFoldRanges();
-            void this.saveWorkspaceState();
-          }
-        }
+        this.editorController.handleFoldTransactions(update.transactions);
         if (!update.docChanged && this.editorController.shouldForwardSyncSelectionUpdate(update)) {
           this.previewSyncController.schedule(this.forwardSyncDebounceMs);
         }
@@ -1587,22 +1624,6 @@ export class TypsastraWorkspaceController {
     // The editor remains mouse- and command-focusable, but ordinary Tab
     // navigation between application controls must never land in source text.
     this.editorInstance.contentDOM.tabIndex = -1;
-    this.editorInstance.contentDOM.addEventListener("keydown", event => {
-      if (!this.isEditorMutationKey(event)) return;
-      this.editorInputKeysHeld.add(event.code || event.key);
-    }, { capture: true });
-    
-    this.editorInstance.contentDOM.addEventListener("keyup", event => {
-      if (!this.isEditorMutationKey(event)) return;
-      this.editorInputKeysHeld.delete(event.code || event.key);
-      if (this.editorInputKeysHeld.size === 0 && this.pendingEditorMutation) this.restartEditorMutationTimer();
-    }, { capture: true });
-    
-    window.addEventListener("blur", () => {
-      this.editorInputKeysHeld.clear();
-      if (this.pendingEditorMutation) this.restartEditorMutationTimer();
-    });
-    
     this.editorFontManager.updateDocument(initialDocument);
     this.editorController.updateCursorStatus();
     this.editorController.updateAll();
@@ -1723,17 +1744,7 @@ export class TypsastraWorkspaceController {
   }
 
   private collectCurrentFoldRanges(): EditorFoldRange[] {
-    const ranges: EditorFoldRange[] = [];
-    if (!this.editorInstance) return ranges;
-
-    const docLength = this.editorInstance.state.doc.length;
-    foldedRanges(this.editorInstance.state).between(0, docLength, (from, to) => {
-      if (from < to) {
-        ranges.push({ from, to });
-      }
-    });
-
-    return ranges;
+    return this.editorController.collectFoldRanges();
   }
 
   private restoreEditorTabViewport(tab: EditorTab, path: string): void {
@@ -1775,19 +1786,10 @@ export class TypsastraWorkspaceController {
   }
 
   private restoreTabFoldState(tab: EditorTab) {
-    this.suppressFoldStatePersistence = true;
-    try {
-      if (!tab.foldStateExplicit) {
-        tab.foldRanges = [];
-        this.applyFoldRanges([]);
-      } else {
-        const ranges = this.normalizeFoldRanges(tab.foldRanges, this.editorInstance.state.doc.length);
-        tab.foldRanges = ranges;
-        this.applyFoldRanges(ranges);
-      }
-    } finally {
-      this.suppressFoldStatePersistence = false;
-    }
+    tab.foldRanges = this.editorController.restoreFoldState(
+      tab.foldStateExplicit,
+      tab.foldRanges,
+    );
   }
 
   private activateSpellcheckDocument(path: string | null): void {
@@ -1845,61 +1847,22 @@ export class TypsastraWorkspaceController {
     if (!this.getActiveTab() || !this.isInternallySupportedPath(this.activeFilePath ?? "") || isBinaryImagePath(this.activeFilePath ?? "") || fileExtension(this.activeFilePath ?? "") === "pdf") return;
     const tab = this.getActiveTab();
     if (tab) tab.foldStateExplicit = true;
-    foldAll(this.editorInstance);
-    this.editorInstance.focus();
+    this.editorController.foldDocument();
   }
 
   private unfoldCurrentFile(): void {
     if (!this.getActiveTab() || !this.isInternallySupportedPath(this.activeFilePath ?? "") || isBinaryImagePath(this.activeFilePath ?? "") || fileExtension(this.activeFilePath ?? "") === "pdf") return;
     const tab = this.getActiveTab();
     if (tab) tab.foldStateExplicit = true;
-    unfoldAll(this.editorInstance);
-    this.editorInstance.focus();
+    this.editorController.unfoldDocument();
   }
 
   private applyFoldRanges(ranges: EditorFoldRange[]) {
-    const effects = [];
-    const docLength = this.editorInstance.state.doc.length;
-
-    foldedRanges(this.editorInstance.state).between(0, docLength, (from, to) => {
-      effects.push(unfoldEffect.of({ from, to }));
-    });
-
-    for (const range of this.normalizeFoldRanges(ranges, docLength)) {
-      effects.push(foldEffect.of(range));
-    }
-
-    if (effects.length > 0) {
-      this.editorInstance.dispatch({ effects });
-    }
+    this.editorController.applyFoldRanges(ranges);
   }
 
   private normalizeFoldRanges(value: unknown, docLength: number): EditorFoldRange[] {
-    if (!Array.isArray(value)) return [];
-
-    const ranges: EditorFoldRange[] = [];
-
-    for (let index = 0; index < value.length; index++) {
-      const item = value[index];
-      const range = typeof item === "object" && item !== null
-        ? item as Partial<EditorFoldRange>
-        : typeof item === "number" && typeof value[index + 1] === "number"
-          ? { from: item, to: value[++index] as number }
-          : null;
-
-      if (
-        range &&
-        typeof range.from === "number" &&
-        typeof range.to === "number" &&
-        range.from >= 0 &&
-        range.to <= docLength &&
-        range.from < range.to
-      ) {
-        ranges.push({ from: range.from, to: range.to });
-      }
-    }
-
-    return ranges;
+    return this.editorController.normalizeFoldRanges(value, docLength);
   }
 
   private updateActiveTabContent(content: string) {
@@ -1929,71 +1892,16 @@ export class TypsastraWorkspaceController {
     }
   }
 
-  private isEditorMutationKey(event: KeyboardEvent): boolean {
-    if (event.ctrlKey || event.metaKey) return false;
-    if (event.altKey && !isAltGraphKeyboardEvent(event)) return false;
-    return event.key.length === 1
-      || event.key === "Backspace"
-      || event.key === "Delete"
-      || event.key === "Enter"
-      || event.key === "Tab";
-  }
-  
-  private restartEditorMutationTimer(): void {
-    if (this.pendingEditorMutationTimer !== null) window.clearTimeout(this.pendingEditorMutationTimer);
-  
-    const delay = this.effectivePreviewRenderMode === "on-type"
-      ? Math.min(300, this.settingsController.value.preview.syncDebounceMs)
-      : 300;
-  
-    this.pendingEditorMutationTimer = window.setTimeout(() => {
-      this.pendingEditorMutationTimer = null;
-  
-      if (this.editorInputKeysHeld.size > 0) return;
-  
-      this.flushEditorContentMutation(delay);
-    }, delay);
-  }
-
   private scheduleEditorContentMutation(doc: Text): void {
     if (!this.activeFilePath) return;
-    const startsTypingSequence = this.pendingEditorMutation === null;
-    if (
-      startsTypingSequence
-      && this.effectivePreviewRenderMode === "on-type"
-      && activeFileCanRenderPreview(
-        this.activeFilePath,
-        this.pinnedMainFilePath,
-        this.previewImported,
-        this.previewDisabled
-      )
-    ) {
-      // Cancel stale scheduled or preparatory work once at the beginning of a
-      // typing burst. Further keystrokes only replace the in-memory snapshot.
-      this.invalidatePreviewWork("editor input");
-    }
-    this.pendingEditorMutation = { path: this.activeFilePath, doc };
-    this.restartEditorMutationTimer();
+    this.editorController.scheduleContentMutation(this.activeFilePath, doc);
   }
 
   private flushEditorContentMutation(previewDebounceElapsedMs = 0): void {
-    if (this.pendingEditorMutationTimer !== null) {
-      window.clearTimeout(this.pendingEditorMutationTimer);
-      this.pendingEditorMutationTimer = null;
-    }
-    const pending = this.pendingEditorMutation;
-    this.pendingEditorMutation = null;
-    if (
-      !pending
-      || !this.activeFilePath
-      || filePathKey(pending.path) !== filePathKey(this.activeFilePath)
-      || pending.doc !== this.editorInstance.state.doc
-    ) return;
-
-    const currentText = pending.doc.toString();
-    this.configureDocumentLanguageTools(currentText);
-    this.editorFontManager.scheduleDocumentUpdate(currentText);
-    this.handleContentMutation(currentText, previewDebounceElapsedMs);
+    this.editorController.flushContentMutation(
+      this.activeFilePath,
+      previewDebounceElapsedMs,
+    );
   }
 
   private async renameWorkspacePath(
@@ -2040,11 +1948,7 @@ export class TypsastraWorkspaceController {
         if (renamedPath === tab.path) continue;
 
         renamedTabs.push({ oldPath: tab.path, tab });
-        const acceptedScale = this.acceptedTypographyScales.get(filePathKey(tab.path));
-        this.acceptedTypographyScales.delete(filePathKey(tab.path));
-        if (acceptedScale !== undefined) {
-          this.acceptedTypographyScales.set(filePathKey(renamedPath), acceptedScale);
-        }
+        this.typographyController.renameDocument(tab.path, renamedPath);
         tab.path = renamedPath;
       }
 
@@ -2154,7 +2058,7 @@ export class TypsastraWorkspaceController {
 
     const wasActive = this.activeFilePath === path;
     this.openTabs.splice(tabIndex, 1);
-    this.acceptedTypographyScales.delete(filePathKey(path));
+    this.typographyController.closeDocument(path);
     await this.closeDocumentIfOpened(path);
 
     if (wasActive) {
@@ -2563,9 +2467,9 @@ export class TypsastraWorkspaceController {
       this.markdownPreviewFrame.deactivate();
       this.setMarkdownPreviewActive(false);
     }
-    this.acceptedTypographyScales.set(
-      filePathKey(path),
-      this.typographyController.fromText(tab.content)?.fonts.map(font => ({ ...font })) ?? []
+    this.typographyController.setAcceptedFonts(
+      path,
+      this.typographyController.fromText(tab.content)?.fonts ?? [],
     );
     this.currentVersion = tab.version;
     this.latestDocumentVersion = tab.latestVersion;
@@ -3411,7 +3315,7 @@ export class TypsastraWorkspaceController {
       return true;
     } catch (error) {
       try {
-        await this.reloadWorkspaceFonts();
+        await this.typographyController.reloadWorkspaceFonts();
       } catch (restartError) {
         this.appendDeveloperLog({
           kind: "error",
@@ -3529,9 +3433,9 @@ export class TypsastraWorkspaceController {
     const ownsWorkspaceTypography = this.isPinnedMainFile(this.activeFilePath);
     if (ownsWorkspaceTypography && !await this.typographyController.confirmScaleRange(config)) return false;
     if (ownsWorkspaceTypography && !await this.typographyController.confirmVariantLimit(config)) return false;
-    const typographyDocumentKey = filePathKey(this.activeFilePath);
-    const previousAcceptedScale = this.acceptedTypographyScales.get(typographyDocumentKey) ?? [];
-    this.acceptedTypographyScales.set(typographyDocumentKey, config.fonts.map(font => ({ ...font })));
+    const typographyDocumentPath = this.activeFilePath;
+    const previousAcceptedScale = this.typographyController.acceptedFonts(typographyDocumentPath);
+    this.typographyController.setAcceptedFonts(typographyDocumentPath, config.fonts);
     try {
       if (target === "document") {
         const editor = this.editorInstance;
@@ -3544,7 +3448,7 @@ export class TypsastraWorkspaceController {
         });
         await this.saveActiveFile();
         const fontsChanged = ownsWorkspaceTypography
-          ? await this.updateWorkspaceTypographyFont(config)
+          ? await this.typographyController.updateWorkspaceFonts(config)
           : false;
         if (ownsWorkspaceTypography) await this.refreshActivePreviewRoot(fontsChanged);
         editor.focus();
@@ -3571,7 +3475,7 @@ export class TypsastraWorkspaceController {
             userEvent: "input"
           });
           await this.saveActiveFile();
-          await this.reloadTemplateTypographyContext(config);
+          await this.typographyController.reloadTemplateContext(config);
           editor.focus();
           this.setLspStatus({ kind: "preview-ready", message: "Typography applied to template" });
           return true;
@@ -3628,12 +3532,12 @@ export class TypsastraWorkspaceController {
         this.configureDocumentLanguageTools(this.editorInstance.state.doc.toString());
       }
 
-      await this.reloadTemplateTypographyContext(config);
+      await this.typographyController.reloadTemplateContext(config);
       this.setLspStatus({ kind: "preview-ready", message: "Typography applied to template" });
       this.editorInstance.focus();
       return true;
     } catch (error) {
-      this.acceptedTypographyScales.set(typographyDocumentKey, previousAcceptedScale);
+      this.typographyController.setAcceptedFonts(typographyDocumentPath, previousAcceptedScale);
       this.appendLspLog({
         kind: "error",
         source: "typography",
@@ -3642,90 +3546,6 @@ export class TypsastraWorkspaceController {
       await message(String(error), { title: "Unable to apply typography", kind: "error" });
       return false;
     }
-  }
-
-  private async prepareWorkspaceTypographyFont(config: DocumentTypography): Promise<boolean> {
-    if (!this.workspaceRootPath) return false;
-    const scaled = config.fonts.filter(font => Math.abs(font.scale - 1) > 0.0001);
-    const status = await this.typographyController.scaledFontSetStatus(config);
-    if (!status.updateRequired) return false;
-    this.typographyFontUpdateInProgress = true;
-    if (scaled.length === 0) {
-      return invoke<boolean>("clear_scaled_workspace_fonts", { workspaceRootPath: this.workspaceRootPath });
-    }
-    let changed = false;
-    if (status.generationRequired) {
-      this.previewFrame.setLoading(`Scaling ${scaled.length} document font${scaled.length === 1 ? "" : "s"}… The result will be stored in Typsastra's global cache.`);
-    }
-    for (const font of scaled) {
-      const result = await invoke<{ changed: boolean }>("prepare_scaled_workspace_font", {
-        workspaceRootPath: this.workspaceRootPath,
-        family: font.family,
-        scale: font.scale
-      });
-      changed ||= result.changed;
-    }
-    const activationChanged = await invoke<boolean>("activate_scaled_workspace_fonts", {
-      workspaceRootPath: this.workspaceRootPath,
-      fonts: config.fonts
-    });
-    changed ||= activationChanged;
-    return changed;
-  }
-
-  private async updateWorkspaceTypographyFont(config: DocumentTypography): Promise<boolean> {
-    let changed = false;
-    try {
-      changed = await this.prepareWorkspaceTypographyFont(config);
-      if (changed) await this.reloadWorkspaceFonts();
-    } finally {
-      this.typographyFontUpdateInProgress = false;
-    }
-    const hadDeferredPreview = this.deferredTypographyPreviewContents !== null;
-    this.deferredTypographyPreviewContents = null;
-    return changed || hadDeferredPreview;
-  }
-
-  private async reloadTemplateTypographyContext(config: DocumentTypography): Promise<void> {
-    if (this.workspaceRootPath && this.pinnedMainFilePath) {
-      try {
-        await this.prepareWorkspaceTypographyFont(config);
-      } finally {
-        this.typographyFontUpdateInProgress = false;
-        this.deferredTypographyPreviewContents = null;
-      }
-    }
-    // A blocked large preview must remain stopped until its own confirmation
-    // is accepted. Its eventual startup will read the updated template.
-    if (this.blockedLargePreviewRoot) return;
-    if (this.lspClient) {
-      await this.restartTinymistSession("Reloading template typography...");
-      await this.restoreActiveDocumentAfterTinymistRestart();
-    } else {
-      await this.refreshActivePreviewRoot(true);
-    }
-  }
-
-  private async reloadWorkspaceFonts(): Promise<void> {
-    if (!this.lspClient || !this.workspaceRootPath) return;
-    await this.restartTinymistSession("Reloading project fonts...");
-    const lspMainPath = this.previewStandalone
-      ? this.previewRootPath
-      : (this.previewMainPath ?? this.previewRootPath);
-    await this.updatePinnedMain(lspMainPath, true);
-    if (this.activeFilePath) {
-      await this.recheckActiveDocumentAfterPin(this.editorInstance.state.doc.toString());
-    }
-    this.sourceMapSessionController.reset({ retry: false });
-  }
-
-  private async handlePrivateFontDirectoriesChanged(): Promise<void> {
-    if (!this.workspaceRootPath || this.blockedLargePreviewRoot) return;
-    if (this.lspClient) {
-      await this.reloadWorkspaceFonts();
-      return;
-    }
-    await this.refreshActivePreviewRoot(true);
   }
 
   private applyPreviewTargetToTab(tab: EditorTab, target: PreviewTarget): void {
@@ -4003,8 +3823,8 @@ export class TypsastraWorkspaceController {
     }
     const imageProfile = await this.draftPreviewController.inspectImageProfile(this.previewRootPath);
     this.draftPreviewController.updateImageHeavyWarning(imageProfile);
-    if (this.typographyFontUpdateInProgress) {
-      this.deferredTypographyPreviewContents = contents;
+    if (this.typographyController.fontUpdateInProgress) {
+      this.typographyController.deferPreview(contents);
       this.appendDeveloperLog({
         kind: "info",
         source: "preview scheduler",
@@ -4255,7 +4075,7 @@ export class TypsastraWorkspaceController {
         } satisfies PdfUpdatePayload);
       }).catch(err => console.error("Error emitting pdf-update", err));
     } catch (error) {
-      if (this.typographyFontUpdateInProgress) {
+      if (this.typographyController.fontUpdateInProgress) {
         this.appendDeveloperLog({
           kind: "info",
           source: "preview scheduler",
@@ -4668,7 +4488,7 @@ export class TypsastraWorkspaceController {
     }
     if (!this.isLoadingFile) {
       this.updateActiveTabContent(rawText);
-      this.scheduleManualTypographyScaleCheck();
+      this.typographyController.scheduleManualScaleCheck();
       if (this.activeFilePath && isMarkdownDocumentPath(this.activeFilePath)) {
         this.markdownPreviewFrame.schedule(this.activeFilePath, rawText);
       }
@@ -4731,178 +4551,6 @@ export class TypsastraWorkspaceController {
       source: "preview scheduler",
       message: `Preview work invalidated: ${reason}.`
     });
-  }
-
-  private scheduleManualTypographyScaleCheck(): void {
-    if (this.suppressTypographyScaleConfirmation || !this.activeFilePath) return;
-    if (this.typographyScaleCheckTimer !== null) window.clearTimeout(this.typographyScaleCheckTimer);
-    const generation = ++this.typographyScaleCheckGeneration;
-    const delay = Math.max(600, this.settingsController.value.preview.syncDebounceMs);
-    this.typographyScaleCheckTimer = window.setTimeout(() => {
-      this.typographyScaleCheckTimer = null;
-      if (generation !== this.typographyScaleCheckGeneration) return;
-      void this.checkManualTypographyScaleChange();
-    }, delay);
-  }
-
-  private async checkManualTypographyScaleChange(): Promise<void> {
-    if (!this.activeFilePath || this.typographyScaleConfirmationOpen) {
-      if (this.typographyScaleConfirmationOpen) this.scheduleManualTypographyScaleCheck();
-      return;
-    }
-    const filePath = this.activeFilePath;
-    const documentKey = filePathKey(filePath);
-    const config = this.typographyController.fromText(this.editorInstance.state.doc.toString());
-    if (!config) return;
-    const previousFonts = this.acceptedTypographyScales.get(documentKey) ?? [];
-    const signature = (fonts: DocumentScriptFont[]) => JSON.stringify(fonts.map(font => ({
-      family: font.family,
-      script: font.script,
-      scale: Number(font.scale.toFixed(4)),
-      defaultText: font.defaultText !== false,
-    })));
-    if (signature(previousFonts) === signature(config.fonts)) return;
-    this.editorToolbarController.synchronizeDocumentTypography(config);
-    if (!this.isPinnedMainFile(filePath)) {
-      this.acceptedTypographyScales.set(documentKey, config.fonts.map(font => ({ ...font })));
-      return;
-    }
-    if (!participatesInPreviewCompilation(this.activeFilePath, this.pinnedMainFilePath, this.previewImported)) {
-      this.appendDeveloperLog({
-        kind: "info",
-        source: "preview scheduler",
-        message: `On-type schedule skipped: ${this.activeFilePath ?? "no active file"} does not own the configured main preview.`
-      });
-      return;
-    }
-    const unsupportedInternalScale = await this.typographyController.unsupportedInternalScaleError(config);
-    if (unsupportedInternalScale) {
-      const errorKey = `${documentKey}\u0000${signature(config.fonts)}`;
-      if (this.lastTypographyInternalScaleError !== errorKey) {
-        this.lastTypographyInternalScaleError = errorKey;
-        this.appendLspLog({
-          kind: "error",
-          source: "typography",
-          message: unsupportedInternalScale.message,
-        });
-        await message(unsupportedInternalScale.message, {
-          title: "Unsupported Built-in Font Scale",
-          kind: "error",
-        });
-      }
-      if (!this.activeFilePath || filePathKey(this.activeFilePath) !== documentKey) return;
-      const currentText = this.editorInstance.state.doc.toString();
-      const currentConfig = this.typographyController.fromText(currentText);
-      if (!currentConfig || signature(currentConfig.fonts) !== signature(config.fonts)) {
-        this.scheduleManualTypographyScaleCheck();
-        return;
-      }
-      const corrected = this.typographyController.resetUnsupportedInternalScales(currentConfig, unsupportedInternalScale.fonts);
-      const edit = parseTypographyBlock(currentText)
-        ? typographyEdit(currentText, corrected)
-        : documentScriptsEdit(currentText, corrected.fonts);
-      this.suppressTypographyScaleConfirmation = true;
-      try {
-        this.editorInstance.dispatch({
-          changes: edit,
-          userEvent: "input.typography-scale-correction",
-        });
-      } finally {
-        this.suppressTypographyScaleConfirmation = false;
-      }
-      this.lastTypographyInternalScaleError = "";
-      this.acceptedTypographyScales.set(documentKey, corrected.fonts.map(font => ({ ...font })));
-      await this.applyManualTypographyFontChange(corrected, filePath);
-      return;
-    }
-    this.lastTypographyInternalScaleError = "";
-    const requiresConfirmation = config.fonts.some(font => {
-      if (Math.abs(font.scale - 1) <= 0.0001) return false;
-      const previous = previousFonts.find(candidate =>
-        candidate.script === font.script && candidate.family === font.family
-      );
-      return !previous || Math.abs(previous.scale - font.scale) > 0.0001;
-    });
-
-    if (!requiresConfirmation) {
-      this.acceptedTypographyScales.set(documentKey, config.fonts.map(font => ({ ...font })));
-      await this.applyManualTypographyFontChange(config, filePath);
-      return;
-    }
-
-    this.typographyScaleConfirmationOpen = true;
-    let accepted = false;
-    try {
-      const rangeWarning = this.typographyController.scaleRangeWarning(config);
-      const variantWarning = this.typographyController.variantLimitWarning(
-        await this.typographyController.scaledFontSetStatus(config),
-      );
-      const warning = [rangeWarning, variantWarning].filter((value): value is string => Boolean(value)).join("\n\n");
-      accepted = await confirm(
-        warning
-          || `Apply these document font scales?\n\n${config.fonts.map(font => `${font.family}: ${font.scale}×`).join("\n")}\n\nTypsastra will prepare the required variants in its private global font cache and restart the preview compiler. No font data is written into the project. Non-1× scaling is experimental for PDF output because Typst may normalize scaled fonts while subsetting them. Use 1× for dependable PDF export.`,
-        {
-          title: variantWarning
-            ? "Font Variant Cache Limit"
-            : (rangeWarning ? "Large Font Scale Adjustment" : "Confirm Font Scaling"),
-          kind: "warning"
-        }
-      );
-    } finally {
-      this.typographyScaleConfirmationOpen = false;
-    }
-
-    if (!this.activeFilePath || filePathKey(this.activeFilePath) !== documentKey) return;
-    const currentText = this.editorInstance.state.doc.toString();
-    const currentConfig = this.typographyController.fromText(currentText);
-    if (!currentConfig || signature(currentConfig.fonts) !== signature(config.fonts)) {
-      this.scheduleManualTypographyScaleCheck();
-      return;
-    }
-    if (accepted) {
-      this.acceptedTypographyScales.set(documentKey, currentConfig.fonts.map(font => ({ ...font })));
-      await this.applyManualTypographyFontChange(currentConfig, filePath);
-      return;
-    }
-
-    const revertedConfig = {
-      ...currentConfig,
-      fonts: currentConfig.fonts.map(font => ({
-        ...font,
-        scale: previousFonts.find(candidate =>
-          candidate.script === font.script && candidate.family === font.family
-        )?.scale ?? 1
-      }))
-    };
-    const edit = parseTypographyBlock(currentText)
-      ? typographyEdit(currentText, revertedConfig)
-      : documentScriptsEdit(currentText, revertedConfig.fonts);
-    this.suppressTypographyScaleConfirmation = true;
-    try {
-      this.editorInstance.dispatch({
-        changes: edit,
-        userEvent: "input.typography-scale-revert"
-      });
-    } finally {
-      this.suppressTypographyScaleConfirmation = false;
-    }
-  }
-
-  private async applyManualTypographyFontChange(config: DocumentTypography, filePath: string): Promise<void> {
-    try {
-      const fontsChanged = await this.updateWorkspaceTypographyFont(config);
-      if (!fontsChanged) return;
-      if (this.activeFilePath && filePathKey(this.activeFilePath) === filePathKey(filePath)) {
-        await this.refreshActivePreviewRoot(true);
-      }
-    } catch (error) {
-      this.appendLspLog({
-        kind: "error",
-        source: "typography",
-        message: `Unable to prepare the manually selected font scale: ${String(error)}`
-      });
-      await message(String(error), { title: "Unable to Scale Font", kind: "error" });
-    }
   }
 
   private async flushPendingLspSync(): Promise<void> {
@@ -6806,12 +6454,7 @@ export class TypsastraWorkspaceController {
         if (!accepted) return false;
       }
 
-      try {
-        await this.prepareWorkspaceTypographyFont(typography);
-      } finally {
-        this.typographyFontUpdateInProgress = false;
-        this.deferredTypographyPreviewContents = null;
-      }
+      await this.typographyController.prepareMainFileFonts(typography);
       return await this.typographyController.effective(path, source) ?? config;
     } catch (error) {
       this.appendLspLog({
@@ -6967,11 +6610,8 @@ export class TypsastraWorkspaceController {
     }
 
     if (this.pdfPreviewTimer !== null) window.clearTimeout(this.pdfPreviewTimer);
-    if (this.typographyScaleCheckTimer !== null) window.clearTimeout(this.typographyScaleCheckTimer);
     this.pdfPreviewTimer = null;
-    this.typographyScaleCheckTimer = null;
-    this.typographyScaleCheckGeneration += 1;
-    this.acceptedTypographyScales.clear();
+    this.typographyController.resetRuntime();
     this.approvedLargePreviewRoots.clear();
     this.inspectedPreviewRoots.clear();
     this.blockedLargePreviewRoot = null;
@@ -6979,7 +6619,6 @@ export class TypsastraWorkspaceController {
     this.previewScrollTop = 0;
     if (this.previewScrollSaveTimer !== null) window.clearTimeout(this.previewScrollSaveTimer);
     this.previewScrollSaveTimer = null;
-    this.lastTypographyInternalScaleError = "";
     this.pdfPreviewGeneration += 1;
     this.previewSyncController.cancelManual();
     this.tinymistPreviewRecoveryAttempts = 0;

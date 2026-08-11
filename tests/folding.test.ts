@@ -54,13 +54,17 @@ Content
 
   test("opens unfolded and restores only explicitly user-created folds", async () => {
     const controller = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
+    const editorController = await Bun.file(
+      new URL("../src/editor/editorController.ts", import.meta.url),
+    ).text();
     const extensions = await Bun.file(new URL("../src/editor/extensions.ts", import.meta.url)).text();
-    const restoreStart = controller.indexOf("private restoreTabFoldState");
-    const restoreEnd = controller.indexOf("private activateSpellcheckDocument", restoreStart);
-    const restore = controller.slice(restoreStart, restoreEnd);
+    const restoreStart = editorController.indexOf("restoreFoldState(");
+    const restoreEnd = editorController.indexOf("foldDocument()", restoreStart);
+    const restore = editorController.slice(restoreStart, restoreEnd);
 
-    expect(restore).toContain("if (!tab.foldStateExplicit)");
-    expect(restore).toContain("this.applyFoldRanges([])");
+    expect(restore).toContain("explicit");
+    expect(restore).toContain(": []");
+    expect(restore).toContain("this.applyFoldRanges(normalized)");
     expect(restore).not.toContain("foldAll(");
     expect(controller).not.toContain("scheduleLargeDocumentDefaultFolding");
     expect(extensions).toContain("This content is folded. Click to expand.");

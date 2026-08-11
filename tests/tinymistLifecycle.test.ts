@@ -25,10 +25,10 @@ describe("Tinymist workspace lifecycle", () => {
     expect(source).toContain("mainChanged && this.lspClient");
     expect(source).toContain("preparePinnedMainTypography(path)");
     expect(typographySource).toContain("scaled_workspace_font_set_status");
-    expect(source).toContain("activate_scaled_workspace_fonts");
-    expect(source).toContain("synchronizeDocumentTypography(typography)");
+    expect(typographySource).toContain("activate_scaled_workspace_fonts");
+    expect(typographySource).toContain("this.port.synchronizeDocumentTypography(config)");
     expect(source).toContain("ownsWorkspaceTypography && !await this.typographyController.confirmScaleRange(config)");
-    expect(source).toContain("if (!this.isPinnedMainFile(filePath))");
+    expect(typographySource).toContain("if (!this.port.isPinnedMainFile(activeFilePath))");
     expect(source.indexOf("preparePinnedMainTypography(path)")).toBeLessThan(
       source.indexOf("this.pinnedMainFilePath = path", source.indexOf("preparePinnedMainTypography(path)"))
     );
@@ -50,8 +50,11 @@ describe("Tinymist workspace lifecycle", () => {
 
   test("reloads template typography and synchronizes restored directives", async () => {
     const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
-    expect(source).toContain("private async reloadTemplateTypographyContext");
-    expect(source).toContain('restartTinymistSession("Reloading template typography..."');
+    const typographySource = await Bun.file(
+      new URL("../src/typography/typographyController.ts", import.meta.url),
+    ).text();
+    expect(typographySource).toContain("public async reloadTemplateContext");
+    expect(typographySource).toContain('this.port.restartTinymistSession("Reloading template typography...")');
     const activation = source.indexOf("private async activateEditorTab");
     const tabDispatch = source.indexOf("this.editorInstance.dispatch({", activation);
     const typographySync = source.indexOf(
@@ -98,8 +101,8 @@ describe("Tinymist workspace lifecycle", () => {
     const typographySource = await Bun.file(
       new URL("../src/typography/typographyController.ts", import.meta.url),
     ).text();
-    expect(source).toContain('userEvent: "input.typography-scale-correction"');
-    expect(source).toContain("this.typographyController.resetUnsupportedInternalScales");
+    expect(typographySource).toContain('this.port.dispatchDocumentEdit(edit, "input.typography-scale-correction")');
+    expect(typographySource).toContain("this.resetUnsupportedInternalScales");
     expect(typographySource).toContain("Typsastra will reset their scale to 1×");
   });
 
