@@ -19,12 +19,15 @@ describe("compiled PDF transport", () => {
 
   test("registers generated preview PDFs before Tinymist writes them", async () => {
     const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
+    const workspaceSource = await Bun.file(
+      new URL("../src/workspace/externalWorkspaceController.ts", import.meta.url),
+    ).text();
     const registration = source.indexOf("this.managedPreviewPdfPathKeys.add(anticipatedPdfPathKey)");
     const exportRequest = source.indexOf("await this.lspClient.exportPdfToFile(previewPath)");
     expect(registration).toBeGreaterThan(-1);
     expect(exportRequest).toBeGreaterThan(registration);
     expect(source).toContain('const anticipatedPdfPath = `${cacheRoot}/preview/${previewPdfName}`');
-    expect(source).toContain("excludeManagedWorkspacePaths(");
+    expect(workspaceSource).toContain("excludeManagedWorkspacePaths(");
   });
 
   test("shares the staged PDF generation with the undocked preview", async () => {

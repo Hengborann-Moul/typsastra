@@ -1,5 +1,43 @@
+import { join } from "@tauri-apps/api/path";
+import type { PreviewRenderMode } from "../settings";
+import type { EditorFoldRange } from "../editor/folding";
+import { relativeFilePath } from "../platform/paths";
 import { workspaceViewportState } from "./workspaceVisibility";
 import { WorkspaceWatcher, type WorkspaceChange } from "./workspaceWatcher";
+import {
+  normalizeWorkspaceMetadata,
+  WorkspaceStateStore,
+  type LegacyWorkspaceState,
+  type WorkspaceMetadata,
+} from "./workspaceStateStore";
+
+export interface WorkspacePersistenceTab {
+  path: string;
+  selectionAnchor: number;
+  selectionHead: number;
+  scrollTop?: number;
+  scrollLeft?: number;
+  foldStateExplicit: boolean;
+  foldRanges: EditorFoldRange[] | null;
+}
+
+export interface WorkspacePersistenceSnapshot {
+  rootPath: string | null;
+  metadata: WorkspaceMetadata | null;
+  activeFilePath: string | null;
+  pinnedMainFilePath: string | null;
+  recommendedToolchain: { tinymistVersion: string; typstVersion: string } | null;
+  selectedToolchain: { tinymistVersion: string; typstVersion: string } | null;
+  openTabs: readonly WorkspacePersistenceTab[];
+  expandedDirectories: readonly string[];
+  inputContainerWidthPct: number;
+  explorerSidebarWidthPx: number;
+  sidebarVisible: boolean;
+  activeSidebarTool: "explorer" | "images";
+  previewContentMode: "normal" | "draft";
+  previewRenderMode: PreviewRenderMode;
+  previewScrollTop: number;
+}
 
 export interface WorkspaceViewportInput {
   activeFilePath: string | null;
@@ -13,11 +51,16 @@ export interface WorkspaceControllerPort {
   pathKey(path: string): string;
   handleWorkspaceChange(change: WorkspaceChange): Promise<void>;
   reportWatchError(error: unknown): void;
+  persistActiveTabState(): void;
+  persistenceSnapshot(): WorkspacePersistenceSnapshot;
+  setWorkspaceMetadata(metadata: WorkspaceMetadata): void;
+  reportPersistenceError(error: unknown): void;
 }
 
 /** Owns workspace-level viewport transitions and their DOM projection. */
 export class WorkspaceController {
   private readonly watcher: WorkspaceWatcher;
+  private readonly stateStore = new WorkspaceStateStore();
   private readonly pendingChanges = new Map<string, WorkspaceChange>();
   private changeDrainRunning = false;
 
@@ -35,6 +78,100 @@ export class WorkspaceController {
   stopWatching(): void {
     this.watcher.stop();
     this.pendingChanges.clear();
+  }
+
+  saveState(): Promise<void> {
+    const snapshot = this.port.persistenceSnapshot();
+    if (!snapshot.rootPath || !snapshot.metadata) return Promise.resolve();
+    this.port.persistActiveTabState();
+    const current = this.port.persistenceSnapshot();
+    if (!current.rootPath || !current.metadata) return Promise.resolve();
+    const relative = (path: string | null): string | null => path
+      ? relativeFilePath(current.rootPath!, path)?.replace(/\\/g, "/") ?? null
+      : null;
+    const metadata: WorkspaceMetadata = {
+      project: {
+        ...current.metadata.project,
+        mainFile: relative(current.pinnedMainFilePath),
+        recommendedToolchain: current.recommendedToolchain,
+      },
+      workspace: {
+        schemaVersion: 2,
+        activeFile: relative(current.activeFilePath),
+        openTabs: current.openTabs.flatMap(tab => {
+          const path = relative(tab.path);
+          return path ? [{
+            path,
+            selectionAnchor: tab.selectionAnchor,
+            selectionHead: tab.selectionHead,
+            scrollTop: tab.scrollTop,
+            scrollLeft: tab.scrollLeft,
+            foldState: tab.foldStateExplicit ? "user" as const : null,
+            foldRanges: tab.foldStateExplicit ? tab.foldRanges : null,
+          }] : [];
+        }),
+        expandedDirectories: current.expandedDirectories.flatMap(path => {
+          const directory = relative(path);
+          return directory ? [directory] : [];
+        }),
+        layout: {
+          inputContainerWidthPct: current.inputContainerWidthPct,
+          explorerSidebarWidthPx: current.explorerSidebarWidthPx,
+          sidebarVisible: current.sidebarVisible,
+          activeSidebarTool: current.activeSidebarTool,
+        },
+        selectedToolchain: current.selectedToolchain,
+        previewContentMode: current.previewContentMode,
+        previewRenderMode: current.previewRenderMode,
+        previewScrollTop: current.previewScrollTop,
+      },
+    };
+    this.port.setWorkspaceMetadata(metadata);
+    return this.stateStore.save(current.rootPath, metadata).catch(error => {
+      this.port.reportPersistenceError(error);
+    });
+  }
+
+  async loadMetadata(workspacePath: string): Promise<WorkspaceMetadata> {
+    const stored = await this.stateStore.load(workspacePath);
+    if (stored) return stored;
+    const legacy = this.stateStore.loadLegacy(workspacePath);
+    const metadata = legacy
+      ? this.migrateLegacyState(workspacePath, legacy)
+      : normalizeWorkspaceMetadata({ project: null, workspace: null });
+    await this.stateStore.save(workspacePath, metadata);
+    if (legacy) this.stateStore.removeLegacy(workspacePath);
+    return metadata;
+  }
+
+  absolutePath(workspacePath: string, relativePath: string | null): Promise<string | null> {
+    return relativePath ? join(workspacePath, relativePath) : Promise.resolve(null);
+  }
+
+  private migrateLegacyState(
+    workspacePath: string,
+    legacy: LegacyWorkspaceState,
+  ): WorkspaceMetadata {
+    const relative = (path: string | null): string | null => path
+      ? relativeFilePath(workspacePath, path)?.replace(/\\/g, "/") ?? null
+      : null;
+    const metadata = normalizeWorkspaceMetadata({ project: null, workspace: null });
+    metadata.project.mainFile = relative(legacy.pinnedMainFilePath);
+    metadata.project.recommendedToolchain = legacy.recommendedToolchain;
+    metadata.workspace.activeFile = relative(legacy.activeFilePath);
+    metadata.workspace.openTabs = legacy.openTabs.flatMap(tab => {
+      const path = relative(tab.path);
+      return path ? [{ ...tab, path }] : [];
+    });
+    metadata.workspace.expandedDirectories = [];
+    metadata.workspace.layout = {
+      inputContainerWidthPct: legacy.inputContainerWidthPct,
+      explorerSidebarWidthPx: legacy.explorerSidebarWidthPx,
+      sidebarVisible: true,
+      activeSidebarTool: "explorer",
+    };
+    metadata.workspace.selectedToolchain = legacy.selectedToolchain;
+    return metadata;
   }
 
   public updateViewport(input: WorkspaceViewportInput): void {

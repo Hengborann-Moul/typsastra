@@ -50,6 +50,7 @@ import type { PreviewFrame, PreviewClickPoint, PreviewInteractionStatus, Preview
 import type { MarkdownPreviewFrame, MarkdownResource } from "./preview/markdownPreviewFrame";
 import { PreviewController } from "./preview/previewController";
 import { PreviewSyncController } from "./preview/previewSyncController";
+import { ImagePreviewController } from "./preview/imagePreviewController";
 import {
   tinymistDataPlaneFrameConfirmsSourceMap,
   tinymistDataPlaneFrameKind,
@@ -70,20 +71,16 @@ import {
 } from "./ui/brandColors";
 import { LayoutController } from "./layout/layoutController";
 import {
-  WorkspaceStateStore,
-  normalizeWorkspaceMetadata,
   workspaceRestoreCandidates,
-  type LegacyWorkspaceState,
   type WorkspaceMetadata
 } from "./workspace/workspaceStateStore";
 import { RecentProjectsController, recentProjectShortcutIndex } from "./workspace/recentProjectsController";
 import {
-  acceptedExternalChangePaths,
-  excludeManagedWorkspacePaths,
-  shouldSuppressWorkspaceSelfSave,
   type WorkspaceChange
 } from "./workspace/workspaceWatcher";
 import { WorkspaceController } from "./workspace/workspaceController";
+import { ProjectImportController } from "./workspace/projectImportController";
+import { ExternalWorkspaceController } from "./workspace/externalWorkspaceController";
 import { formatFileSize, largeFileOpeningNotice, largeMainPreviewOpeningNotice, type LargeFileOpeningNotice } from "./workspace/largeFileOpening";
 import { installWelcomeKeyboardNavigation } from "./workspace/welcomeNavigation";
 import { PerformanceController } from "./performance/performanceController";
@@ -106,11 +103,7 @@ import {
   type SpellingIssue,
 } from "./editor/spellcheck";
 import { DocumentLanguageService } from "./editor/languageScopes";
-import {
-  projectImportDestinationNameError,
-  type ImportedTypsastraProject,
-  type TypsastraProjectPreflight
-} from "./projectArchive";
+import type { ImportedTypsastraProject } from "./projectArchive";
 import { AppUpdateController } from "./appUpdateController";
 import { releaseSummaryForVersion, shouldShowReleaseSummary } from "./releaseNotes";
 import { WebviewStorageController } from "./webviewStorageController";
@@ -452,11 +445,6 @@ export class TypsastraWorkspaceController {
   private pdfLoadRequestGeneration = 0;
   private readonly blockedLargePdfPaths = new Set<string>();
   private previewPageStatus: PreviewPageStatus = { currentPage: 0, pageCount: 0 };
-  private imageZoomIn: (() => void) | null = null;
-  private imageZoomOut: (() => void) | null = null;
-  private imageZoomToFit: (() => void) | null = null;
-  private imageZoomPercent: (() => number) | null = null;
-  private imageIsFit: (() => boolean) | null = null;
   private pdfSyncPreviewTaskKey: string | null = null;
   private pdfSyncRegisteredTaskId: string | null = null;
   private pdfSourceMapStartupKey: string | null = null;
@@ -706,6 +694,71 @@ export class TypsastraWorkspaceController {
     pathKey: filePathKey,
     handleWorkspaceChange: change => this.handleWorkspaceChange(change),
     reportWatchError: error => this.reportWorkspaceWatchError(error),
+    persistActiveTabState: () => this.persistActiveTabState(),
+    persistenceSnapshot: () => ({
+      rootPath: this.workspaceRootPath,
+      metadata: this.workspaceMetadata,
+      activeFilePath: this.activeFilePath,
+      pinnedMainFilePath: this.pinnedMainFilePath,
+      recommendedToolchain: this.recommendedWorkspaceToolchain,
+      selectedToolchain: this.selectedWorkspaceToolchain,
+      openTabs: this.openTabs,
+      expandedDirectories: this.explorer.expandedDirectoryPaths(),
+      inputContainerWidthPct: this.layoutController.getDockedInputWidthPct(),
+      explorerSidebarWidthPx: parseInt(
+        document.getElementById("explorer-sidebar")?.style.width ?? "",
+        10,
+      ) || DEFAULT_EXPLORER_WIDTH_PX,
+      sidebarVisible: this.sidebarController.visible,
+      activeSidebarTool: this.sidebarController.activeTool,
+      previewContentMode: this.previewContentMode,
+      previewRenderMode: this.effectivePreviewRenderMode,
+      previewScrollTop: this.previewScrollTop,
+    }),
+    setWorkspaceMetadata: metadata => {
+      this.workspaceMetadata = metadata;
+    },
+    reportPersistenceError: error => this.appendDeveloperLog({
+      kind: "error",
+      source: "workspace",
+      message: `Failed to save workspace state: ${String(error)}`,
+    }),
+  });
+  private readonly imagePreviewController = new ImagePreviewController({
+    setMessage: html => this.previewFrame.setMessage(html),
+    setError: (title, detail) => this.previewFrame.setError(title, detail),
+    updateToolbar: path => this.updatePreviewActionsToolbar(path),
+    updateZoomLabel: scale => this.updatePreviewZoomLabel(scale),
+  });
+  private readonly projectImportController = new ProjectImportController({
+    setStatus: status => this.setLspStatus(status),
+    selectToolchainVersion: version => this.settingsController.update(settings => {
+      settings.toolchain.tinymistVersion = version;
+    }),
+    handleToolchainChanged: status => this.handleToolchainChanged(status),
+    completeImport: (imported, projectName) => this.completeProjectImport(imported, projectName),
+  });
+  private readonly externalWorkspaceController = new ExternalWorkspaceController({
+    workspaceRoot: () => this.workspaceRootPath,
+    pathKey: filePathKey,
+    openTabPaths: () => this.openTabs.map(tab => tab.path),
+    conflictPaths: () => this.externalConflictPaths,
+    managedPathKeys: () => new Set([
+      ...this.managedPreviewPdfPathKeys,
+      ...this.managedImageToolPathKeys,
+    ]),
+    reloadOpenFiles: refreshPreview => this.reloadOpenFilesFromDisk(refreshPreview),
+    lspClient: () => this.lspClient,
+    lspReady: () => this.lspReady,
+    loadExplorer: rootPath => this.explorer.loadWorkspace(rootPath),
+    refreshImageTools: () => { void this.imageToolsController.refresh(); },
+    imageToolsActive: () => this.sidebarController.activeTool === "images",
+    retireSourceMap: reason => this.retirePdfSourceMapSession(reason),
+    refreshPreview: force => this.refreshActivePreviewRoot(force),
+    waitForPreviewRefresh: () => this.waitForExternalPreviewRefresh(),
+    setRefreshPending: pending => { this.externalPreviewRefreshPending = pending; },
+    updateForwardSyncAction: () => this.updateManualForwardSyncAction(),
+    log: (kind, message) => this.appendDeveloperLog({ kind, source: "workspace", message }),
   });
   private readonly typographyController = new TypographyController({
     getWorkspaceRootPath: () => this.workspaceRootPath,
@@ -717,7 +770,6 @@ export class TypsastraWorkspaceController {
     }),
   });
   private readonly documentLanguageService = new DocumentLanguageService();
-  private readonly workspaceStateStore = new WorkspaceStateStore();
   private readonly recentProjectsController = new RecentProjectsController(
     path => this.openWorkspace(path),
     async path => {
@@ -2833,11 +2885,7 @@ export class TypsastraWorkspaceController {
         this.renderNonTextEditorPlaceholder(path, unsupportedFile);
         document.getElementById("wysiwym-editor-pane")?.classList.add("hidden");
 
-        this.imageZoomIn = null;
-        this.imageZoomOut = null;
-        this.imageZoomToFit = null;
-        this.imageZoomPercent = null;
-        this.imageIsFit = null;
+        this.imagePreviewController.clear();
 
         this.activateSpellcheckDocument(null);
         this.documentOutlineController.clear();
@@ -2867,11 +2915,7 @@ export class TypsastraWorkspaceController {
         this.resumeDeferredWorkspaceServices();
         return;
       } else {
-        this.imageZoomIn = null;
-        this.imageZoomOut = null;
-        this.imageZoomToFit = null;
-        this.imageZoomPercent = null;
-        this.imageIsFit = null;
+        this.imagePreviewController.clear();
 
         this.updatePreviewActionsToolbar(path);
         codeRenderPane?.classList.remove("hidden");
@@ -6212,10 +6256,11 @@ export class TypsastraWorkspaceController {
     const label = document.getElementById("preview-zoom-label");
     if (!label) return;
 
-    if (this.imageZoomPercent && this.imageIsFit) {
-      const isFit = this.imageIsFit();
-      const pct = Math.round((zoomPercent ?? this.imageZoomPercent()) * 100);
-      label.textContent = isFit ? "Fit" : `${pct}%`;
+    const imageZoomPercent = this.imagePreviewController.zoomPercent;
+    const imageIsFit = this.imagePreviewController.isFit;
+    if (imageZoomPercent !== null && imageIsFit !== null) {
+      const pct = Math.round((zoomPercent ?? imageZoomPercent) * 100);
+      label.textContent = imageIsFit ? "Fit" : `${pct}%`;
     } else {
       const pct = zoomPercent ?? this.previewFrame.currentZoomPercent;
       label.textContent = this.previewFrame.isFitMode ? "Fit" : `${pct}%`;
@@ -6453,27 +6498,21 @@ export class TypsastraWorkspaceController {
   }
 
   private zoomIn(): void {
-    if (this.imageZoomIn) {
-      this.imageZoomIn();
-    } else {
+    if (!this.imagePreviewController.zoomIn()) {
       this.previewFrame.zoomIn();
       this.updatePreviewZoomLabel();
     }
   }
 
   private zoomOut(): void {
-    if (this.imageZoomOut) {
-      this.imageZoomOut();
-    } else {
+    if (!this.imagePreviewController.zoomOut()) {
       this.previewFrame.zoomOut();
       this.updatePreviewZoomLabel();
     }
   }
 
   private zoomToFit(): void {
-    if (this.imageZoomToFit) {
-      this.imageZoomToFit();
-    } else {
+    if (!this.imagePreviewController.zoomToFit()) {
       this.previewFrame.zoomToFit();
       this.updatePreviewZoomLabel();
     }
@@ -7177,97 +7216,16 @@ export class TypsastraWorkspaceController {
   }
 
   private saveWorkspaceState(): Promise<void> {
-    if (!this.workspaceRootPath || !this.workspaceMetadata) return Promise.resolve();
-    
-    this.persistActiveTabState();
-    
-    const explorerSidebar = document.getElementById("explorer-sidebar");
-    
-    const relative = (path: string | null): string | null => path && this.workspaceRootPath
-      ? relativeFilePath(this.workspaceRootPath, path)?.replace(/\\/g, "/") ?? null
-      : null;
-    const metadata: WorkspaceMetadata = {
-      project: {
-        ...this.workspaceMetadata.project,
-        mainFile: relative(this.pinnedMainFilePath),
-        recommendedToolchain: this.recommendedWorkspaceToolchain
-      },
-      workspace: {
-        schemaVersion: 2,
-        activeFile: relative(this.activeFilePath),
-        openTabs: this.openTabs.flatMap(tab => {
-          const path = relative(tab.path);
-          return path ? [{
-            path,
-            selectionAnchor: tab.selectionAnchor,
-            selectionHead: tab.selectionHead,
-            scrollTop: tab.scrollTop,
-            scrollLeft: tab.scrollLeft,
-            foldState: tab.foldStateExplicit ? "user" : null,
-            foldRanges: tab.foldStateExplicit ? tab.foldRanges : null
-          }] : [];
-        }),
-        expandedDirectories: this.explorer.expandedDirectoryPaths().flatMap(path => {
-          const directory = relative(path);
-          return directory ? [directory] : [];
-        }),
-        layout: {
-          inputContainerWidthPct: this.layoutController.getDockedInputWidthPct(),
-          explorerSidebarWidthPx: explorerSidebar?.style.width ? parseInt(explorerSidebar.style.width, 10) : DEFAULT_EXPLORER_WIDTH_PX,
-          sidebarVisible: this.sidebarController.visible,
-          activeSidebarTool: this.sidebarController.activeTool
-        },
-        selectedToolchain: this.selectedWorkspaceToolchain,
-        previewContentMode: this.previewContentMode,
-        previewRenderMode: this.effectivePreviewRenderMode,
-        previewScrollTop: this.previewScrollTop
-      }
-    };
-    this.workspaceMetadata = metadata;
-    return this.workspaceStateStore.save(this.workspaceRootPath, metadata).catch(error => {
-      this.appendDeveloperLog({ kind: "error", source: "workspace", message: `Failed to save workspace state: ${String(error)}` });
-    });
+    return this.workspaceController.saveState();
   }
 
-  private migrateLegacyWorkspaceState(workspacePath: string, legacy: LegacyWorkspaceState): WorkspaceMetadata {
-    const relative = (path: string | null): string | null => path
-      ? relativeFilePath(workspacePath, path)?.replace(/\\/g, "/") ?? null
-      : null;
-    const metadata = normalizeWorkspaceMetadata({ project: null, workspace: null });
-    metadata.project.mainFile = relative(legacy.pinnedMainFilePath);
-    metadata.project.recommendedToolchain = legacy.recommendedToolchain;
-    metadata.workspace.activeFile = relative(legacy.activeFilePath);
-    metadata.workspace.openTabs = legacy.openTabs.flatMap(tab => {
-      const path = relative(tab.path);
-      return path ? [{ ...tab, path }] : [];
-    });
-    metadata.workspace.expandedDirectories = [];
-    metadata.workspace.layout = {
-      inputContainerWidthPct: legacy.inputContainerWidthPct,
-      explorerSidebarWidthPx: legacy.explorerSidebarWidthPx,
-      sidebarVisible: true,
-      activeSidebarTool: "explorer"
-    };
-    metadata.workspace.selectedToolchain = legacy.selectedToolchain;
-    return metadata;
+  private loadWorkspaceMetadata(workspacePath: string): Promise<WorkspaceMetadata> {
+    return this.workspaceController.loadMetadata(workspacePath);
   }
 
-  private async loadWorkspaceMetadata(workspacePath: string): Promise<WorkspaceMetadata> {
-    const stored = await this.workspaceStateStore.load(workspacePath);
-    if (stored) return stored;
-    const legacy = this.workspaceStateStore.loadLegacy(workspacePath);
-    const metadata = legacy
-      ? this.migrateLegacyWorkspaceState(workspacePath, legacy)
-      : normalizeWorkspaceMetadata({ project: null, workspace: null });
-    await this.workspaceStateStore.save(workspacePath, metadata);
-    if (legacy) this.workspaceStateStore.removeLegacy(workspacePath);
-    return metadata;
+  private absoluteWorkspacePath(workspacePath: string, relativePath: string | null): Promise<string | null> {
+    return this.workspaceController.absolutePath(workspacePath, relativePath);
   }
-
-  private async absoluteWorkspacePath(workspacePath: string, relativePath: string | null): Promise<string | null> {
-    return relativePath ? join(workspacePath, relativePath) : null;
-  }
-
   private async restoreWorkspaceState(workspacePath: string, metadata: WorkspaceMetadata) {
     try {
       const state = metadata.workspace;
@@ -7375,115 +7333,9 @@ export class TypsastraWorkspaceController {
     }
   }
 
-  private async handleWorkspaceChange(change: WorkspaceChange): Promise<void> {
-    const workspaceRoot = this.workspaceRootPath;
-    if (!workspaceRoot || filePathKey(change.rootPath) !== filePathKey(workspaceRoot)) return;
-
-    // Ignore changes that are only inside the cache (.typsastra) directory to prevent infinite loops and race conditions
-    const nonCachePaths = change.paths.filter(path => {
-      const relPath = path.startsWith(workspaceRoot)
-        ? path.substring(workspaceRoot.length)
-        : path;
-      const cleanRel = relPath.replace(/^[/\\]+/, "").replace(/\\/g, "/");
-      return !cleanRel.startsWith(".typsastra");
-    });
-    const managedWorkspacePaths = new Set([
-      ...this.managedPreviewPdfPathKeys,
-      ...this.managedImageToolPathKeys,
-    ]);
-    const externalPaths = excludeManagedWorkspacePaths(
-      nonCachePaths,
-      filePathKey,
-      managedWorkspacePaths
-    );
-    
-    if (externalPaths.length === 0) {
-      if (nonCachePaths.length > 0) {
-        this.appendDeveloperLog({
-          kind: "info",
-          source: "workspace",
-          message: `Suppressed ${nonCachePaths.length} application-managed workspace change${nonCachePaths.length === 1 ? "" : "s"}.`
-        });
-      }
-      return;
-    }
-
-    const openPathKeysBeforeReload = new Set(this.openTabs.map(tab => filePathKey(tab.path)));
-
-    // One ordered synchronization path: editor state, render mirror, LSP, preview.
-    const openFilesChanged = await this.reloadOpenFilesFromDisk(false);
-    if (this.workspaceRootPath !== workspaceRoot) return;
-    // The workspace watcher also observes Typsastra's own saves. When every
-    // reported source path is already open and its disk contents still match
-    // the saved editor revision, there is no external change to propagate.
-    // Avoid rebuilding the mirror and invalidating Tinymist a second time.
-    const externalPathKeys = externalPaths.map(filePathKey);
-    if (shouldSuppressWorkspaceSelfSave(
-      openFilesChanged,
-      externalPathKeys,
-      openPathKeysBeforeReload
-    )) {
-      this.appendDeveloperLog({
-        kind: "info",
-        source: "workspace",
-        message: "Workspace watcher self-save event suppressed; mirror preparation and duplicate Tinymist invalidation skipped."
-      });
-      return;
-    }
-
-    // A dirty tab intentionally keeps its in-memory revision. Do not let the
-    // conflicting disk revision update Tinymist, the prepared render mirror,
-    // or the PDF source-map task behind that editor buffer.
-    const acceptedPaths = acceptedExternalChangePaths(
-      externalPaths,
-      filePathKey,
-      this.externalConflictPaths
-    );
-
-    if (acceptedPaths.length === 0) {
-      await this.explorer.loadWorkspace(workspaceRoot);
-      return;
-    }
-    this.appendDeveloperLog({
-      kind: "info",
-      source: "workspace",
-      message: `Accepted workspace ${change.kind}: ${acceptedPaths.join(", ")}`
-    });
-
-    // External edits must use the same ordered path as editor-driven renders.
-    // That path rebuilds the mirror and source map, synchronizes Tinymist's
-    // already-open generated documents, exports the replacement PDF, and then
-    // warms a source-map session for that exact revision.
-    this.externalPreviewRefreshPending = true;
-    this.updateManualForwardSyncAction();
-    try {
-      await this.retirePdfSourceMapSession("accepted external workspace change");
-      if (this.lspReady && this.lspClient) {
-        const defaultType: 1 | 2 | 3 = change.kind === "create" ? 1 : change.kind === "remove" ? 3 : 2;
-        const lastPathIndex = acceptedPaths.length - 1;
-        const changes = acceptedPaths.map((path, index) => {
-          return {
-            uri: filePathToUri(path),
-            type: change.kind === "rename" && change.paths.length > 1
-              ? (index === lastPathIndex ? 1 : 3) as 1 | 3
-              : defaultType
-          };
-        });
-        await this.lspClient.notifyWorkspaceFilesChanged(changes);
-      }
-      await this.explorer.loadWorkspace(workspaceRoot);
-      if (this.sidebarController.activeTool === "images") {
-        void this.imageToolsController.refresh();
-      }
-      if (this.workspaceRootPath !== workspaceRoot) return;
-      await this.refreshActivePreviewRoot(true);
-      await this.waitForExternalPreviewRefresh();
-    } finally {
-      this.externalPreviewRefreshPending = false;
-      this.updateManualForwardSyncAction();
-    }
+  private handleWorkspaceChange(change: WorkspaceChange): Promise<void> {
+    return this.externalWorkspaceController.handleChange(change);
   }
-
   private async retirePdfSourceMapSession(reason: string): Promise<void> {
     const taskId = this.pdfSyncRegisteredTaskId;
     this.cancelManualForwardSync();
@@ -7967,11 +7819,7 @@ export class TypsastraWorkspaceController {
   private renderImageToolPreview(source: string | null, imagePath?: string): void {
     if (this.sidebarController.activeTool !== "images") return;
     if (!source) {
-      this.imageZoomIn = null;
-      this.imageZoomOut = null;
-      this.imageZoomToFit = null;
-      this.imageZoomPercent = null;
-      this.imageIsFit = null;
+      this.imagePreviewController.clear();
       this.updatePreviewActionsToolbar(imagePath ?? "image-tools.png");
       this.previewFrame.setMessage(
         `<div class="preview-disabled-placeholder">` +
@@ -7985,134 +7833,12 @@ export class TypsastraWorkspaceController {
     this.renderInteractiveImageViewer(source, imagePath);
   }
 
-  private renderInteractiveImageViewer(src: string, previewPath = this.activeFilePath ?? "preview.png") {
-    this.updatePreviewActionsToolbar(previewPath);
-
-    this.previewFrame.setMessage(
-      `<div id="interactive-image-container" style="position:relative;width:100%;height:100%;background:var(--ui-bg);overflow:hidden;display:flex;align-items:center;justify-content:center;user-select:none;box-sizing:border-box;">` +
-      `<img id="interactive-image-el" alt="Image preview" draggable="false" style="max-width:none;max-height:none;position:absolute;cursor:grab;user-select:none;will-change:transform;visibility:hidden;" />` +
-      `</div>`
-    );
-
-    const container = document.getElementById("interactive-image-container");
-    const img = document.getElementById("interactive-image-el") as HTMLImageElement | null;
-
-    if (!container || !img) return;
-
-    let scale = 1;
-    let x = 0;
-    let y = 0;
-    let isDragging = false;
-    let startX = 0;
-    let startY = 0;
-    let isFit = true;
-
-    const updateTransform = () => {
-      img.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
-    };
-
-    const resetToFit = () => {
-      const cWidth = container.clientWidth;
-      const cHeight = container.clientHeight;
-      const iWidth = img.naturalWidth;
-      const iHeight = img.naturalHeight;
-      if (cWidth <= 0 || cHeight <= 0 || iWidth <= 0 || iHeight <= 0) return;
-
-      const scaleX = cWidth / iWidth;
-      const scaleY = cHeight / iHeight;
-      scale = Math.min(scaleX, scaleY, 1);
-      x = 0;
-      y = 0;
-      updateTransform();
-      img.style.visibility = "visible";
-    };
-
-    const zoomInImg = () => {
-      const zoomFactor = 1.2;
-      scale = Math.min(scale * zoomFactor, 20);
-      isFit = false;
-      updateTransform();
-      this.updatePreviewZoomLabel(scale);
-    };
-
-    const zoomOutImg = () => {
-      const zoomFactor = 1.2;
-      scale = Math.max(scale / zoomFactor, 0.05);
-      isFit = false;
-      updateTransform();
-      this.updatePreviewZoomLabel(scale);
-    };
-
-    const zoomToFitImg = () => {
-      resetToFit();
-      isFit = true;
-      this.updatePreviewZoomLabel(scale);
-    };
-
-    this.imageZoomIn = zoomInImg;
-    this.imageZoomOut = zoomOutImg;
-    this.imageZoomToFit = zoomToFitImg;
-    this.imageZoomPercent = () => scale;
-    this.imageIsFit = () => isFit;
-
-    img.onload = () => {
-      requestAnimationFrame(() => {
-        resetToFit();
-        isFit = true;
-        this.updatePreviewZoomLabel(scale);
-      });
-    };
-    img.onerror = () => this.previewFrame.setError(
-      "Image preview unavailable",
-      "Typsastra could not decode this image."
-    );
-    img.src = src;
-
-    container.addEventListener("wheel", (e) => {
-      e.preventDefault();
-      const zoomFactor = 1.1;
-      const rect = container.getBoundingClientRect();
-      const mouseX = e.clientX - rect.left - rect.width / 2;
-      const mouseY = e.clientY - rect.top - rect.height / 2;
-
-      const prevScale = scale;
-      if (e.deltaY < 0) {
-        scale = Math.min(scale * zoomFactor, 20);
-      } else {
-        scale = Math.max(scale / zoomFactor, 0.05);
-      }
-
-      x = mouseX - (mouseX - x) * (scale / prevScale);
-      y = mouseY - (mouseY - y) * (scale / prevScale);
-      isFit = false;
-      updateTransform();
-      this.updatePreviewZoomLabel(scale);
-    }, { passive: false });
-
-    container.addEventListener("mousedown", (e) => {
-      if (e.button !== 0) return;
-      isDragging = true;
-      img.style.cursor = "grabbing";
-      startX = e.clientX - x;
-      startY = e.clientY - y;
-      e.preventDefault();
-    });
-
-    window.addEventListener("mousemove", (e) => {
-      if (!isDragging) return;
-      x = e.clientX - startX;
-      y = e.clientY - startY;
-      updateTransform();
-    });
-
-    window.addEventListener("mouseup", () => {
-      if (isDragging) {
-        isDragging = false;
-        img.style.cursor = "grab";
-      }
-    });
+  private renderInteractiveImageViewer(
+    src: string,
+    previewPath = this.activeFilePath ?? "preview.png",
+  ): void {
+    this.imagePreviewController.render(src, previewPath);
   }
-
   private async refreshActivePreviewRoot(forceRender = false): Promise<void> {
     if (this.sidebarController.activeTool === "images") return;
     if (!this.activeFilePath) return;
@@ -8121,11 +7847,7 @@ export class TypsastraWorkspaceController {
     const unsupportedFile = !this.isInternallySupportedPath(path);
     const isPdf = ext === "pdf";
 
-    this.imageZoomIn = null;
-    this.imageZoomOut = null;
-    this.imageZoomToFit = null;
-    this.imageZoomPercent = null;
-    this.imageIsFit = null;
+    this.imagePreviewController.clear();
 
     this.updatePreviewActionsToolbar(path);
 
@@ -8442,358 +8164,37 @@ export class TypsastraWorkspaceController {
     }
   }
 
-  private async importTypsastraProject(archivePath?: string): Promise<void> {
-    const selected = archivePath ?? await open({
-      directory: false,
-      multiple: false,
-      filters: [{ name: "Typsastra Project", extensions: ["typsastra", "typstella"] }]
-    });
-    if (typeof selected !== "string") return;
-
-    try {
-      this.setLspStatus({ kind: "starting", message: "Inspecting Typsastra project..." });
-      let inspection = await invoke<TypsastraProjectPreflight>("inspect_typsastra_project", {
-        archivePath: selected
-      });
-      const requiredTinymist = inspection.manifest.toolchain.tinymistVersion;
-      const requiredTypst = inspection.manifest.toolchain.typstVersion;
-      let allowIncompatibleToolchain = false;
-
-      if (inspection.toolchainState === "exact-installed") {
-        const useInstalled = await confirm(
-          `This project requires Tinymist ${requiredTinymist} with Typst ${requiredTypst}. ` +
-          "The compatible version is installed but not active. Use it for this import?",
-          {
-            title: "Compatible Toolchain Available",
-            kind: "info",
-            okLabel: "Use Compatible Version",
-            cancelLabel: "Other Options"
-          }
-        );
-        if (useInstalled) {
-          const status = await invoke<ToolchainStatus>("select_project_toolchain", {
-            tinymistVersion: requiredTinymist,
-            typstVersion: requiredTypst
-          });
-          this.settingsController.update(settings => {
-            settings.toolchain.tinymistVersion = requiredTinymist;
-          });
-          await this.handleToolchainChanged(status);
-          inspection = await invoke<TypsastraProjectPreflight>("inspect_typsastra_project", {
-            archivePath: selected
-          });
-        } else {
-          allowIncompatibleToolchain = await this.confirmIncompatibleProjectImport(inspection);
-          if (!allowIncompatibleToolchain) return;
-        }
-      } else if (inspection.toolchainState === "download-required") {
-        const downloadCompatible = await confirm(
-          `This project was exported with Tinymist ${requiredTinymist}, which embeds Typst ${requiredTypst}. ` +
-          "Download and activate that compatible version before importing?",
-          {
-            title: "Compatible Toolchain Required",
-            kind: "info",
-            okLabel: "Download Compatible Version",
-            cancelLabel: "Other Options"
-          }
-        );
-        if (downloadCompatible) {
-          try {
-            this.setLspStatus({
-              kind: "starting",
-              message: `Downloading Tinymist ${requiredTinymist} for imported project...`
-            });
-            const status = await invoke<ToolchainStatus>("install_tinymist_toolchain", {
-              version: requiredTinymist
-            });
-            const exact = status.tinymistVersion === requiredTinymist
-              && status.typstVersion === requiredTypst;
-            await this.handleToolchainChanged(status);
-            if (!exact) {
-              inspection = {
-                ...inspection,
-                activeTinymistVersion: status.tinymistVersion,
-                activeTypstVersion: status.typstVersion
-              };
-              const useMismatch = await confirm(
-                `Downloaded Tinymist ${status.tinymistVersion ?? "unknown"} reports Typst ` +
-                `${status.typstVersion ?? "unknown"}, but the project requires Typst ${requiredTypst}.\n\n` +
-                "Import with this incompatible version anyway?",
-                {
-                  title: "Downloaded Toolchain Is Incompatible",
-                  kind: "warning",
-                  okLabel: "Import Anyway",
-                  cancelLabel: "Cancel"
-                }
-              );
-              if (!useMismatch) return;
-              allowIncompatibleToolchain = true;
-            } else {
-              this.settingsController.update(settings => {
-                settings.toolchain.tinymistVersion = requiredTinymist;
-              });
-              inspection = await invoke<TypsastraProjectPreflight>("inspect_typsastra_project", {
-                archivePath: selected
-              });
-            }
-          } catch (downloadError) {
-            const recovered = await invoke<ToolchainStatus>("get_toolchain_status").catch(() => null);
-            if (recovered) {
-              await this.handleToolchainChanged(recovered);
-              inspection = {
-                ...inspection,
-                activeTinymistVersion: recovered.tinymistVersion,
-                activeTypstVersion: recovered.typstVersion
-              };
-            }
-            const importAfterFailure = await confirm(
-              `The compatible toolchain could not be downloaded or verified.\n\n${String(downloadError)}\n\n` +
-              "Import with the current environment without a compatibility guarantee?",
-              {
-                title: "Compatible Toolchain Unavailable",
-                kind: "warning",
-                okLabel: "Import Anyway",
-                cancelLabel: "Cancel"
-              }
-            );
-            if (!importAfterFailure) return;
-            allowIncompatibleToolchain = true;
-          }
-        } else {
-          allowIncompatibleToolchain = await this.confirmIncompatibleProjectImport(inspection);
-          if (!allowIncompatibleToolchain) return;
-        }
-      }
-
-      if (!allowIncompatibleToolchain && inspection.toolchainState !== "exact-active") {
-        throw new Error("The required project toolchain could not be activated.");
-      }
-      const destinationParent = await open({
-        directory: true,
-        multiple: false,
-        title: "Choose where to import the project"
-      });
-      if (typeof destinationParent !== "string") return;
-      const destination = await this.chooseProjectImportDestination(inspection, destinationParent);
-      if (!destination) return;
-
-      this.setLspStatus({ kind: "starting", message: "Verifying and importing project..." });
-      const imported = await this.runCancellableProjectImport({
-        archivePath: selected,
-        destinationPath: destination.path,
-        expectedManifestSha256: inspection.manifestSha256,
-        allowIncompatibleToolchain
-      });
-      await this.openWorkspace(imported.workspacePath);
-      const activeToolchain = await invoke<ToolchainStatus>("get_toolchain_status").catch(() => null);
-      this.recommendedWorkspaceToolchain = {
-        tinymistVersion: imported.manifest.toolchain.tinymistVersion,
-        typstVersion: imported.manifest.toolchain.typstVersion
-      };
-      this.selectedWorkspaceToolchain = activeToolchain?.tinymistVersion && activeToolchain.typstVersion
-        ? { tinymistVersion: activeToolchain.tinymistVersion, typstVersion: activeToolchain.typstVersion }
-        : null;
-      if (this.workspaceRootPath && filePathKey(this.workspaceRootPath) === filePathKey(imported.workspacePath)) {
-        await this.setPinnedMainFile(imported.mainFilePath);
-        await this.saveWorkspaceState();
-        this.setLspStatus({ kind: "preview-ready", message: `Imported ${destination.name}` });
-      } else {
-        await message(`The project was imported to:\n\n${imported.workspacePath}`, {
-          title: "Project Imported",
-          kind: "info"
-        });
-      }
-    } catch (error) {
-      this.setLspStatus({ kind: "error", message: `Project import failed: ${error}` });
-      await message(String(error), { title: "Typsastra Project Import Failed", kind: "error" });
-    }
+  private importTypsastraProject(archivePath?: string): Promise<void> {
+    return this.projectImportController.importProject(archivePath);
   }
 
-  private chooseProjectImportDestination(
-    inspection: TypsastraProjectPreflight,
-    parentPath: string
-  ): Promise<{ name: string; path: string } | null> {
-    const overlay = document.getElementById("project-import-overlay");
-    const closeButton = document.getElementById("project-import-close") as HTMLButtonElement | null;
-    const cancelButton = document.getElementById("project-import-cancel") as HTMLButtonElement | null;
-    const confirmButton = document.getElementById("project-import-confirm") as HTMLButtonElement | null;
-    const input = document.getElementById("project-import-name") as HTMLInputElement | null;
-    const originalName = document.getElementById("project-import-original-name");
-    const parent = document.getElementById("project-import-parent");
-    const resolvedPath = document.getElementById("project-import-path");
-    const validation = document.getElementById("project-import-name-error");
-    const details = document.getElementById("project-import-details");
-    if (
-      !overlay || !closeButton || !cancelButton || !confirmButton || !input
-      || !originalName || !parent || !resolvedPath || !validation || !details
-    ) {
-      return Promise.reject(new Error("The project import dialog is unavailable."));
-    }
-
-    originalName.textContent = inspection.manifest.project.name;
-    parent.textContent = parentPath;
-    details.textContent = `${inspection.entryCount} archive entries · ${formatFileSize(inspection.totalUncompressedBytes)} uncompressed`;
-    input.value = inspection.suggestedFolderName;
-    resolvedPath.textContent = "";
-    validation.textContent = "";
-    confirmButton.disabled = true;
-    overlay.classList.remove("hidden");
-
-    return new Promise(resolve => {
-      let validationSequence = 0;
-      let validationTimer: ReturnType<typeof setTimeout> | null = null;
-      let acceptedPath: string | null = null;
-      let settled = false;
-
-      const finish = (result: { name: string; path: string } | null) => {
-        if (settled) return;
-        settled = true;
-        validationSequence += 1;
-        if (validationTimer !== null) clearTimeout(validationTimer);
-        input.removeAttribute("aria-busy");
-        overlay.classList.add("hidden");
-        closeButton.removeEventListener("click", cancel);
-        cancelButton.removeEventListener("click", cancel);
-        confirmButton.removeEventListener("click", accept);
-        input.removeEventListener("input", validate);
-        overlay.removeEventListener("pointerdown", backdropCancel);
-        document.removeEventListener("keydown", onKeyDown, true);
-        resolve(result);
-      };
-      const cancel = () => finish(null);
-      const previewDestinationPath = (name: string) => {
-        const separator = parentPath.includes("\\") && !parentPath.includes("/") ? "\\" : "/";
-        return `${parentPath.replace(/[\\/]+$/u, "")}${separator}${name}`;
-      };
-      const backdropCancel = (event: PointerEvent) => {
-        if (event.target === overlay) cancel();
-      };
-      const onKeyDown = (event: KeyboardEvent) => {
-        if (event.key === "Escape") {
-          event.preventDefault();
-          cancel();
-        } else if (event.key === "Enter" && event.target === input && !confirmButton.disabled) {
-          event.preventDefault();
-          accept();
-        }
-      };
-      const runValidation = (delay: number, acceptWhenValid = false) => {
-        const sequence = ++validationSequence;
-        const name = input.value;
-        if (validationTimer !== null) {
-          clearTimeout(validationTimer);
-          validationTimer = null;
-        }
-        acceptedPath = null;
-        validation.textContent = "";
-        input.removeAttribute("aria-busy");
-        const localError = projectImportDestinationNameError(name);
-        if (localError) {
-          confirmButton.disabled = true;
-          input.setAttribute("aria-invalid", "true");
-          validation.textContent = localError;
-          return;
-        }
-        input.removeAttribute("aria-invalid");
-        resolvedPath.textContent = previewDestinationPath(name);
-        confirmButton.disabled = false;
-        input.setAttribute("aria-busy", "true");
-        validationTimer = setTimeout(() => {
-          validationTimer = null;
-          void invoke<string>("validate_typsastra_project_import_destination", {
-            parentPath,
-            projectName: name
-          }).then(path => {
-            if (settled || sequence !== validationSequence) return;
-            input.removeAttribute("aria-busy");
-            acceptedPath = path;
-            resolvedPath.textContent = path;
-            confirmButton.disabled = false;
-            if (acceptWhenValid) finish({ name, path });
-          }).catch(error => {
-            if (settled || sequence !== validationSequence) return;
-            input.removeAttribute("aria-busy");
-            confirmButton.disabled = true;
-            input.setAttribute("aria-invalid", "true");
-            validation.textContent = String(error);
-          });
-        }, delay);
-      };
-      const validate = () => runValidation(180);
-      const accept = () => {
-        if (confirmButton.disabled) return;
-        if (acceptedPath) {
-          finish({ name: input.value, path: acceptedPath });
-          return;
-        }
-        runValidation(0, true);
-      };
-
-      closeButton.addEventListener("click", cancel);
-      cancelButton.addEventListener("click", cancel);
-      confirmButton.addEventListener("click", accept);
-      input.addEventListener("input", validate);
-      overlay.addEventListener("pointerdown", backdropCancel);
-      document.addEventListener("keydown", onKeyDown, true);
-      validate();
-      requestAnimationFrame(() => {
-        input.focus();
-        input.select();
-      });
-    });
-  }
-
-  private async runCancellableProjectImport(args: {
-    archivePath: string;
-    destinationPath: string;
-    expectedManifestSha256: string;
-    allowIncompatibleToolchain: boolean;
-  }): Promise<ImportedTypsastraProject> {
-    const operationId = crypto.randomUUID();
-    const progress = document.createElement("div");
-    progress.setAttribute("role", "status");
-    progress.style.cssText = "position:fixed;right:20px;bottom:20px;z-index:10000;display:flex;gap:12px;align-items:center;padding:12px 14px;border:1px solid var(--ui-hover);border-radius:8px;background:var(--ui-bg);color:var(--ui-text);box-shadow:0 8px 24px rgba(0,0,0,.3)";
-    const label = document.createElement("span");
-    label.textContent = "Verifying and extracting Typsastra project…";
-    const cancel = document.createElement("button");
-    cancel.type = "button";
-    cancel.textContent = "Cancel";
-    cancel.addEventListener("click", () => {
-      cancel.disabled = true;
-      label.textContent = "Cancelling import safely…";
-      void invoke("cancel_typsastra_project_import", { operationId });
-    });
-    progress.append(label, cancel);
-    document.body.appendChild(progress);
-    try {
-      return await invoke<ImportedTypsastraProject>("import_typsastra_project", {
-        ...args,
-        operationId
-      });
-    } finally {
-      progress.remove();
-    }
-  }
-
-  private async confirmIncompatibleProjectImport(
-    inspection: TypsastraProjectPreflight
+  private async completeProjectImport(
+    imported: ImportedTypsastraProject,
+    projectName: string,
   ): Promise<boolean> {
-    const active = inspection.activeTinymistVersion && inspection.activeTypstVersion
-      ? `Current: Tinymist ${inspection.activeTinymistVersion}, Typst ${inspection.activeTypstVersion}.`
-      : "No validated toolchain is currently active.";
-    return confirm(
-      `The project requires Tinymist ${inspection.manifest.toolchain.tinymistVersion} with ` +
-      `Typst ${inspection.manifest.toolchain.typstVersion}. ${active}\n\n` +
-      "Importing with the current environment is allowed, but rendering compatibility is not guaranteed.",
-      {
-        title: "Import Without Compatibility Guarantee?",
-        kind: "warning",
-        okLabel: "Import Anyway",
-        cancelLabel: "Cancel"
-      }
-    );
+    await this.openWorkspace(imported.workspacePath);
+    const activeToolchain = await invoke<ToolchainStatus>("get_toolchain_status").catch(() => null);
+    this.recommendedWorkspaceToolchain = {
+      tinymistVersion: imported.manifest.toolchain.tinymistVersion,
+      typstVersion: imported.manifest.toolchain.typstVersion,
+    };
+    this.selectedWorkspaceToolchain = activeToolchain?.tinymistVersion && activeToolchain.typstVersion
+      ? {
+          tinymistVersion: activeToolchain.tinymistVersion,
+          typstVersion: activeToolchain.typstVersion,
+        }
+      : null;
+    if (
+      !this.workspaceRootPath
+      || filePathKey(this.workspaceRootPath) !== filePathKey(imported.workspacePath)
+    ) {
+      return false;
+    }
+    await this.setPinnedMainFile(imported.mainFilePath);
+    await this.saveWorkspaceState();
+    this.setLspStatus({ kind: "preview-ready", message: `Imported ${projectName}` });
+    return true;
   }
-
   private async closeOtherTabs(pathToKeep: string) {
     const tabsToClose = this.openTabs.filter(tab => tab.path !== pathToKeep);
     for (const tab of tabsToClose) {
@@ -9113,11 +8514,7 @@ export class TypsastraWorkspaceController {
     this.lastPdfIdentity = "";
     this.lastPdfSessionKey = "";
     this.lastPdfSurface = "live";
-    this.imageZoomIn = null;
-    this.imageZoomOut = null;
-    this.imageZoomToFit = null;
-    this.imageZoomPercent = null;
-    this.imageIsFit = null;
+    this.imagePreviewController.clear();
     this.updatePreviewActionsToolbar(null);
 
     this.openedDocumentUris.clear();
