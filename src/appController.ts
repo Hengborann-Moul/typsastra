@@ -86,7 +86,7 @@ import {
 import { WorkspaceController } from "./workspace/workspaceController";
 import { formatFileSize, largeFileOpeningNotice, largeMainPreviewOpeningNotice, type LargeFileOpeningNotice } from "./workspace/largeFileOpening";
 import { installWelcomeKeyboardNavigation } from "./workspace/welcomeNavigation";
-import { PerformanceDiagnostics, type PerformanceMetric } from "./performance/diagnostics";
+import { PerformanceController } from "./performance/performanceController";
 import { EditorToolbarController } from "./editor/toolbarController";
 import { ContextMenuController } from "./components/contextMenuController";
 import { ToolchainController, type ToolchainStatus } from "./toolchain/toolchainController";
@@ -133,27 +133,6 @@ import {
 } from "./editor/templateTypography";
 
 type EditorMode = "CODE" | "WYSIWYM";
-
-type StartupTimingEntry = {
-  source: string;
-  label: string;
-  ms: number;
-};
-
-type ProcessMemorySample = {
-  pid: number;
-  parentPid: number;
-  name: string;
-  workingSetBytes: number;
-};
-
-type MemoryDiagnosticTotals = {
-  jsHeapBytes: number;
-  relatedBytes: number;
-  webviewBytes: number;
-  tinymistBytes: number;
-  backendBytes: number;
-};
 
 type PreviewImageReference = {
   sourcePath: string;
@@ -412,8 +391,6 @@ function ensureEditorCaretRippleStyle(): void {
 
 export class TypsastraWorkspaceController {
   private readonly startupStart = performance.now();
-  private readonly startupTimings: StartupTimingEntry[] = [];
-  private readonly loggedNativeStartupTimings = new Set<string>();
   private activeMode: EditorMode = "CODE";
   private activeFilePath: string | null = null;
   private previewRootPath: string | null = null;
@@ -532,9 +509,7 @@ export class TypsastraWorkspaceController {
   private lastPreviewRecoveryRequestedContents: string | null = null;
   private tinymistPreviewRecoveryAttempts = 0;
   private tinymistPreviewRecovery: Promise<boolean> | null = null;
-  private memoryDiagnosticSequence = 0;
   private saveMemoryDiagnosticGeneration = 0;
-  private previousMemoryDiagnostic: MemoryDiagnosticTotals | null = null;
   private readonly externalConflictPaths = new Set<string>();
   private externalPreviewRefreshPending = false;
   private readonly managedPreviewPdfPathKeys = new Set<string>();
@@ -564,9 +539,18 @@ export class TypsastraWorkspaceController {
 
   private editorInstance!: EditorView;
   private editorExtensions: Extension = [];
+  private readonly performanceController = new PerformanceController({
+    isLogEnabled: category => this.isDeveloperLogEnabled(category),
+    appendLog: entry => this.appendDeveloperLog(entry),
+    previewMemorySnapshot: () => this.previewFrame.memorySnapshot(),
+    lastPdfPath: () => this.lastPdfPath,
+    openTabCount: () => this.openTabs.length,
+    openDocumentUtf16: () => this.openTabs.reduce((total, tab) => total + tab.content.length, 0),
+    editorUndoDepth: () => this.editorInstance?.state ? undoDepth(this.editorInstance.state) : 0,
+  });
   private readonly editorController = new EditorController({
     performanceEnabled: () => this.isDeveloperLogEnabled("performance"),
-    recordPerformance: metric => this.performanceDiagnostics.record(metric),
+    recordPerformance: metric => this.performanceController.record(metric),
     logLayoutRefresh: reason => this.appendDeveloperLog({
       kind: "log",
       source: "editor layout",
@@ -577,14 +561,12 @@ export class TypsastraWorkspaceController {
   });
   private isComposing = false;
   private readonly editorInputKeysHeld = new Set<string>();
-  private readonly performanceSummaryCounts = new Map<PerformanceMetric["name"], number>();
-  private readonly performanceDiagnostics = new PerformanceDiagnostics(metric => this.publishPerformanceMetric(metric));
   private readonly editorFontManager = new EditorFontManager(() => this.editorInstance);
   private readonly markdownEditorLanguage = markdown({ base: markdownLanguage });
   private readonly spellcheckController = new SpellcheckController(
     () => this.editorInstance,
     issues => this.updateSpellcheckLog(issues),
-    metric => this.performanceDiagnostics.record(metric),
+    metric => this.performanceController.record(metric),
     event => this.appendSpellcheckDebug(event),
   );
   private explorer!: WorkspaceExplorer;
@@ -673,7 +655,7 @@ export class TypsastraWorkspaceController {
     onInteractionStatus: status => this.reportPreviewInteractionStatus(status),
     onZoomChanged: zoomPercent => this.updatePreviewZoomLabel(zoomPercent),
     onPerformance: metric => {
-      this.performanceDiagnostics.recordFirst(metric) ?? this.performanceDiagnostics.record(metric);
+      this.performanceController.recordFirst(metric) ?? this.performanceController.record(metric);
     },
     onPageChanged: status => this.updatePreviewPageStatus(status),
     loadDraftImage: id => this.loadDraftPreviewImage(id),
@@ -690,7 +672,7 @@ export class TypsastraWorkspaceController {
       // Preview-only windows skip the workspace bootstrap. Their PDF lifecycle
       // is already represented by the main window's diagnostics.
       if (isPreviewOnlyWindow()) return;
-      return this.logMemoryDiagnostics(`PDF ${stage}`, detail);
+      return this.performanceController.logMemoryDiagnostics(`PDF ${stage}`, detail);
     },
     resolveMarkdownImage: (documentPath, source) => this.resolveMarkdownImage(documentPath, source),
     openMarkdownLink: (documentPath, href) => this.openMarkdownLink(documentPath, href),
@@ -937,51 +919,51 @@ export class TypsastraWorkspaceController {
     document.documentElement.classList.remove("preview-only-mode");
     document.body.classList.remove("preview-only-mode");
 
-    await this.timeStartup("load settings", () => this.settingsController.load());
-    await this.timeStartup("restore main window", async () => {
+    await this.performanceController.timeStartup("load settings", () => this.settingsController.load());
+    await this.performanceController.timeStartup("restore main window", async () => {
       try {
         await this.windowStateController.restore();
       } catch (error) {
         console.warn("Failed to restore the main window state:", error);
       }
     });
-    for (const entry of this.settingsController.getTimings()) this.recordStartupTimingEntry(entry);
-    this.timeStartupSync("initialize recent projects", () => this.recentProjectsController.initialize());
-    this.timeStartupSync("initialize CodeMirror", () => this.initCodeMirror());
-    this.timeStartupSync("initialize document outline", () => this.documentOutlineController.initialize());
-    this.timeStartupSync("apply settings to runtime", () => this.applySettingsToRuntime(this.settingsController.value));
-    await this.timeStartup("load editor fonts", () => this.editorFontManager.ready());
-    this.timeStartupSync("initialize explorer", () => this.initExplorer());
-    this.timeStartupSync("initialize editor toolbar", () => this.editorToolbarController.initialize());
-    this.timeStartupSync("initialize tab strip", () => this.tabStripController.initialize());
-    this.timeStartupSync("bind global events", () => this.bindGlobalEvents());
-    this.timeStartupSync("initialize layout", () => this.layoutController.initialize());
-    this.timeStartupSync("monitor system resume", () => this.systemResumeMonitor.start());
-    this.timeStartupSync("initialize word wrap label", () => this.initWordWrap());
-    this.timeStartupSync("initialize invisibles toggle", () => this.initZwsToggle());
-    this.timeStartupSync("initialize settings panel", () => this.settingsController.initializePanel());
-    this.timeStartupSync("initialize toolchain UI", () => this.toolchainController.initialize());
-    this.timeStartupSync("initialize context menu", () => this.contextMenuController.initialize());
-    this.timeStartupSync("initialize log console", () => this.logConsoleController.initialize());
-    this.timeStartupSync("update workspace visibility", () => this.updateWorkspaceViewportVisibility());
+    for (const entry of this.settingsController.getTimings()) this.performanceController.recordStartupTimingEntry(entry);
+    this.performanceController.timeStartupSync("initialize recent projects", () => this.recentProjectsController.initialize());
+    this.performanceController.timeStartupSync("initialize CodeMirror", () => this.initCodeMirror());
+    this.performanceController.timeStartupSync("initialize document outline", () => this.documentOutlineController.initialize());
+    this.performanceController.timeStartupSync("apply settings to runtime", () => this.applySettingsToRuntime(this.settingsController.value));
+    await this.performanceController.timeStartup("load editor fonts", () => this.editorFontManager.ready());
+    this.performanceController.timeStartupSync("initialize explorer", () => this.initExplorer());
+    this.performanceController.timeStartupSync("initialize editor toolbar", () => this.editorToolbarController.initialize());
+    this.performanceController.timeStartupSync("initialize tab strip", () => this.tabStripController.initialize());
+    this.performanceController.timeStartupSync("bind global events", () => this.bindGlobalEvents());
+    this.performanceController.timeStartupSync("initialize layout", () => this.layoutController.initialize());
+    this.performanceController.timeStartupSync("monitor system resume", () => this.systemResumeMonitor.start());
+    this.performanceController.timeStartupSync("initialize word wrap label", () => this.initWordWrap());
+    this.performanceController.timeStartupSync("initialize invisibles toggle", () => this.initZwsToggle());
+    this.performanceController.timeStartupSync("initialize settings panel", () => this.settingsController.initializePanel());
+    this.performanceController.timeStartupSync("initialize toolchain UI", () => this.toolchainController.initialize());
+    this.performanceController.timeStartupSync("initialize context menu", () => this.contextMenuController.initialize());
+    this.performanceController.timeStartupSync("initialize log console", () => this.logConsoleController.initialize());
+    this.performanceController.timeStartupSync("update workspace visibility", () => this.updateWorkspaceViewportVisibility());
 
-    await this.timeStartup("show main window", () => getCurrentWindow().show());
+    await this.performanceController.timeStartup("show main window", () => getCurrentWindow().show());
     this.appUpdateController.initialize();
     this.webviewStorageController.initialize();
     this.editorController.refreshLayout("main window shown");
-    this.recordStartupTiming("frontend startup", "frontend bootstrap until window shown", this.startupStart);
-    this.performanceDiagnostics.recordFirst({
+    this.performanceController.recordStartupTiming("frontend startup", "frontend bootstrap until window shown", this.startupStart);
+    this.performanceController.recordFirst({
       name: "startup.usable-editor",
       milliseconds: performance.now() - this.startupStart
     });
-    void this.logNativeStartupTimingsToConsole();
+    void this.performanceController.logNativeStartupTimings();
     void this.finishStartupInitialization();
 
     this.setLspStatus({ kind: "starting", message: "Preparing toolchain" });
 
     let toolchain: ToolchainStatus | null = null;
     try {
-      toolchain = await this.timeStartup("get toolchain status", () => invoke<ToolchainStatus>("get_toolchain_status"));
+      toolchain = await this.performanceController.timeStartup("get toolchain status", () => invoke<ToolchainStatus>("get_toolchain_status"));
     } catch (e) {
       console.error("Failed to check toolchain status:", e);
     }
@@ -992,9 +974,9 @@ export class TypsastraWorkspaceController {
 
     this.toolchainController.setStatus(toolchain ?? { typstVersion: null, typstSource: null, tinymistVersion: null, tinymistSource: null, lspAvailable: false, message: "" });
     await this.showReleaseSummaryIfNeeded();
-    await this.timeStartup("initialize Tinymist LSP", () => this.initLsp(Boolean(toolchain?.lspAvailable)));
+    await this.performanceController.timeStartup("initialize Tinymist LSP", () => this.initLsp(Boolean(toolchain?.lspAvailable)));
     await this.drainPendingProjectImports();
-    this.recordStartupTiming("frontend startup", "frontend bootstrap including LSP", this.startupStart);
+    this.performanceController.recordStartupTiming("frontend startup", "frontend bootstrap including LSP", this.startupStart);
   }
 
   private async bootstrapPreviewWindow() {
@@ -2681,7 +2663,7 @@ export class TypsastraWorkspaceController {
       () => this.spellcheckController.getProviders(),
       providers => this.documentLanguageService.completionProvider(providers),
       () => this.documentLanguageService.currentGeneration(),
-      milliseconds => this.performanceDiagnostics.record({ name: "language.completion", milliseconds }),
+      milliseconds => this.performanceController.record({ name: "language.completion", milliseconds }),
       message => this.appendDeveloperLog({ kind: "info", source: "lsp autocomplete", message }),
       () => this.settingsController.value.editor.userDictionary,
     );
@@ -3654,7 +3636,7 @@ export class TypsastraWorkspaceController {
 
     try {
       const saveDiagnosticId = ++this.saveMemoryDiagnosticGeneration;
-      await this.logMemoryDiagnostics(`save ${saveDiagnosticId}: before write`);
+      await this.performanceController.logMemoryDiagnostics(`save ${saveDiagnosticId}: before write`);
       if (intent === "manual" && this.activeMode === "CODE" && this.settingsController.value.editor.formatOnSave) {
         await this.formatActiveDocument({ silent: true });
         this.removeTrailingSpaces();
@@ -3668,7 +3650,7 @@ export class TypsastraWorkspaceController {
         path: this.activeFilePath,
         contents: content
       });
-      await this.logMemoryDiagnostics(`save ${saveDiagnosticId}: after workspace write`);
+      await this.performanceController.logMemoryDiagnostics(`save ${saveDiagnosticId}: after workspace write`);
 
       if (intent === "manual" && this.lspReady && this.lspClient) {
         await this.flushPendingLspSync();
@@ -3678,7 +3660,7 @@ export class TypsastraWorkspaceController {
           await this.lspClient.notifyTextSave(lspUri, lspContent);
         }
       }
-      await this.logMemoryDiagnostics(`save ${saveDiagnosticId}: after LSP save notification`);
+      await this.performanceController.logMemoryDiagnostics(`save ${saveDiagnosticId}: after LSP save notification`);
 
       const activeTab = this.getActiveTab();
       if (activeTab) {
@@ -4365,7 +4347,7 @@ export class TypsastraWorkspaceController {
     const preparationRevision = this.pdfPreparationRevision;
     let renderSucceeded = false;
     let preparedPreview: PreparedPdfPreview | null = null;
-    await this.logMemoryDiagnostics(`render ${generation}: before preparation`);
+    await this.performanceController.logMemoryDiagnostics(`render ${generation}: before preparation`);
     this.appendDeveloperLog({
       kind: "info",
       source: "preview scheduler",
@@ -4389,7 +4371,7 @@ export class TypsastraWorkspaceController {
       );
       if (!preparedPreview) throw new Error("No PDF preview root is available.");
       const previewPath = preparedPreview.path;
-      this.performanceDiagnostics.record({
+      this.performanceController.record({
         name: "preview.draft-prepare",
         milliseconds: performance.now() - draftPreparationStartedAt,
         detail: {
@@ -4476,11 +4458,11 @@ export class TypsastraWorkspaceController {
       // One completed generation resumes after pointer release.
       await this.waitForHorizontalPaneResizeEnd();
       this.ensurePreviewPreparationCurrent(preparationRevision);
-      await this.logMemoryDiagnostics(
+      await this.performanceController.logMemoryDiagnostics(
         `render ${generation}: after Tinymist export`,
         { transport: "binary-file" }
       );
-      this.performanceDiagnostics.record({
+      this.performanceController.record({
         name: "preview.compile",
         milliseconds: performance.now() - compileStartedAt,
         detail: { sourceUtf16: contents.length }
@@ -4557,12 +4539,12 @@ export class TypsastraWorkspaceController {
       this.lastPreviewRecoveryRequestedContents = null;
       this.tinymistPreviewRecoveryAttempts = 0;
       this.schedulePdfSourceMapWarmup(generation);
-      await this.logMemoryDiagnostics(`render ${generation}: after PDF presentation`);
+      await this.performanceController.logMemoryDiagnostics(`render ${generation}: after PDF presentation`);
       window.setTimeout(() => {
-        void this.logMemoryDiagnostics(`render ${generation}: settled after page rendering`);
+        void this.performanceController.logMemoryDiagnostics(`render ${generation}: settled after page rendering`);
       }, 1000);
       if (this.pdfPreviewFailureAt !== null) {
-        this.performanceDiagnostics.record({
+        this.performanceController.record({
           name: "preview.recovery",
           milliseconds: performance.now() - this.pdfPreviewFailureAt
         });
@@ -4570,7 +4552,7 @@ export class TypsastraWorkspaceController {
       }
       const memory = (performance as Performance & { memory?: { usedJSHeapSize?: number } }).memory;
       if (typeof memory?.usedJSHeapSize === "number") {
-        this.performanceDiagnostics.record({ name: "memory.heap", bytes: memory.usedJSHeapSize });
+        this.performanceController.record({ name: "memory.heap", bytes: memory.usedJSHeapSize });
       }
       import("@tauri-apps/api/event").then(({ emit }) => {
         emit("pdf-update", {
@@ -4849,11 +4831,11 @@ export class TypsastraWorkspaceController {
       }
       return byteLength;
     }
-    await this.logMemoryDiagnostics("PDF full-buffer before IPC read", {
+    await this.performanceController.logMemoryDiagnostics("PDF full-buffer before IPC read", {
       transport: PDF_TRANSPORT_MODE
     });
     const response = await invoke<ArrayBuffer | Uint8Array | number[]>("read_binary_file", { path });
-    await this.logMemoryDiagnostics("PDF full-buffer after IPC read", {
+    await this.performanceController.logMemoryDiagnostics("PDF full-buffer after IPC read", {
       transport: PDF_TRANSPORT_MODE
     });
     if (
@@ -6497,43 +6479,14 @@ export class TypsastraWorkspaceController {
     }
   }
 
-  private recordStartupTiming(source: string, label: string, start: number): void {
-    this.recordStartupTimingEntry({ source, label, ms: performance.now() - start });
-  }
-
-  private recordStartupTimingEntry(entry: StartupTimingEntry): void {
-    this.startupTimings.push(entry);
-    this.logStartupTimingToConsole(entry);
-  }
-
-  private logStartupTimingToConsole(entry: StartupTimingEntry): void {
-    if (!this.isDeveloperLogEnabled("performance")) return;
-    console.info(`[startup timing] ${entry.source}: ${entry.label} took ${entry.ms.toFixed(1)} ms`);
-  }
-
-  private async logNativeStartupTimingsToConsole(): Promise<void> {
-    if (!this.isDeveloperLogEnabled("performance")) return;
-    try {
-      const nativeTimings = await invoke<StartupTimingEntry[]>("get_startup_timings");
-      for (const entry of nativeTimings) {
-        const key = `${entry.source}\u0000${entry.label}`;
-        if (this.loggedNativeStartupTimings.has(key)) continue;
-        this.loggedNativeStartupTimings.add(key);
-        this.logStartupTimingToConsole(entry);
-      }
-    } catch (error) {
-      console.warn("Failed to read native startup timings:", error);
-    }
-  }
-
   private async finishStartupInitialization(): Promise<void> {
     const startedAt = performance.now();
     try {
-      const providers = await this.timeStartup("finish native startup initialization", () =>
+      const providers = await this.performanceController.timeStartup("finish native startup initialization", () =>
         invoke<unknown>("finish_startup_initialization")
       );
       this.handleLanguageProvidersChanged(providers);
-      this.performanceDiagnostics.recordFirst({
+      this.performanceController.recordFirst({
         name: "startup.deferred-initialization",
         milliseconds: performance.now() - startedAt,
         detail: { providerCount: this.spellcheckController.getAllProviders().length }
@@ -6541,26 +6494,8 @@ export class TypsastraWorkspaceController {
     } catch (error) {
       console.warn("Deferred startup initialization failed:", error);
     } finally {
-      void this.logNativeStartupTimingsToConsole();
+      void this.performanceController.logNativeStartupTimings();
       void this.settingsController.refreshSystemFonts();
-    }
-  }
-
-  private timeStartupSync<T>(label: string, action: () => T): T {
-    const start = performance.now();
-    try {
-      return action();
-    } finally {
-      this.recordStartupTiming("frontend startup", label, start);
-    }
-  }
-
-  private async timeStartup<T>(label: string, action: () => Promise<T>): Promise<T> {
-    const start = performance.now();
-    try {
-      return await action();
-    } finally {
-      this.recordStartupTiming("frontend startup", label, start);
     }
   }
 
@@ -6630,7 +6565,7 @@ export class TypsastraWorkspaceController {
     if (!isTypstDocumentPath(originalPath)) return;
     const isActive = this.activeFilePath && filePathKey(originalPath) === filePathKey(this.activeFilePath);
     if (isActive && this.diagnosticWaitStartedAt !== null) {
-      this.performanceDiagnostics.recordFirst({
+      this.performanceController.recordFirst({
         name: "diagnostics.first",
         milliseconds: performance.now() - this.diagnosticWaitStartedAt,
         detail: { diagnosticCount: diagnostics.length }
@@ -7600,124 +7535,6 @@ export class TypsastraWorkspaceController {
       kind: "warning",
       source: "workspace",
       message: "External preview refresh did not settle within 60000ms; cursor synchronization remains available for the last presented PDF."
-    });
-  }
-
-  private publishPerformanceMetric(metric: PerformanceMetric): void {
-    if (!this.isDeveloperLogEnabled("performance")) return;
-    if (metric.name.startsWith("editor.") && metric.milliseconds !== undefined) {
-      const count = (this.performanceSummaryCounts.get(metric.name) ?? 0) + 1;
-      this.performanceSummaryCounts.set(metric.name, count);
-      if (metric.name !== "editor.long-task") {
-        if (count % 20 !== 0) return;
-        const summary = this.performanceDiagnostics.summary(metric.name);
-        if (!summary) return;
-        const message = `${metric.name} rolling summary: n=${summary.samples}; p50=${summary.p50.toFixed(1)} ms; p95=${summary.p95.toFixed(1)} ms; max=${summary.maximum.toFixed(1)} ms`;
-        console.info(`[performance] ${message}`);
-        this.appendDeveloperLog({
-          kind: summary.p95 > 16 ? "warning" : "info",
-          source: "editor performance",
-          message,
-        });
-        return;
-      }
-    }
-    const value = metric.milliseconds !== undefined
-      ? `${metric.milliseconds.toFixed(1)} ms`
-      : metric.bytes !== undefined
-        ? `${(metric.bytes / 1024 / 1024).toFixed(1)} MiB`
-        : "recorded";
-    console.info(`[performance] ${metric.name}: ${value}`, metric.detail ?? {});
-    this.appendDeveloperLog({
-      kind: "info",
-      source: "performance",
-      message: `${metric.name}: ${value}${metric.detail ? ` (${JSON.stringify(metric.detail)})` : ""}`
-    });
-    if (metric.name.startsWith("preview.") && metric.milliseconds !== undefined) {
-      const count = (this.performanceSummaryCounts.get(metric.name) ?? 0) + 1;
-      this.performanceSummaryCounts.set(metric.name, count);
-      if (count % 20 === 0) {
-        const summary = this.performanceDiagnostics.summary(metric.name);
-        if (summary) {
-          this.appendDeveloperLog({
-            kind: "info",
-            source: "performance",
-            message: `${metric.name} rolling summary: n=${summary.samples}; p50=${summary.p50.toFixed(1)} ms; p95=${summary.p95.toFixed(1)} ms; max=${summary.maximum.toFixed(1)} ms`
-          });
-        }
-      }
-    }
-  }
-
-  private async logMemoryDiagnostics(
-    stage: string,
-    detail: Record<string, number | string | boolean> = {}
-  ): Promise<void> {
-    if (!this.isDeveloperLogEnabled("memory")) return;
-    const sequence = ++this.memoryDiagnosticSequence;
-    const heap = (performance as Performance & {
-      memory?: { usedJSHeapSize?: number; totalJSHeapSize?: number; jsHeapSizeLimit?: number };
-    }).memory;
-    const processes = await invoke<ProcessMemorySample[]>("get_memory_diagnostics").catch(error => {
-      this.appendDeveloperLog({
-        kind: "warning",
-        source: "memory diagnostics",
-        message: `Memory sample ${sequence} native process query failed: ${String(error)}`
-      });
-      return [];
-    });
-    const categoryBytes = (predicate: (name: string) => boolean) => processes
-      .filter(process => predicate(process.name.toLocaleLowerCase()))
-      .reduce((total, process) => total + process.workingSetBytes, 0);
-    const webviewBytes = categoryBytes(name => name.includes("msedgewebview2") || name.includes("webkit"));
-    const tinymistBytes = categoryBytes(name => name.includes("tinymist"));
-    const relatedBytes = processes.reduce((total, process) => total + process.workingSetBytes, 0);
-    const backendBytes = Math.max(0, relatedBytes - webviewBytes - tinymistBytes);
-    const totals: MemoryDiagnosticTotals = {
-      jsHeapBytes: heap?.usedJSHeapSize ?? 0,
-      relatedBytes,
-      webviewBytes,
-      tinymistBytes,
-      backendBytes
-    };
-    const previous = this.previousMemoryDiagnostic;
-    this.previousMemoryDiagnostic = totals;
-    const preview = this.previewFrame.memorySnapshot();
-    const mib = (bytes: number) => (bytes / 1024 / 1024).toFixed(1);
-    const delta = (value: number, before: number | undefined) => before === undefined
-      ? "n/a"
-      : `${value - before >= 0 ? "+" : ""}${mib(value - before)} MiB`;
-    const processSummary = processes
-      .map(process => `${process.name}[${process.pid}]=${mib(process.workingSetBytes)} MiB`)
-      .join(", ");
-    const openDocumentChars = this.openTabs.reduce((total, tab) => total + tab.content.length, 0);
-    const editorUndoDepth = this.editorInstance?.state
-      ? undoDepth(this.editorInstance.state)
-      : 0;
-    const detailSummary = Object.entries(detail)
-      .map(([key, value]) => `${key}=${value}`)
-      .join(", ");
-    this.appendDeveloperLog({
-      kind: "info",
-      source: "memory diagnostics",
-      message: [
-        `Memory sample ${sequence} (${stage})`,
-        `related=${mib(relatedBytes)} MiB (${delta(relatedBytes, previous?.relatedBytes)})`,
-        `webview=${mib(webviewBytes)} MiB (${delta(webviewBytes, previous?.webviewBytes)})`,
-        `tinymist=${mib(tinymistBytes)} MiB (${delta(tinymistBytes, previous?.tinymistBytes)})`,
-        `backend=${mib(backendBytes)} MiB (${delta(backendBytes, previous?.backendBytes)})`,
-        `jsHeap=${heap?.usedJSHeapSize === undefined ? "unavailable" : `${mib(heap.usedJSHeapSize)} MiB (${delta(heap.usedJSHeapSize, previous?.jsHeapBytes)})`}`,
-        `jsHeapTotal=${heap?.totalJSHeapSize === undefined ? "unavailable" : `${mib(heap.totalJSHeapSize)} MiB`}`,
-        `pdf=${mib(preview.pdfBytes)} MiB/${preview.pdfPages} pages/gen ${preview.pdfGeneration}`,
-        `pdfTransport=${preview.pdfTransport}; pdfRead=${mib(preview.pdfBytesRead)} MiB/${preview.pdfRangeRequests} range request(s)`,
-        `finalCanvas=${preview.residentFinalCanvases}; mountedCanvas=${preview.residentCanvases} (${mib(preview.canvasPixels * 4)} MiB estimated RGBA)`,
-        `fontFaces=${preview.fontFaces}`,
-        `activeRenders=${preview.activeRenders}; pdfLoading=${preview.loading}`,
-        `lastPdfPath=${this.lastPdfPath || "none"}`,
-        `openTabs=${this.openTabs.length}; openDocumentUtf16=${openDocumentChars}; undoDepth=${editorUndoDepth}`,
-        detailSummary ? `detail: ${detailSummary}` : "",
-        `processes: ${processSummary || "unavailable"}`
-      ].filter(Boolean).join("; ")
     });
   }
 

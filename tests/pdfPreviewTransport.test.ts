@@ -45,7 +45,7 @@ describe("compiled PDF transport", () => {
     const previewOwner = await Bun.file(
       new URL("../src/preview/previewController.ts", import.meta.url),
     ).text();
-    const diagnostics = source.indexOf('return this.logMemoryDiagnostics(`PDF ${stage}`, detail);');
+    const diagnostics = source.indexOf('return this.performanceController.logMemoryDiagnostics(`PDF ${stage}`, detail);');
     const callback = source.slice(Math.max(0, diagnostics - 220), diagnostics);
 
     expect(previewOwner).toContain("readonly pdf: PreviewFrame");
@@ -54,14 +54,16 @@ describe("compiled PDF transport", () => {
   });
 
   test("keeps memory diagnostics safe before CodeMirror is initialized", async () => {
-    const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
-    const diagnostics = source.indexOf("private async logMemoryDiagnostics(");
-    const diagnosticsEnd = source.indexOf("private async reloadOpenFilesFromDisk", diagnostics);
-    const body = source.slice(diagnostics, diagnosticsEnd);
+    const appSource = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
+    const controllerSource = await Bun.file(
+      new URL("../src/performance/performanceController.ts", import.meta.url),
+    ).text();
 
-    expect(diagnostics).toBeGreaterThan(-1);
-    expect(body).toContain("this.editorInstance?.state");
-    expect(body).not.toContain("undoDepth(this.editorInstance.state)}`");
+    expect(appSource).toContain(
+      "editorUndoDepth: () => this.editorInstance?.state ? undoDepth(this.editorInstance.state) : 0",
+    );
+    expect(controllerSource).toContain("this.port.editorUndoDepth()");
+    expect(controllerSource).not.toContain("editorInstance");
   });
 
   test("uses the private render mirror for on-save and on-type previews", async () => {
