@@ -22,7 +22,9 @@ describe("staged application updates", () => {
     expect(html).toContain('id="app-dialog-action-end"');
     expect(html).toContain('aria-labelledby="app-dialog-title"');
     expect(source).not.toContain("@tauri-apps/plugin-dialog");
-    expect(app).toContain("this.appDialogController.show({");
+    expect(app).toContain("private readonly appUpdateController = new AppUpdateController(");
+    expect(app).toContain("this.appDialogController");
+    expect(source).toContain("this.dialog.show({");
   });
 
   test("provides a direct local development command", () => {

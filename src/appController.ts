@@ -47,6 +47,13 @@ import { PreviewController } from "./preview/previewController";
 import { PreviewSyncController } from "./preview/previewSyncController";
 import { SourceMapSessionController } from "./preview/sourceMapSessionController";
 import { ImagePreviewController } from "./preview/imagePreviewController";
+import {
+  DraftPreviewController,
+  type DraftImageAsset,
+  type DraftImageDiagnostic,
+  type DraftThumbnailQueueMetric,
+  type PreviewContentMode,
+} from "./preview/draftPreviewController";
 import { activeFileCanRenderPreview, allowsStandalonePreview, documentScriptsForPreviewContext, participatesInPreviewCompilation, previewLspMainPath, previewRefreshStyle, previewSessionIdentity, researchDocumentIdentity, tinymistPreviewPreferredSourceColumn, usesTemplateAwareStandaloneRoot, type PreviewTarget, type PreviewRefreshStyle } from "./preview/previewPolicy";
 import { LogConsoleController, type LogConsoleEntryInput } from "./diagnostics/logConsoleController";
 import { DiagnosticsController } from "./diagnostics/diagnosticsController";
@@ -77,7 +84,12 @@ import {
 import { WorkspaceController } from "./workspace/workspaceController";
 import { ProjectImportController } from "./workspace/projectImportController";
 import { ExternalWorkspaceController } from "./workspace/externalWorkspaceController";
-import { formatFileSize, largeFileOpeningNotice, largeMainPreviewOpeningNotice, type LargeFileOpeningNotice } from "./workspace/largeFileOpening";
+import {
+  formatFileSize,
+  largeFileOpeningNotice,
+  largeMainPreviewOpeningNotice,
+  type LargeFileOpeningNotice,
+} from "./workspace/largeFileOpening";
 import { installWelcomeKeyboardNavigation } from "./workspace/welcomeNavigation";
 import { PerformanceController } from "./performance/performanceController";
 import { EditorToolbarController } from "./editor/toolbarController";
@@ -104,7 +116,7 @@ import { AppUpdateController } from "./appUpdateController";
 import { releaseSummaryForVersion, shouldShowReleaseSummary } from "./releaseNotes";
 import { WebviewStorageController } from "./webviewStorageController";
 import { SystemResumeMonitor } from "./platform/systemResume";
-import { setImageOptimizationWarningsEffect, type ImageOptimizationWarning } from "./editor/imageWarnings";
+import { setImageOptimizationWarningsEffect } from "./editor/imageWarnings";
 import {
   captureEditorUndoHistory,
   createTabEditorState,
@@ -122,44 +134,10 @@ import {
 
 type EditorMode = "CODE" | "WYSIWYM";
 
-type PreviewImageReference = {
-  sourcePath: string;
-  fromUtf16: number;
-  toUtf16: number;
-  line: number;
-  column: number;
-};
-
-type PreviewImageAsset = {
-  path: string;
-  width: number;
-  height: number;
-  sourceBytes: number;
-  estimatedDecodedBytes: number;
-  format: string;
-  modifiedMs: number;
-  references: PreviewImageReference[];
-};
-
-type PreviewImageProfile = {
-  images: PreviewImageAsset[];
-  uniqueImageCount: number;
-  referenceCount: number;
-  totalSourceBytes: number;
-  estimatedTotalDecodedBytes: number;
-};
-
 const DEFAULT_INPUT_WIDTH_PCT = 50;
 const DEFAULT_PREVIEW_WIDTH_PCT = 100 - DEFAULT_INPUT_WIDTH_PCT;
 const DEFAULT_EXPLORER_WIDTH_PX = 250;
 const RELEASE_SUMMARY_SEEN_KEY_PREFIX = "typsastra:release-summary-seen";
-const MAX_RECOMMENDED_DECODED_PREVIEW_IMAGE_BYTES = 64 * 1024 * 1024;
-const MAX_RECOMMENDED_TOTAL_DECODED_PREVIEW_IMAGE_BYTES = 256 * 1024 * 1024;
-const MAX_RECOMMENDED_PREVIEW_IMAGE_SOURCE_BYTES = 64 * 1024 * 1024;
-const MAX_RECOMMENDED_UNIQUE_PREVIEW_IMAGES = 50;
-const AGGREGATE_IMAGE_CONTRIBUTOR_BYTES = 32 * 1024 * 1024;
-const MAX_RECOMMENDED_SINGLE_IMAGE_SOURCE_BYTES = 8 * 1024 * 1024;
-const MAX_AGGREGATE_IMAGE_OPTIMIZATION_SUGGESTIONS = 5;
 const PDF_TRANSPORT_MODE = (
   import.meta as ImportMeta & { env?: Record<string, string | boolean | undefined> }
 ).env?.VITE_PDF_TRANSPORT === "full"
@@ -229,62 +207,7 @@ type PdfUpdatePayload = {
   draftThumbnailGeneration?: number;
 };
 
-type PreviewContentMode = "normal" | "draft";
-
 type UndockedPreviewAction = "export-pdf" | "open-external";
-
-type DraftImageReference = {
-  sourcePath: string;
-  fromUtf16: number;
-  toUtf16: number;
-};
-
-type DraftImageAsset = {
-  id: string;
-  path: string;
-  mimeType: string;
-  width: number;
-  height: number;
-  sourceBytes: number;
-  estimatedDecodedBytes: number;
-  references: DraftImageReference[];
-};
-
-type DraftImageDiagnostic = DraftImageReference & { reason: string };
-
-type DraftThumbnailStatus = {
-  status: "pending" | "generating" | "ready" | "failed";
-  path?: string;
-  mimeType?: string;
-  sourceWidth: number;
-  sourceHeight: number;
-  sourceBytes: number;
-  thumbnailWidth?: number;
-  thumbnailHeight?: number;
-  thumbnailBytes?: number;
-  queueClass: string;
-};
-
-type DraftThumbnailQueueSummary = {
-  generation: number;
-  cacheHits: number;
-  queued: number;
-};
-
-type DraftThumbnailQueueMetric = {
-  generation: number;
-  status: "completed" | "cancelled" | "superseded";
-  totalImages: number;
-  cacheHits: number;
-  generated: number;
-  failed: number;
-  skipped: number;
-  outputBytes: number;
-  decodeMs: number;
-  resizeMs: number;
-  encodeMs: number;
-  totalMs: number;
-};
 
 type RenderPreparationResult = {
   generatedEntryFile: string;
@@ -387,17 +310,8 @@ export class TypsastraWorkspaceController {
   private readonly inspectedPreviewRoots = new Set<string>();
   private blockedLargePreviewRoot: string | null = null;
   private guardrailAlignmentObserver: ResizeObserver | null = null;
-  private previewImageProfile: PreviewImageProfile | null = null;
-  private previewContentMode: PreviewContentMode = "normal";
-  private presentedPreviewContentMode: PreviewContentMode = "normal";
-  private previewContentModeCompiling = false;
   private previewScrollTop = 0;
   private previewScrollSaveTimer: number | null = null;
-  private draftImageAssets = new Map<string, DraftImageAsset>();
-  private draftImageDiagnostics: DraftImageDiagnostic[] = [];
-  private draftAssetRootPath: string | null = null;
-  private draftThumbnailDocumentRootPath: string | null = null;
-  private draftThumbnailGeneration = 0;
   private wordWrapDeferredForResize = false;
   private recommendedWorkspaceToolchain: { tinymistVersion: string; typstVersion: string } | null = null;
   private selectedWorkspaceToolchain: { tinymistVersion: string; typstVersion: string } | null = null;
@@ -604,7 +518,7 @@ export class TypsastraWorkspaceController {
       this.performanceController.recordFirst(metric) ?? this.performanceController.record(metric);
     },
     onPageChanged: status => this.updatePreviewPageStatus(status),
-    loadDraftImage: id => this.loadDraftPreviewImage(id),
+    loadDraftImage: id => this.draftPreviewController.loadImage(id),
     onScrollPositionChanged: scrollTop => {
       this.previewScrollTop = Math.max(0, scrollTop);
       if (!this.workspaceRootPath || !this.workspaceMetadata) return;
@@ -744,7 +658,7 @@ export class TypsastraWorkspaceController {
       ) || DEFAULT_EXPLORER_WIDTH_PX,
       sidebarVisible: this.sidebarController.visible,
       activeSidebarTool: this.sidebarController.activeTool,
-      previewContentMode: this.previewContentMode,
+      previewContentMode: this.draftPreviewController.mode,
       previewRenderMode: this.effectivePreviewRenderMode,
       previewScrollTop: this.previewScrollTop,
     }),
@@ -952,6 +866,32 @@ export class TypsastraWorkspaceController {
     heading => void this.navigateToOutlineHeading(heading)
   );
   private readonly appDialogController = new AppDialogController();
+  private readonly draftPreviewController = new DraftPreviewController(
+    this.appDialogController,
+    {
+      activeFilePath: () => this.activeFilePath,
+      workspaceRootPath: () => this.workspaceRootPath,
+      editor: () => this.editorInstance ?? null,
+      previewFrame: () => this.previewFrame,
+      previewPageStatus: () => this.previewPageStatus,
+      previewGeneration: () => this.pdfPreviewGeneration,
+      renderMode: () => this.effectivePreviewRenderMode,
+      saveWorkspaceState: () => this.saveWorkspaceState(),
+      invalidatePreviewWork: reason => this.invalidatePreviewWork(reason),
+      refreshActivePreviewRoot: force => this.refreshActivePreviewRoot(force),
+      setPreviewRenderMode: mode => this.setPreviewRenderMode(mode),
+      setImageOptimizationIssues: entries => this.logConsoleController.setImageOptimizationIssues(entries),
+      setEditorWarnings: warnings => {
+        if (!this.editorInstance) return;
+        this.editorInstance.dispatch({ effects: setImageOptimizationWarningsEffect.of(warnings) });
+      },
+      showImages: async imagePath => {
+        this.sidebarController.setTool("images");
+        if (imagePath) await this.imageToolsController.selectImage(imagePath);
+      },
+      log: (kind, source, message) => this.appendDeveloperLog({ kind, source, message }),
+    },
+  );
   private readonly appUpdateController = new AppUpdateController(
     () => this.openTabs.some(tab => tab.isDirty),
     this.appDialogController
@@ -991,7 +931,7 @@ export class TypsastraWorkspaceController {
       nextMode => void this.setPreviewRenderMode(nextMode)
     );
     this.applySettingsToRuntime(this.settingsController.value);
-    this.updateImageHeavyPreviewWarning(this.previewImageProfile);
+    this.draftPreviewController.updateImageHeavyWarning();
     await this.saveWorkspaceState();
   }
 
@@ -1108,9 +1048,9 @@ export class TypsastraWorkspaceController {
     this.initializeUndockedPreviewOptions(action => emit("preview-window-action", action));
 
     document.getElementById("preview-content-mode-toggle")?.addEventListener("click", () => {
-      const requestedMode = this.previewContentMode === "draft" ? "normal" : "draft";
-      this.previewContentMode = requestedMode;
-      this.updatePreviewContentModeControl(true);
+      const requestedMode = this.draftPreviewController.mode === "draft" ? "normal" : "draft";
+      this.draftPreviewController.setMode(requestedMode);
+      this.draftPreviewController.updateControl(true);
       void emit("preview-content-mode-request", requestedMode);
     });
     
@@ -1128,16 +1068,16 @@ export class TypsastraWorkspaceController {
             surface: "live" as const
           }
         : event.payload;
-      this.previewContentMode = update.contentMode ?? "normal";
-      this.presentedPreviewContentMode = update.contentMode ?? "normal";
-      this.draftImageAssets = new Map((update.draftAssets ?? []).map(asset => [asset.id, asset]));
-      this.draftAssetRootPath = update.draftAssetRootPath ?? null;
+      this.draftPreviewController.installPresentedState({
+        mode: update.contentMode ?? "normal",
+        assets: update.draftAssets ?? [],
+        assetRootPath: update.draftAssetRootPath ?? null,
+        generation: update.draftThumbnailGeneration ?? 0,
+      });
       // Thumbnail status requests are validated against the workspace root.
       // The undocked window has no workspace bootstrap of its own, so inherit
       // the already validated root carried with the Draft manifest.
       this.workspaceRootPath = update.draftAssetRootPath ?? null;
-      this.draftThumbnailGeneration = update.draftThumbnailGeneration ?? 0;
-      this.updatePreviewContentModeControl(false);
       const contentModeToggle = document.getElementById("preview-content-mode-toggle") as HTMLButtonElement | null;
       contentModeToggle?.classList.remove("hidden");
       void this.loadPdfPath(update.path, update.identity, update.sessionKey, update.surface);
@@ -1636,7 +1576,7 @@ export class TypsastraWorkspaceController {
       if (!this.isDeveloperLogEnabled("performance")) return;
       if (
         metric.status === "completed"
-        && metric.generation !== this.draftThumbnailGeneration
+        && !this.draftPreviewController.acceptsThumbnailMetric(metric.generation)
       ) return;
       this.appendDeveloperLog({
         kind: metric.failed > 0 ? "warning" : "info",
@@ -2384,276 +2324,6 @@ export class TypsastraWorkspaceController {
     return false;
   }
 
-  private recommendedImageOptimizationAssets(profile: PreviewImageProfile): PreviewImageAsset[] {
-    const selected = new Map<string, PreviewImageAsset>();
-    const select = (image: PreviewImageAsset) => selected.set(filePathKey(image.path), image);
-
-    for (const image of profile.images) {
-      if (
-        image.estimatedDecodedBytes > MAX_RECOMMENDED_DECODED_PREVIEW_IMAGE_BYTES
-        || image.sourceBytes > MAX_RECOMMENDED_SINGLE_IMAGE_SOURCE_BYTES
-      ) {
-        select(image);
-      }
-    }
-
-    if (profile.estimatedTotalDecodedBytes > MAX_RECOMMENDED_TOTAL_DECODED_PREVIEW_IMAGE_BYTES) {
-      const remaining = Math.max(0, MAX_AGGREGATE_IMAGE_OPTIMIZATION_SUGGESTIONS - selected.size);
-      profile.images
-        .filter(image =>
-          image.estimatedDecodedBytes > AGGREGATE_IMAGE_CONTRIBUTOR_BYTES
-          && !selected.has(filePathKey(image.path))
-        )
-        .sort((left, right) => right.estimatedDecodedBytes - left.estimatedDecodedBytes)
-        .slice(0, remaining)
-        .forEach(select);
-    }
-
-    return [...selected.values()].sort(
-      (left, right) => right.estimatedDecodedBytes - left.estimatedDecodedBytes
-    );
-  }
-
-  private imageOptimizationMessage(
-    image: PreviewImageAsset,
-    profile: PreviewImageProfile
-  ): string {
-    const reasons: string[] = [];
-    if (image.estimatedDecodedBytes > MAX_RECOMMENDED_DECODED_PREVIEW_IMAGE_BYTES) {
-      reasons.push("Its decoded size exceeds the recommended per-image preview budget.");
-    } else if (
-      profile.estimatedTotalDecodedBytes > MAX_RECOMMENDED_TOTAL_DECODED_PREVIEW_IMAGE_BYTES
-      && image.estimatedDecodedBytes > AGGREGATE_IMAGE_CONTRIBUTOR_BYTES
-    ) {
-      reasons.push(`It is a major contributor to the document's estimated ${formatFileSize(profile.estimatedTotalDecodedBytes)} decoded image total.`);
-    }
-    if (image.sourceBytes > MAX_RECOMMENDED_SINGLE_IMAGE_SOURCE_BYTES) {
-      reasons.push(`Its ${formatFileSize(image.sourceBytes)} source file is unusually large.`);
-    }
-    return [
-      `${fileNameFromPath(image.path)} is ${image.width.toLocaleString()} × ${image.height.toLocaleString()} pixels`,
-      `and may require about ${formatFileSize(image.estimatedDecodedBytes)} when decoded.`,
-      ...reasons,
-      "Downscale its pixel dimensions to reduce live-preview memory and compilation work.",
-      "Compressing or re-encoding it can reduce the source file and may reduce the exported PDF size."
-    ].join(" ");
-  }
-
-  private publishImageOptimizationWarnings(profile = this.previewImageProfile): void {
-    const optimizationCandidates = profile
-      ? this.recommendedImageOptimizationAssets(profile)
-      : [];
-    this.logConsoleController.setImageOptimizationIssues(optimizationCandidates.map(image => ({
-      kind: "warning",
-      channel: "images",
-      counted: true,
-      source: "image optimization",
-      filePath: image.path,
-      fileName: fileNameFromPath(image.path),
-      message: this.imageOptimizationMessage(image, profile!),
-      locations: image.references.map(reference => ({
-        filePath: reference.sourcePath,
-        fileName: fileNameFromPath(reference.sourcePath),
-        line: reference.line,
-        column: reference.column,
-        offset: reference.fromUtf16,
-        toOffset: reference.toUtf16
-      }))
-    })));
-
-    if (!this.editorInstance) return;
-    const activePath = this.activeFilePath;
-    if (!profile || !activePath || !isTypstDocumentPath(activePath)) {
-      this.editorInstance.dispatch({ effects: setImageOptimizationWarningsEffect.of([]) });
-      return;
-    }
-    const activeKey = filePathKey(activePath);
-    const warnings: ImageOptimizationWarning[] = [];
-    for (const image of optimizationCandidates) {
-      const message = this.imageOptimizationMessage(image, profile);
-      for (const reference of image.references) {
-        if (filePathKey(reference.sourcePath) !== activeKey) continue;
-        warnings.push({
-          from: reference.fromUtf16,
-          to: reference.toUtf16,
-          message,
-          imagePath: image.path,
-        });
-      }
-    }
-    this.editorInstance.dispatch({
-      effects: setImageOptimizationWarningsEffect.of(warnings)
-    });
-  }
-
-  private async inspectPreviewImageProfile(rootPath: string | null): Promise<PreviewImageProfile | null> {
-    if (!rootPath) {
-      this.previewImageProfile = null;
-      this.publishImageOptimizationWarnings(null);
-      return null;
-    }
-    try {
-      const activeSourcePath = this.activeFilePath && isTypstDocumentPath(this.activeFilePath)
-        ? this.activeFilePath
-        : null;
-      const profile = await invoke<PreviewImageProfile>("typst_preview_image_profile", {
-        rootPath,
-        activeSourcePath,
-        activeSourceContents: activeSourcePath ? this.editorInstance.state.doc.toString() : null
-      });
-      this.previewImageProfile = profile;
-      this.publishImageOptimizationWarnings(profile);
-      return profile;
-    } catch (error) {
-      this.appendDeveloperLog({
-        kind: "warning",
-        source: "preview scheduler",
-        message: `Could not inspect preview image dimensions: ${String(error)}`
-      });
-      return null;
-    }
-  }
-
-  private updateImageHeavyPreviewWarning(profile: PreviewImageProfile | null): void {
-    const button = document.getElementById("preview-image-warning-btn") as HTMLButtonElement | null;
-    if (!button) return;
-    if (!profile) {
-      button.dataset.active = "false";
-      button.classList.add("hidden");
-      return;
-    }
-    const optimizationCandidates = this.recommendedImageOptimizationAssets(profile);
-    const imageHeavy = optimizationCandidates.length > 0
-      || profile.estimatedTotalDecodedBytes > MAX_RECOMMENDED_TOTAL_DECODED_PREVIEW_IMAGE_BYTES
-      || profile.totalSourceBytes > MAX_RECOMMENDED_PREVIEW_IMAGE_SOURCE_BYTES
-      || profile.uniqueImageCount >= MAX_RECOMMENDED_UNIQUE_PREVIEW_IMAGES;
-    if (!imageHeavy) {
-      button.dataset.active = "false";
-      button.classList.add("hidden");
-      return;
-    }
-
-    const renderMode = this.effectivePreviewRenderMode;
-    const timing = renderMode === "on-type"
-      ? "Live preview may update slowly while typing."
-      : "Preview may take longer to update after each save.";
-    const summary = `${timing} ${profile.uniqueImageCount.toLocaleString()} raster image${profile.uniqueImageCount === 1 ? "" : "s"} may use about ${formatFileSize(profile.estimatedTotalDecodedBytes)} when decoded. Click for details.`;
-    button.dataset.active = "true";
-    button.title = summary;
-    button.setAttribute("aria-label", `Image-heavy document warning. ${summary}`);
-    button.classList.remove("hidden");
-  }
-
-  private updatePreviewContentModeControl(compiling?: boolean): void {
-    if (compiling !== undefined) this.previewContentModeCompiling = compiling;
-    const toggle = document.getElementById("preview-content-mode-toggle") as HTMLButtonElement | null;
-    if (!toggle) return;
-    const draftActive = this.previewContentMode === "draft";
-    toggle.dataset.compiling = String(this.previewContentModeCompiling);
-    toggle.classList.toggle("active", draftActive);
-    toggle.setAttribute("aria-checked", String(draftActive));
-    const label = toggle.querySelector<HTMLElement>(".preview-content-mode-label");
-    if (label) label.textContent = draftActive ? "Draft" : "Normal";
-    toggle.setAttribute(
-      "aria-label",
-      draftActive
-        ? "Draft Preview active; switch to Normal Preview"
-        : "Normal Preview active; switch to Draft Preview"
-    );
-    const presentedMismatch = this.presentedPreviewContentMode !== this.previewContentMode;
-    toggle.title = this.previewContentModeCompiling || presentedMismatch
-      ? `Preparing ${this.previewContentMode === "draft" ? "Draft" : "Normal"} Preview. The last successful ${this.presentedPreviewContentMode === "draft" ? "Draft" : "Normal"} Preview remains visible.`
-      : `${this.previewContentMode === "draft"
-          ? `Draft Preview is active. Click to return to Normal Preview. ${this.draftImageAssets.size} image asset(s) use ratio-preserving placeholders; ${this.draftImageDiagnostics.length} call(s) remain unchanged.`
-          : "Normal Preview is active. Click to switch to Draft Preview."}`;
-  }
-
-  private async setPreviewContentMode(mode: PreviewContentMode): Promise<void> {
-    if (!this.workspaceRootPath) return;
-    if (mode === this.previewContentMode) {
-      if (mode === "draft" && this.presentedPreviewContentMode === "draft") {
-        await this.showDraftPreviewDetails();
-      }
-      return;
-    }
-    this.previewContentMode = mode;
-    this.updatePreviewContentModeControl(true);
-    await this.saveWorkspaceState();
-    this.invalidatePreviewWork(`preview content mode changed to ${mode}`);
-    await this.refreshActivePreviewRoot(true);
-  }
-
-  private async showDraftPreviewDetails(): Promise<void> {
-    const assets = [...this.draftImageAssets.values()];
-    const sourceBytes = assets.reduce((total, asset) => total + asset.sourceBytes, 0);
-    const decodedBytes = assets.reduce((total, asset) => total + asset.estimatedDecodedBytes, 0);
-    const unresolved = this.draftImageDiagnostics.slice(0, 5).map(diagnostic =>
-      `${fileNameFromPath(diagnostic.sourcePath)}: ${diagnostic.reason}`
-    );
-    const unresolvedSummary = this.draftImageDiagnostics.length === 0
-      ? "All statically detectable local image calls were replaced."
-      : `${this.draftImageDiagnostics.length} image call(s) remain unchanged.\n\n${unresolved.join("\n")}${this.draftImageDiagnostics.length > unresolved.length ? `\n…and ${this.draftImageDiagnostics.length - unresolved.length} more.` : ""}`;
-    await this.appDialogController.show({
-      title: "Draft Preview",
-      subtitle: `${assets.length.toLocaleString()} ratio-preserving placeholder${assets.length === 1 ? "" : "s"}`,
-      description: `Draft Preview keeps each source image's intrinsic aspect ratio and preserves the document's image sizing, fitting, and placement arguments. Hover or keyboard-focus a placeholder in the preview to inspect the original image.\n\nThe replaced images total ${formatFileSize(sourceBytes)} on disk and approximately ${formatFileSize(decodedBytes)} when decoded.\n\n${unresolvedSummary}\n\nPDF export always uses the original images.`,
-      actions: [{ id: "close", label: "Close", primary: true }],
-      cancelAction: "close"
-    });
-  }
-
-  private async showImageHeavyPreviewDetails(): Promise<void> {
-    const profile = this.previewImageProfile;
-    if (!profile) return;
-    const optimizationCandidates = this.recommendedImageOptimizationAssets(profile);
-    const visibleItems = profile.images.slice(0, 3).map(image =>
-      `${fileNameFromPath(image.path)} (${image.width.toLocaleString()} × ${image.height.toLocaleString()}, about ${formatFileSize(image.estimatedDecodedBytes)} decoded from ${formatFileSize(image.sourceBytes)})`
-    );
-    const additional = profile.images.length > visibleItems.length
-      ? ` and ${profile.images.length - visibleItems.length} more`
-      : "";
-    const renderMode = this.effectivePreviewRenderMode;
-    const actions = [{ id: "close", label: "Close", primary: false }];
-    if (optimizationCandidates.length > 0) {
-      actions.push({ id: "view-images", label: "View Images", primary: false });
-    }
-    if (renderMode === "on-type") {
-      actions.push({ id: "switch-on-save", label: "Use On Save", primary: true });
-    }
-    // AppDialogController supports at most three actions. In Normal + On Type
-    // mode, prefer the less disruptive render-on-save recommendation; the
-    // toolbar toggle remains available for switching to Draft Preview.
-    if (this.previewContentMode !== "draft" && actions.length < 3) {
-      actions.push({ id: "use-draft", label: "Use Draft Preview", primary: renderMode !== "on-type" });
-    }
-    const action = await this.appDialogController.show({
-      title: "Image-heavy Document",
-      subtitle: `${profile.uniqueImageCount} raster image${profile.uniqueImageCount === 1 ? "" : "s"} · ${formatFileSize(profile.estimatedTotalDecodedBytes)} estimated decoded`,
-      description: `This preview references ${profile.referenceCount.toLocaleString()} supported raster image${profile.referenceCount === 1 ? "" : "s"} across ${profile.uniqueImageCount.toLocaleString()} unique file${profile.uniqueImageCount === 1 ? "" : "s"}, totaling ${formatFileSize(profile.totalSourceBytes)} on disk.\n\nLargest assets: ${visibleItems.join("; ")}${additional}.\n\n${renderMode === "on-type" ? "Repeated on-type compilation may make editing less responsive." : "The preview may take longer to update after each save."} Compilation will continue normally, and Typsastra will not modify the images.`,
-      actions,
-      cancelAction: "close"
-    });
-    if (action === "view-images") {
-      this.sidebarController.setTool("images");
-      if (optimizationCandidates[0]) {
-        await this.imageToolsController.selectImage(optimizationCandidates[0].path);
-      }
-      return;
-    }
-    if (action === "use-draft") {
-      await this.setPreviewContentMode("draft");
-      return;
-    }
-    if (action !== "switch-on-save") return;
-    await this.setPreviewRenderMode("on-save");
-    this.updateImageHeavyPreviewWarning(profile);
-    this.appendDeveloperLog({
-      kind: "info",
-      source: "preview scheduler",
-      message: `Switched to render on save for an image-heavy document: unique=${profile.uniqueImageCount}; references=${profile.referenceCount}; source=${formatFileSize(profile.totalSourceBytes)}; decoded=${formatFileSize(profile.estimatedTotalDecodedBytes)}.`
-    });
-  }
-
   private async showReleaseSummaryIfNeeded(): Promise<void> {
     const version = await getVersion().catch(() => null);
     if (!version) return;
@@ -2939,7 +2609,7 @@ export class TypsastraWorkspaceController {
         }
         this.editorToolbarController.setDisabled(true);
         this.activeFilePath = path;
-        this.publishImageOptimizationWarnings();
+        this.draftPreviewController.publishWarnings();
         this.isLoadingFile = false;
         this.updateManualForwardSyncAction();
         this.updateWorkspaceViewportVisibility();
@@ -3015,7 +2685,7 @@ export class TypsastraWorkspaceController {
       this.setMarkdownPreviewActive(true);
       this.markdownPreviewFrame.activate(path, tab.content);
     }
-    this.publishImageOptimizationWarnings();
+    this.draftPreviewController.publishWarnings();
     this.renderEditorTabs();
     this.restoreEditorTabViewport(tab, path);
     const activeTypography = await this.typographyController.effective(path, tab.content);
@@ -4331,8 +4001,8 @@ export class TypsastraWorkspaceController {
       });
       return;
     }
-    const imageProfile = await this.inspectPreviewImageProfile(this.previewRootPath);
-    this.updateImageHeavyPreviewWarning(imageProfile);
+    const imageProfile = await this.draftPreviewController.inspectImageProfile(this.previewRootPath);
+    this.draftPreviewController.updateImageHeavyWarning(imageProfile);
     if (this.typographyFontUpdateInProgress) {
       this.deferredTypographyPreviewContents = contents;
       this.appendDeveloperLog({
@@ -4369,7 +4039,7 @@ export class TypsastraWorkspaceController {
     const compileStartedAt = performance.now();
     const generation = ++this.pdfPreviewGeneration;
     const generationActivePath = this.activeFilePath;
-    const generationContentMode = this.previewContentMode;
+    const generationContentMode = this.draftPreviewController.mode;
     const preparationRevision = this.pdfPreparationRevision;
     let renderSucceeded = false;
     let preparedPreview: PreparedPdfPreview | null = null;
@@ -4533,27 +4203,14 @@ export class TypsastraWorkspaceController {
         "live",
         true
       );
-      this.presentedPreviewContentMode = generationContentMode;
-      this.draftImageAssets = generationContentMode === "draft"
-        ? preparedPreview.draftAssets
-        : new Map();
-      this.draftImageDiagnostics = generationContentMode === "draft"
-        ? preparedPreview.draftDiagnostics
-        : [];
-      this.draftAssetRootPath = generationContentMode === "draft"
-        ? this.workspaceRootPath
-        : null;
-      this.draftThumbnailDocumentRootPath = generationContentMode === "draft"
-        ? preparedPreview.documentRootPath
-        : null;
-      if (generationContentMode === "draft") {
-        this.draftThumbnailGeneration = generation;
-        await this.startDraftThumbnailQueue(generation);
-      } else {
-        this.draftThumbnailGeneration = 0;
-        void invoke("cancel_draft_thumbnail_generation").catch(() => {});
-      }
-      this.updatePreviewContentModeControl(false);
+      await this.draftPreviewController.presentGeneration({
+        generation,
+        mode: generationContentMode,
+        assets: preparedPreview.draftAssets,
+        diagnostics: preparedPreview.draftDiagnostics,
+        assetRootPath: this.workspaceRootPath,
+        documentRootPath: preparedPreview.documentRootPath,
+      });
       // Presentation is authoritative even when the previous PDF stayed
       // visible during compilation. In particular, clear a stale compile
       // failure status after a recovered generation succeeds.
@@ -4590,9 +4247,11 @@ export class TypsastraWorkspaceController {
           sessionKey: this.previewSessionKey ?? previewPath,
           surface: "live",
           contentMode: generationContentMode,
-          draftAssets: generationContentMode === "draft" ? [...this.draftImageAssets.values()] : [],
-          draftAssetRootPath: generationContentMode === "draft" ? this.draftAssetRootPath ?? undefined : undefined,
-          draftThumbnailGeneration: generationContentMode === "draft" ? this.draftThumbnailGeneration : undefined
+          draftAssets: generationContentMode === "draft"
+            ? [...this.draftPreviewController.assets.values()]
+            : [],
+          draftAssetRootPath: generationContentMode === "draft" ? this.draftPreviewController.assetRootPath ?? undefined : undefined,
+          draftThumbnailGeneration: generationContentMode === "draft" ? this.draftPreviewController.thumbnailGeneration : undefined
         } satisfies PdfUpdatePayload);
       }).catch(err => console.error("Error emitting pdf-update", err));
     } catch (error) {
@@ -4651,7 +4310,7 @@ export class TypsastraWorkspaceController {
       // failure visible until a later generation presents successfully.
       this.previewFrame.setError("Preview Render Failed", failureMessage);
       this.publishPreviewCompilerFailure(failure, packageHint);
-      this.updatePreviewContentModeControl(false);
+      this.draftPreviewController.updateControl(false);
       this.setLspStatus({ kind: "preview-error", message: "PDF compile failed" });
       this.pdfPreviewFailureAt ??= performance.now();
     } finally {
@@ -4719,7 +4378,7 @@ export class TypsastraWorkspaceController {
   private async preparePdfPreviewExportPath(
     contents: string,
     preparationRevision = this.pdfPreparationRevision,
-    contentMode = this.previewContentMode,
+    contentMode = this.draftPreviewController.mode,
     useEditorOverlays = this.effectivePreviewRenderMode === "on-type"
   ): Promise<PreparedPdfPreview | null> {
     if (!this.activeFilePath) return null;
@@ -4885,95 +4544,6 @@ export class TypsastraWorkspaceController {
       this.lastPdfSurface = surface;
     }
     return byteLength;
-  }
-
-  private async loadDraftPreviewImage(id: string) {
-    if (
-      this.presentedPreviewContentMode !== "draft"
-      || !/^[a-f0-9]{24}$/.test(id)
-    ) return null;
-    const asset = this.draftImageAssets.get(id);
-    // Draft assets are canonicalized and checked against the workspace root by
-    // the backend before they enter this generation-scoped manifest. Repeating
-    // that check with frontend path strings rejects equivalent Windows paths
-    // when one side uses an extended-length or 8.3 representation.
-    if (!asset || !this.workspaceRootPath || this.draftThumbnailGeneration < 1) return null;
-    const status = await invoke<DraftThumbnailStatus>("get_draft_thumbnail_status", {
-      generation: this.draftThumbnailGeneration,
-      workspaceRoot: this.workspaceRootPath,
-      id
-    }).catch(() => null);
-    if (!status) return null;
-    if (status.status === "failed") {
-      return {
-        status: "failed" as const,
-        message: "Image preview could not be prepared."
-      } as const;
-    }
-    if (status.status === "pending" || status.status === "generating") {
-      return { status: status.status } as const;
-    }
-    if (!status.path || !status.mimeType) {
-      return {
-        status: "failed" as const,
-        message: "The prepared image preview is unavailable."
-      } as const;
-    }
-    const response = await invoke<ArrayBuffer | Uint8Array | number[]>("read_binary_file", {
-      path: status.path
-    });
-    const bytes = response instanceof Uint8Array
-      ? response
-      : response instanceof ArrayBuffer
-        ? new Uint8Array(response)
-        : new Uint8Array(response);
-    return {
-      status: "ready" as const,
-      bytes,
-      mimeType: status.mimeType,
-      filename: fileNameFromPath(asset.path),
-      width: status.sourceWidth,
-      height: status.sourceHeight,
-      sourceBytes: status.sourceBytes
-    };
-  }
-
-  private async startDraftThumbnailQueue(generation: number): Promise<void> {
-    if (
-      generation !== this.pdfPreviewGeneration
-      || this.presentedPreviewContentMode !== "draft"
-      || !this.workspaceRootPath
-      || !this.draftThumbnailDocumentRootPath
-      || this.draftImageAssets.size === 0
-    ) return;
-    const displayedPage = Math.max(1, this.previewPageStatus.currentPage || 1);
-    const displayedPageAssetIds = await this.previewFrame.draftImageIdsForPage(displayedPage);
-    if (
-      generation !== this.pdfPreviewGeneration
-      || this.presentedPreviewContentMode !== "draft"
-    ) return;
-    const summary = await invoke<DraftThumbnailQueueSummary>("start_draft_thumbnail_generation", {
-      request: {
-        generation,
-        workspaceRoot: this.workspaceRootPath,
-        documentRootPath: this.draftThumbnailDocumentRootPath,
-        assets: [...this.draftImageAssets.values()],
-        displayedPageAssetIds
-      }
-    }).catch(error => {
-      this.appendDeveloperLog({
-        kind: "warning",
-        source: "draft thumbnails",
-        message: `Could not start Draft thumbnail generation: ${String(error)}`
-      });
-      return null;
-    });
-    if (!summary || generation !== this.pdfPreviewGeneration) return;
-    this.appendDeveloperLog({
-      kind: "info",
-      source: "draft thumbnails",
-      message: `Draft thumbnail queue ${generation} started: ${summary.cacheHits} cache hit(s), ${summary.queued} queued, ${displayedPageAssetIds.length} image(s) on page ${displayedPage}.`
-    });
   }
 
   private async closePreparedPreviewDocuments(): Promise<number> {
@@ -5740,8 +5310,8 @@ export class TypsastraWorkspaceController {
   }
 
   private async navigateToDraftPreviewImage(id: string): Promise<void> {
-    if (this.presentedPreviewContentMode !== "draft" || !/^[a-f0-9]{24}$/.test(id)) return;
-    const asset = this.draftImageAssets.get(id);
+    if (this.draftPreviewController.presentedMode !== "draft" || !/^[a-f0-9]{24}$/.test(id)) return;
+    const asset = this.draftPreviewController.asset(id);
     if (!asset || asset.references.length === 0) return;
     const activePathKey = filePathKey(this.activeFilePath ?? "");
     const reference = asset.references.find(candidate =>
@@ -5884,7 +5454,7 @@ export class TypsastraWorkspaceController {
       !showTypstOnly || imageWarningBtn.dataset.active !== "true"
     );
     contentModeToggle?.classList.toggle("hidden", !showTypstOnly);
-    this.updatePreviewContentModeControl();
+    this.draftPreviewController.updateControl();
   }
 
   private zoomIn(): void {
@@ -6949,9 +6519,10 @@ export class TypsastraWorkspaceController {
         mode => void this.setPreviewRenderMode(mode)
       );
       this.lastPreviewRenderMode = this.workspaceMetadata.workspace.previewRenderMode;
-      this.previewContentMode = this.workspaceMetadata.workspace.previewContentMode;
-      this.presentedPreviewContentMode = "normal";
-      this.updatePreviewContentModeControl();
+      this.draftPreviewController.setMode(
+        this.workspaceMetadata.workspace.previewContentMode,
+        "normal",
+      );
       this.spellcheckController.setTerminology(
         this.settingsController.value.editor.globalTerminology,
         this.workspaceMetadata.project.terminology,
@@ -7404,21 +6975,10 @@ export class TypsastraWorkspaceController {
     this.approvedLargePreviewRoots.clear();
     this.inspectedPreviewRoots.clear();
     this.blockedLargePreviewRoot = null;
-    this.previewImageProfile = null;
-    this.previewContentMode = "normal";
-    this.presentedPreviewContentMode = "normal";
+    this.draftPreviewController.reset();
     this.previewScrollTop = 0;
     if (this.previewScrollSaveTimer !== null) window.clearTimeout(this.previewScrollSaveTimer);
     this.previewScrollSaveTimer = null;
-    this.draftImageAssets.clear();
-    this.draftImageDiagnostics = [];
-    this.draftAssetRootPath = null;
-    this.draftThumbnailDocumentRootPath = null;
-    this.draftThumbnailGeneration = 0;
-    void invoke("cancel_draft_thumbnail_generation").catch(() => {});
-    this.updatePreviewContentModeControl();
-    this.updateImageHeavyPreviewWarning(null);
-    this.publishImageOptimizationWarnings(null);
     this.lastTypographyInternalScaleError = "";
     this.pdfPreviewGeneration += 1;
     this.previewSyncController.cancelManual();
@@ -7514,21 +7074,21 @@ export class TypsastraWorkspaceController {
             identity: this.lastPdfIdentity || this.pdfPreviewSourceMapRootPath || this.previewRootPath || "preview",
             sessionKey: this.lastPdfSessionKey || this.previewSessionKey || this.lastPdfIdentity || "preview",
             surface: this.lastPdfSurface,
-            contentMode: this.presentedPreviewContentMode,
-            draftAssets: this.presentedPreviewContentMode === "draft"
-              ? [...this.draftImageAssets.values()]
+            contentMode: this.draftPreviewController.presentedMode,
+            draftAssets: this.draftPreviewController.presentedMode === "draft"
+              ? [...this.draftPreviewController.assets.values()]
               : [],
-            draftAssetRootPath: this.presentedPreviewContentMode === "draft"
-              ? this.draftAssetRootPath ?? undefined
+            draftAssetRootPath: this.draftPreviewController.presentedMode === "draft"
+              ? this.draftPreviewController.assetRootPath ?? undefined
               : undefined,
-            draftThumbnailGeneration: this.presentedPreviewContentMode === "draft"
-              ? this.draftThumbnailGeneration
+            draftThumbnailGeneration: this.draftPreviewController.presentedMode === "draft"
+              ? this.draftPreviewController.thumbnailGeneration
               : undefined
           } satisfies PdfUpdatePayload);
         }
       });
       listen<PreviewContentMode>("preview-content-mode-request", event => {
-        void this.setPreviewContentMode(event.payload);
+        void this.draftPreviewController.changeMode(event.payload);
       });
       listen<UndockedPreviewAction>("preview-window-action", event => {
         if (event.payload === "export-pdf") {
@@ -7698,10 +7258,12 @@ export class TypsastraWorkspaceController {
     });
 
     document.getElementById("preview-image-warning-btn")?.addEventListener("click", () => {
-      void this.showImageHeavyPreviewDetails();
+      void this.draftPreviewController.showImageHeavyDetails();
     });
     document.getElementById("preview-content-mode-toggle")?.addEventListener("click", () => {
-      void this.setPreviewContentMode(this.previewContentMode === "draft" ? "normal" : "draft");
+      void this.draftPreviewController.changeMode(
+        this.draftPreviewController.mode === "draft" ? "normal" : "draft"
+      );
     });
 
     const previewForwardSyncButton = document.getElementById("preview-forward-sync-btn");

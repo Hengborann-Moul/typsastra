@@ -4,6 +4,10 @@ import { join } from "node:path";
 
 const root = join(import.meta.dir, "..");
 const controller = readFileSync(join(root, "src", "appController.ts"), "utf8");
+const draftController = readFileSync(
+  join(root, "src", "preview", "draftPreviewController.ts"),
+  "utf8"
+);
 const previewFrame = readFileSync(join(root, "src", "preview", "previewFrame.ts"), "utf8");
 const contextMenus = readFileSync(
   join(root, "src", "components", "contextMenuController.ts"),
@@ -20,9 +24,9 @@ describe("Draft Preview", () => {
     expect(html).toContain('aria-checked="false"');
     expect(html).toContain('class="preview-content-mode-track"');
     expect(html).toContain('class="preview-content-mode-thumb"');
-    expect(controller).toContain("previewContentMode: this.previewContentMode");
+    expect(controller).toContain("previewContentMode: this.draftPreviewController.mode");
     expect(controller).toContain('previewContentMode: "normal"');
-    expect(controller).toContain('this.previewContentMode === "draft" ? "normal" : "draft"');
+    expect(controller).toContain('this.draftPreviewController.mode === "draft" ? "normal" : "draft"');
     expect(styles).toMatch(/\.preview-content-mode-toggle\s*\{[^}]*width:\s*108px;[^}]*min-width:\s*108px;/s);
     expect(styles).toMatch(
       /\.preview-content-mode-thumb\s*\{[^}]*background:\s*var\(--ui-text\);/
@@ -59,12 +63,12 @@ describe("Draft Preview", () => {
   });
 
   test("commits the requested mode and image manifest only after PDF presentation", () => {
-    const modeCommit = controller.indexOf("this.presentedPreviewContentMode = generationContentMode");
-    const presentation = controller.lastIndexOf("await this.loadPdfPath(", modeCommit);
-    const manifestCommit = controller.indexOf("this.draftImageAssets = generationContentMode", presentation);
+    const presentation = controller.indexOf("await this.loadPdfPath(");
+    const modeCommit = controller.indexOf("await this.draftPreviewController.presentGeneration({", presentation);
     expect(presentation).toBeGreaterThan(-1);
     expect(modeCommit).toBeGreaterThan(presentation);
-    expect(manifestCommit).toBeGreaterThan(presentation);
+    expect(draftController).toContain("this.presentedModeValue = input.mode");
+    expect(draftController).toContain('this.assetsValue = input.mode === "draft" ? input.assets : new Map()');
   });
 
   test("uses draft annotations for safe hover inspection and ordinary inverse sync", () => {
@@ -91,10 +95,10 @@ describe("Draft Preview", () => {
   });
 
   test("loads cached thumbnails from the backend-validated generation manifest", () => {
-    const loaderStart = controller.indexOf("private async loadDraftPreviewImage");
-    const loaderEnd = controller.indexOf("private async startDraftThumbnailQueue", loaderStart);
-    const loader = controller.slice(loaderStart, loaderEnd);
-    expect(loader).toContain("this.draftImageAssets.get(id)");
+    const loaderStart = draftController.indexOf("async loadImage");
+    const loaderEnd = draftController.indexOf("async startThumbnailQueue", loaderStart);
+    const loader = draftController.slice(loaderStart, loaderEnd);
+    expect(loader).toContain("this.assetsValue.get(id)");
     expect(loader).toContain('invoke<DraftThumbnailStatus>("get_draft_thumbnail_status"');
     expect(loader).toContain('invoke<ArrayBuffer | Uint8Array | number[]>("read_binary_file"');
     expect(loader).toContain("path: status.path");
@@ -120,12 +124,10 @@ describe("Draft Preview", () => {
     expect(previewBootstrap).toContain(
       "this.workspaceRootPath = update.draftAssetRootPath ?? null"
     );
-    expect(previewBootstrap).toContain(
-      "this.draftThumbnailGeneration = update.draftThumbnailGeneration ?? 0"
-    );
-    expect(previewBootstrap).toContain(
-      "this.draftImageAssets = new Map((update.draftAssets ?? [])"
-    );
+    expect(previewBootstrap).toContain("this.draftPreviewController.installPresentedState({");
+    expect(previewBootstrap).toContain("generation: update.draftThumbnailGeneration ?? 0");
+    expect(previewBootstrap).toContain("assets: update.draftAssets ?? []");
+    expect(draftController).toContain("this.assetsValue = new Map((input.assets ?? [])");
   });
 
   test("keeps the undocked Normal/Draft control themed and interactive", () => {
@@ -137,8 +139,8 @@ describe("Draft Preview", () => {
     const previewBootstrap = controller.slice(previewBootstrapStart, previewBootstrapEnd);
 
     expect(previewBootstrap).toContain('"preview-content-mode-request"');
-    expect(previewBootstrap).toContain("this.updatePreviewContentModeControl(true)");
-    expect(previewBootstrap).toContain("this.updatePreviewContentModeControl(false)");
+    expect(previewBootstrap).toContain("this.draftPreviewController.updateControl(true)");
+    expect(draftController).toContain("this.updateControl(false)");
     expect(previewBootstrap).not.toContain("contentModeToggle.disabled = true");
     expect(controller).toContain(
       'listen<PreviewContentMode>("preview-content-mode-request"'
@@ -157,10 +159,10 @@ describe("Draft Preview", () => {
   });
 
   test("starts one fixed native thumbnail queue after Draft presentation", () => {
-    expect(controller).toContain('invoke<DraftThumbnailQueueSummary>("start_draft_thumbnail_generation"');
-    expect(controller).toContain("displayedPageAssetIds");
-    expect(controller).toContain('invoke("cancel_draft_thumbnail_generation")');
-    expect(controller).not.toContain("reprioritize_draft_thumbnail");
+    expect(draftController).toContain('invoke<DraftThumbnailQueueSummary>("start_draft_thumbnail_generation"');
+    expect(draftController).toContain("displayedPageAssetIds");
+    expect(draftController).toContain('invoke("cancel_draft_thumbnail_generation")');
+    expect(draftController).not.toContain("reprioritize_draft_thumbnail");
     expect(plan).toContain("one immutable queue");
   });
 
@@ -176,7 +178,7 @@ describe("Draft Preview", () => {
     expect(mirror).toContain("draft_reachable_files");
     expect(controller).toContain("result.draftReachableFiles");
     expect(controller).toContain("draftReachableFileKeys.has");
-    expect(controller).toContain("documentRootPath: this.draftThumbnailDocumentRootPath");
+    expect(draftController).toContain("documentRootPath: this.thumbnailDocumentRootPath");
     expect(thumbnails).toContain("thumbnail_document_namespace");
     expect(thumbnails).toContain("thumbnail_root.join(cache_namespace)");
     expect(plan).toContain("main document's reachable local");
