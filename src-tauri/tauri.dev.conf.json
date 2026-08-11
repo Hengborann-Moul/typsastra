@@ -1,0 +1,11 @@
+{
+  "productName": "Typsastra Dev",
+  "identifier": "com.typsastra.editor.dev",
+  "app": {
+    "windows": [
+      {
+        "title": "Typsastra Dev"
+      }
+    ]
+  }
+}

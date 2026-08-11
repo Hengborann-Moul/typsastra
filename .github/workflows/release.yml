@@ -53,6 +53,13 @@ jobs:
       - name: Install Frontend Dependencies
         run: bun install --frozen-lockfile
 
+      - name: Verify macOS Build Environment
+        if: matrix.platform == 'macos-latest'
+        run: |
+          hdiutil info
+          df -h .
+          sw_vers
+
       - name: Enable Updater Artifacts for Release
         run: |
           bun -e 'const fs = require("fs"); const file = "src-tauri/tauri.conf.json"; const config = JSON.parse(fs.readFileSync(file, "utf8")); config.bundle.createUpdaterArtifacts = true; fs.writeFileSync(file, JSON.stringify(config, null, 2) + "\n");'
@@ -86,3 +93,33 @@ jobs:
           args: ${{ matrix.args }}
           uploadUpdaterJson: true
           uploadUpdaterSignatures: true
+
+      - name: Verify macOS DMG
+        if: matrix.platform == 'macos-latest'
+        run: |
+          dmg_dir="src-tauri/target/release/bundle/dmg"
+          dmg=$(find "${dmg_dir}" -name '*.dmg' -print -quit 2>/dev/null || true)
+          if [ -z "${dmg}" ]; then
+            echo "No DMG found in ${dmg_dir}"
+            ls -la "${dmg_dir}/" || true
+            exit 1
+          fi
+          echo "Verifying DMG: ${dmg}"
+          hdiutil verify -verbose "${dmg}"
+          echo "Mounting DMG for structure check..."
+          dev_info=$(hdiutil attach -nobrowse -readonly "${dmg}" 2>&1)
+          echo "${dev_info}"
+          mount_point=$(echo "${dev_info}" | grep '/Volumes/' | awk '{print $NF}')
+          echo "Mounted at: ${mount_point}"
+          ls -laR "${mount_point}/"
+          app_path="${mount_point}/Typsastra.app"
+          if [ -d "${app_path}" ]; then
+            echo "App bundle found"
+            ls -la "${app_path}/Contents/MacOS/"
+          else
+            echo "ERROR: Typsastra.app not found in DMG"
+            hdiutil detach "${mount_point}"
+            exit 1
+          fi
+          hdiutil detach "${mount_point}"
+          echo "DMG verification complete"
