@@ -1060,15 +1060,25 @@ export function createTypstAutocomplete(
           const textBefore = lineStr.slice(0, col);
           const isEmptyFunctionCall = isEmptyTypstFunctionCallAt(lineStr, col);
           
-          // Only trigger autocomplete implicitly on word characters or
-          // context-specific trigger characters. A comma opens the next
-          // named-argument slot only when it belongs to a Typst function.
+          // Inside a Typst function call, implicit completion is boundary-driven:
+          // - `#par(|)` opens the first named-argument list.
+          // - `field:|` stays closed until the user types a space.
+          // - `field: |` opens value completion.
+          // - `value,|` stays closed until the user types a space.
+          // - `value, |` opens the next named-argument list.
           const lastChar = textBefore.slice(-1);
-          const isFunctionArgumentTrigger = (lastChar === "," || lastChar === " ")
+          const isFunctionArgumentNameTrigger = lastChar === " "
             && isTypstFunctionArgumentContextAt(
               context.state.doc,
               context.pos
             );
+          const isFunctionArgumentValueTrigger = lastChar === " "
+            && isTypstFunctionArgumentValueContextAt(
+              context.state.doc,
+              context.pos
+            );
+          const isFunctionArgumentTrigger = isFunctionArgumentNameTrigger
+            || isFunctionArgumentValueTrigger;
           if (!/[\w#\.@-]/.test(lastChar)
             && !(lastChar === " " && fontValueFrom !== null)
             && !isFunctionArgumentTrigger
@@ -1254,9 +1264,6 @@ export function createTypstAutocomplete(
               item.kind,
               item.detail ?? item.labelDetails?.description
             );
-            const opensArgumentValueCompletion = isFunctionArgumentStart
-              && isNamedArgumentCompletion(item)
-              && argumentDefaultSnippet === null;
             if (insertTextFormat === 2 || callableSnippet.opensArguments) {
               const completion = snippetCompletion(callableSnippet.template, {
                 label,
@@ -1308,12 +1315,6 @@ export function createTypstAutocomplete(
                   }
                   if (allowsAdaptivePreference) {
                     recordTypstCompletionPreference(preferenceLabel);
-                  }
-                  if (opensArgumentValueCompletion) {
-                    window.setTimeout(() => {
-                      view.dispatch({ selection: view.state.selection });
-                      startCompletion(view);
-                    }, 50);
                   }
                   if (callableSnippet.opensArguments) {
                     const line = view.state.doc.lineAt(edit.from);
@@ -1378,12 +1379,6 @@ export function createTypstAutocomplete(
                 });
                 if (allowsAdaptivePreference) {
                   recordTypstCompletionPreference(preferenceLabel);
-                }
-                if (opensArgumentValueCompletion) {
-                  window.setTimeout(() => {
-                    view.dispatch({ selection: view.state.selection });
-                    startCompletion(view);
-                  }, 50);
                 }
               }
             };

@@ -23,8 +23,7 @@ import {
 } from "./editor/surroundWith";
 import { isForwardSyncContentPosition } from "./editor/forwardSyncEligibility";
 import type { EditorFoldRange } from "./editor/folding";
-import { looksLikeStalePrefixDiagnostic, setEditorDiagnosticsEffect } from "./editor/diagnostics";
-import type { EditorDiagnostic, EditorDiagnosticSeverity } from "./editor/diagnostics";
+import { setEditorDiagnosticsEffect } from "./editor/diagnostics";
 import { WorkspaceExplorer } from "./components/explorer";
 import { SidebarController } from "./sidebar/sidebarController";
 import { TypographyController } from "./typography/typographyController";
@@ -35,11 +34,7 @@ import { isTinymistStoppedRequestError, type EditorTextEdit, type LspDiagnostic,
 import {
   parsePreviewCompilerFailure,
   relocatePreviewCompilerFailureMessage,
-  typstPackageEntrypoint,
-  typstPackageImports,
   type PreviewCompilerFailure,
-  type TypstPackageImport,
-  type TypstPackageReference
 } from "./compiler/previewError";
 import type { AppSettings, DeveloperLogCategory, PreviewRenderMode, ThemeName } from "./settings";
 import { SettingsController } from "./settingsController";
@@ -50,14 +45,15 @@ import type { PreviewFrame, PreviewClickPoint, PreviewInteractionStatus, Preview
 import type { MarkdownPreviewFrame, MarkdownResource } from "./preview/markdownPreviewFrame";
 import { PreviewController } from "./preview/previewController";
 import { PreviewSyncController } from "./preview/previewSyncController";
+import { SourceMapSessionController } from "./preview/sourceMapSessionController";
 import { ImagePreviewController } from "./preview/imagePreviewController";
+import { activeFileCanRenderPreview, allowsStandalonePreview, documentScriptsForPreviewContext, participatesInPreviewCompilation, previewLspMainPath, previewRefreshStyle, previewSessionIdentity, researchDocumentIdentity, tinymistPreviewPreferredSourceColumn, usesTemplateAwareStandaloneRoot, type PreviewTarget, type PreviewRefreshStyle } from "./preview/previewPolicy";
+import { LogConsoleController, type LogConsoleEntryInput } from "./diagnostics/logConsoleController";
+import { DiagnosticsController } from "./diagnostics/diagnosticsController";
 import {
-  tinymistDataPlaneFrameConfirmsSourceMap,
-  tinymistDataPlaneFrameKind,
-  tinymistDataPlanePositionText
-} from "./preview/tinymistDataPlane";
-import { activeFileCanRenderPreview, allowsStandalonePreview, documentScriptsForPreviewContext, participatesInPreviewCompilation, previewLspMainPath, previewRefreshStyle, previewSessionIdentity, researchDocumentIdentity, sourceMapPreviewTaskId, staleSourceMapTaskIds, tinymistPreviewPreferredSourceColumn, usesTemplateAwareStandaloneRoot, type PreviewTarget, type PreviewRefreshStyle } from "./preview/previewPolicy";
-import { LogConsoleController, spellcheckConsoleGroupKey, type LogConsoleEntryInput } from "./diagnostics/logConsoleController";
+  PreviewFailureController,
+  type PreviewPackageFailureHint,
+} from "./diagnostics/previewFailureController";
 import { EditorFontManager } from "./editor/fontManager";
 import { TabStripController } from "./editor/tabStripController";
 import { createAppIcon, updateMaximizeIcon } from "./ui/icons";
@@ -117,7 +113,6 @@ import {
 
 import {
   ensureTypographyTemplateApplication,
-  externalReferenceLabels,
   findLocalTemplateApplication,
   findTemplateFunctionName,
   newTypographyTemplate,
@@ -337,11 +332,6 @@ type PreparedPdfPreview = {
   reachableSourcePaths: string[];
 };
 
-type PreviewPackageFailureHint = {
-  message: string;
-  projectImport: TypstPackageImport;
-};
-
 type ActivateEditorTabOptions = {
   preservePreviewSession?: PreviewSessionState;
   skipPreviewActivation?: boolean;
@@ -427,7 +417,6 @@ export class TypsastraWorkspaceController {
   private forwardSyncDebounceMs = 120;
   private latestDocumentVersion = 1;
   private diagnosticWaitStartedAt: number | null = null;
-  private readonly lspDiagnosticsByFile = new Map<string, LspDiagnostic[]>();
   private openTabs: EditorTab[] = [];
   private readonly detectedPlainTextPaths = new Set<string>();
   private readonly classifiedUnknownPaths = new Set<string>();
@@ -445,20 +434,6 @@ export class TypsastraWorkspaceController {
   private pdfLoadRequestGeneration = 0;
   private readonly blockedLargePdfPaths = new Set<string>();
   private previewPageStatus: PreviewPageStatus = { currentPage: 0, pageCount: 0 };
-  private pdfSyncPreviewTaskKey: string | null = null;
-  private pdfSyncRegisteredTaskId: string | null = null;
-  private pdfSourceMapStartupKey: string | null = null;
-  private pdfSourceMapStartup: Promise<{ socket: WebSocket; taskId: string } | null> | null = null;
-  private pdfSourceMapRetryKey: string | null = null;
-  private pdfSourceMapRetryNotBefore = 0;
-  private pdfSourceMapFailureCount = 0;
-  private pdfSyncSocket: WebSocket | null = null;
-  private pdfSyncSocketUrl = "";
-  private pdfSyncDocumentReadySocket: WebSocket | null = null;
-  private pdfSyncDocumentReadyPromise: Promise<boolean> | null = null;
-  private resolvePdfSyncDocumentReady: ((ready: boolean) => void) | null = null;
-  private pdfSourceMapWarmupSocket: WebSocket | null = null;
-  private pdfSourceMapWarmup: Promise<boolean> | null = null;
   private pdfSourceMapWarmupTimer: number | null = null;
   private horizontalPaneResizeActive = false;
   private readonly horizontalPaneResizeWaiters = new Set<() => void>();
@@ -680,7 +655,54 @@ export class TypsastraWorkspaceController {
     handleForwardPosition: (path, cursor) => this.handlePdfForwardSync(path, cursor),
     mapForwardPosition: async () => null
   });
+  private readonly sourceMapSessionController = new SourceMapSessionController({
+    log: (source, kind, message) => this.appendDeveloperLog({ kind, source, message }),
+    onPositionPayload: text => this.handlePdfSourceMapPositionPayload(text),
+    activeFilePath: () => this.activeFilePath,
+    pathKey: filePathKey,
+  });
   private readonly logConsoleController = new LogConsoleController(entry => this.navigateToLogEntry(entry));
+  private readonly diagnosticsController = new DiagnosticsController(this.logConsoleController, {
+    editor: () => this.editorInstance,
+    client: () => this.lspClient,
+    activeFilePath: () => this.activeFilePath,
+    pathKey: filePathKey,
+    mapToOriginalPath: path => this.mapToOriginalPath(path),
+    isRenderCachePath: path => this.isRenderCachePath(path),
+    previewImported: () => this.previewImported,
+    previewStandalone: () => this.previewStandalone,
+    latestDocumentVersion: () => this.latestDocumentVersion,
+    hasPendingSync: path => this.documentSessionController.hasPendingSyncFor(path, filePathKey),
+    spellcheck: () => this.spellcheckController,
+    recordFirstDiagnostics: diagnosticCount => {
+      if (this.diagnosticWaitStartedAt === null) return;
+      this.performanceController.recordFirst({
+        name: "diagnostics.first",
+        milliseconds: performance.now() - this.diagnosticWaitStartedAt,
+        detail: { diagnosticCount },
+      });
+      this.diagnosticWaitStartedAt = null;
+    },
+    logDeveloper: (kind, source, message) => this.appendDeveloperLog({ kind, source, message }),
+    acceptedDiagnosticsChanged: diagnostics => this.recoverPreviewAfterAcceptedDiagnostics(diagnostics),
+    openDiagnosticFile: async path => {
+      const previewSession = this.previewRootPath ? this.capturePreviewSession() : undefined;
+      await this.loadFile(path, { preservePreviewSession: previewSession });
+    },
+    activeTabContentLoaded: () => this.getActiveTab()?.contentLoaded === true,
+    editorPositionFromSourceLocation: (line, column) => this.editorPositionFromSourceLocation(line, column),
+  });
+  private readonly previewFailureController = new PreviewFailureController(this.logConsoleController, {
+    mapToOriginalPath: path => this.mapToOriginalPath(path),
+    sourceForPath: async path => {
+      const generated = this.pdfPreviewGeneratedFiles.get(filePathKey(path));
+      const openTab = this.openTabs.find(tab => filePathKey(tab.path) === filePathKey(path));
+      return generated?.preparedText
+        ?? (openTab?.contentLoaded ? openTab.content : null)
+        ?? await invoke<string>("read_workspace_file", { path }).catch(() => "");
+    },
+    isRenderCachePath: path => this.isRenderCachePath(path),
+  });
   private readonly layoutController = new LayoutController(
     () => this.saveWorkspaceState(),
     () => this.logConsoleController.setVisible(false),
@@ -3130,14 +3152,7 @@ export class TypsastraWorkspaceController {
 
   private handleTinymistConnected(): void {
     void this.discoverSurroundWithOptions();
-    this.pdfSyncPreviewTaskKey = null;
-    this.pdfSyncRegisteredTaskId = null;
-    this.pdfSourceMapStartup = null;
-    this.pdfSourceMapStartupKey = null;
-    this.clearPdfSourceMapDocumentReadiness();
-    this.pdfSyncSocket?.close();
-    this.pdfSyncSocket = null;
-    this.pdfSyncSocketUrl = "";
+    this.sourceMapSessionController.reset({ retry: false });
   }
 
   private async discoverSurroundWithOptions(): Promise<void> {
@@ -3193,21 +3208,11 @@ export class TypsastraWorkspaceController {
     this.clearPendingLspSync();
     this.previewSyncController.clearForward();
     this.clearDiagnostics();
-    this.pdfSyncPreviewTaskKey = null;
-    this.pdfSyncRegisteredTaskId = null;
-    this.pdfSourceMapStartup = null;
-    this.pdfSourceMapStartupKey = null;
-    this.pdfSourceMapRetryKey = null;
-    this.pdfSourceMapRetryNotBefore = 0;
-    this.pdfSourceMapFailureCount = 0;
+    this.sourceMapSessionController.reset();
     if (this.pdfSourceMapWarmupTimer !== null) {
       window.clearTimeout(this.pdfSourceMapWarmupTimer);
       this.pdfSourceMapWarmupTimer = null;
     }
-    this.clearPdfSourceMapDocumentReadiness();
-    this.pdfSyncSocket?.close();
-    this.pdfSyncSocket = null;
-    this.pdfSyncSocketUrl = "";
     this.pdfPreviewSourceMapRootPath = null;
     this.pdfPreviewSourceMapTaskId = null;
   }
@@ -3296,16 +3301,7 @@ export class TypsastraWorkspaceController {
     partialRendering: boolean;
     message: string;
   }): void {
-    const affectsSourceMapSession = !this.pdfSyncRegisteredTaskId
-      || context.taskId === this.pdfSyncRegisteredTaskId;
-    if (affectsSourceMapSession) {
-      this.pdfSyncPreviewTaskKey = null;
-      this.pdfSyncRegisteredTaskId = null;
-      this.clearPdfSourceMapDocumentReadiness();
-      this.pdfSyncSocket?.close();
-      this.pdfSyncSocket = null;
-      this.pdfSyncSocketUrl = "";
-    }
+    this.sourceMapSessionController.resetIfTaskFailed(context.taskId);
     this.appendDeveloperLog({
       kind: "error",
       source: "preview startup",
@@ -3325,14 +3321,7 @@ export class TypsastraWorkspaceController {
   private async handleToolchainChanged(status: ToolchainStatus) {
     this.toolchainController.setStatus(status);
     this.lspReady = false;
-    this.pdfSyncPreviewTaskKey = null;
-    this.pdfSyncRegisteredTaskId = null;
-    this.pdfSourceMapStartup = null;
-    this.pdfSourceMapStartupKey = null;
-    this.clearPdfSourceMapDocumentReadiness();
-    this.pdfSyncSocket?.close();
-    this.pdfSyncSocket = null;
-    this.pdfSyncSocketUrl = "";
+    this.sourceMapSessionController.reset({ retry: false });
     this.pinnedLspMainPath = null;
     this.openedDocumentUris.clear();
     this.previewFrame.clear();
@@ -3578,15 +3567,7 @@ export class TypsastraWorkspaceController {
     if (this.horizontalPaneResizeActive) this.endHorizontalPaneResize();
 
     this.cancelManualForwardSync();
-    this.pdfSourceMapStartup = null;
-    this.pdfSourceMapStartupKey = null;
-    this.pdfSourceMapRetryKey = null;
-    this.pdfSourceMapRetryNotBefore = 0;
-    this.pdfSourceMapFailureCount = 0;
-    this.clearPdfSourceMapDocumentReadiness();
-    this.pdfSyncSocket?.close();
-    this.pdfSyncSocket = null;
-    this.pdfSyncSocketUrl = "";
+    this.sourceMapSessionController.reset();
 
     try {
       // WebView2 can discard font and layout resources while Windows is
@@ -4057,14 +4038,7 @@ export class TypsastraWorkspaceController {
     if (this.activeFilePath) {
       await this.recheckActiveDocumentAfterPin(this.editorInstance.state.doc.toString());
     }
-    this.pdfSyncPreviewTaskKey = null;
-    this.pdfSyncRegisteredTaskId = null;
-    this.pdfSourceMapStartup = null;
-    this.pdfSourceMapStartupKey = null;
-    this.clearPdfSourceMapDocumentReadiness();
-    this.pdfSyncSocket?.close();
-    this.pdfSyncSocket = null;
-    this.pdfSyncSocketUrl = "";
+    this.sourceMapSessionController.reset({ retry: false });
   }
 
   private async handlePrivateFontDirectoriesChanged(): Promise<void> {
@@ -5707,7 +5681,7 @@ export class TypsastraWorkspaceController {
 
     const documentReadyStartedAt = performance.now();
     const documentReadyBudget = Math.max(1, deadline - performance.now());
-    const documentReady = await this.waitForPdfSourceMapDocument(
+    const documentReady = await this.sourceMapSessionController.waitForDocument(
       sourceMapSession.socket,
       documentReadyBudget
     );
@@ -5938,103 +5912,14 @@ export class TypsastraWorkspaceController {
     source: "forward sync" | "inverse sync",
     background = false
   ): Promise<{ socket: WebSocket; taskId: string } | null> {
-    const sourceMapTaskId = sourceMapPreviewTaskId(taskId);
-    const taskKey = `${filePathKey(rootPath)}\u0000${sourceMapTaskId}`;
-    if (
-      background
-      && this.pdfSourceMapRetryKey === taskKey
-      && performance.now() < this.pdfSourceMapRetryNotBefore
-    ) {
-      return null;
-    }
-    if (this.pdfSourceMapStartupKey === taskKey && this.pdfSourceMapStartup) {
-      return await this.pdfSourceMapStartup;
-    }
-
-    const startup = this.startPdfSourceMapSession(client, rootPath, taskId, sourceMapTaskId, taskKey, source);
-    this.pdfSourceMapStartupKey = taskKey;
-    this.pdfSourceMapStartup = startup;
-    try {
-      return await startup;
-    } finally {
-      if (this.pdfSourceMapStartup === startup) {
-        this.pdfSourceMapStartup = null;
-        this.pdfSourceMapStartupKey = null;
-      }
-    }
-  }
-
-  private async startPdfSourceMapSession(
-    client: TinymistLspClient,
-    rootPath: string,
-    legacyTaskId: string,
-    sourceMapTaskId: string,
-    taskKey: string,
-    source: "forward sync" | "inverse sync"
-  ): Promise<{ socket: WebSocket; taskId: string } | null> {
-    if (this.pdfSyncPreviewTaskKey === taskKey) {
-      const existingSocket = await this.ensurePdfSyncSocket(client.getLatestPreviewDataPlaneUrl(), source);
-      if (existingSocket) return { socket: existingSocket, taskId: sourceMapTaskId };
-    }
-
-    this.clearPdfSourceMapDocumentReadiness();
-    this.pdfSyncSocket?.close();
-    this.pdfSyncSocket = null;
-    this.pdfSyncSocketUrl = "";
-
-    const staleTasks = staleSourceMapTaskIds(legacyTaskId, this.pdfSyncRegisteredTaskId);
-    for (const staleTaskId of staleTasks) {
-      await client.stopPreview(staleTaskId).catch(() => {});
-    }
-    this.pdfSyncPreviewTaskKey = null;
-    this.pdfSyncRegisteredTaskId = null;
-
-    this.appendDeveloperLog({
-      kind: "info",
-      source,
-      message: `Starting hidden Tinymist source-map session: root=${rootPath}; task=${sourceMapTaskId}; mode=${previewRefreshStyle(this.effectivePreviewRenderMode)}; active=${this.activeFilePath ?? "n/a"}.`
-    });
-    const url = await client.startPreview(
+    return await this.sourceMapSessionController.ensureSession(
+      client,
       nativeFilePath(rootPath),
-      sourceMapTaskId,
+      taskId,
       previewRefreshStyle(this.effectivePreviewRenderMode),
-      false
-    );
-    if (!url) {
-      this.appendDeveloperLog({
-        kind: "warning",
-        source,
-        message: `Tinymist source-map session failed to start for task ${sourceMapTaskId}.`
-      });
-      return null;
-    }
-    this.pdfSyncPreviewTaskKey = taskKey;
-    this.pdfSyncRegisteredTaskId = sourceMapTaskId;
-
-    const dataPlaneUrl = client.getLatestPreviewDataPlaneUrl();
-    const socket = await this.ensurePdfSyncSocket(dataPlaneUrl, source);
-    if (socket) {
-      this.pdfSourceMapRetryKey = null;
-      this.pdfSourceMapRetryNotBefore = 0;
-      this.pdfSourceMapFailureCount = 0;
-      return { socket, taskId: sourceMapTaskId };
-    }
-
-    this.appendDeveloperLog({
-      kind: "warning",
       source,
-      message: `Tinymist data-plane connection failed for task ${sourceMapTaskId}: ${dataPlaneUrl || "URL unavailable"}.`
-    });
-    await client.stopPreview(sourceMapTaskId).catch(() => {});
-    if (this.pdfSyncRegisteredTaskId === sourceMapTaskId) this.pdfSyncRegisteredTaskId = null;
-    if (this.pdfSyncPreviewTaskKey === taskKey) this.pdfSyncPreviewTaskKey = null;
-    this.pdfSourceMapFailureCount = this.pdfSourceMapRetryKey === taskKey
-      ? this.pdfSourceMapFailureCount + 1
-      : 1;
-    this.pdfSourceMapRetryKey = taskKey;
-    this.pdfSourceMapRetryNotBefore = performance.now()
-      + Math.min(60_000, 2_000 * (2 ** Math.min(5, this.pdfSourceMapFailureCount - 1)));
-    return null;
+      background,
+    );
   }
 
   private async handlePdfPreviewClick(point: PreviewClickPoint): Promise<void> {
@@ -6090,7 +5975,10 @@ export class TypsastraWorkspaceController {
       });
       return;
     }
-    if (!await this.waitForPdfSourceMapDocument(sourceMapSession.socket)) {
+    if (!await this.sourceMapSessionController.waitForDocument(
+      sourceMapSession.socket,
+      PDF_SOURCE_MAP_READY_TIMEOUT_MS,
+    )) {
       this.appendDeveloperLog({
         kind: "warning",
         source: "inverse sync",
@@ -6131,98 +6019,7 @@ export class TypsastraWorkspaceController {
     });
   }
 
-  private async ensurePdfSyncSocket(url: string, source: "forward sync" | "inverse sync"): Promise<WebSocket | null> {
-    if (!url) return null;
-    if (this.pdfSyncSocketUrl === url && this.pdfSyncSocket?.readyState === WebSocket.OPEN) {
-      return this.pdfSyncSocket;
-    }
-    this.clearPdfSourceMapDocumentReadiness();
-    this.pdfSyncSocket?.close();
-    this.pdfSyncSocket = null;
-    this.pdfSyncSocketUrl = url;
-    this.pdfSyncDocumentReadyPromise = new Promise(resolve => {
-      this.resolvePdfSyncDocumentReady = resolve;
-    });
-    const proxyUrl = await invoke<string>("start_preview_ws_proxy", { targetUrl: url }).catch(error => {
-      this.appendDeveloperLog({
-        kind: "warning",
-        source,
-        message: `Failed to start native Tinymist data-plane bridge for ${url}: ${String(error)}`
-      });
-      return "";
-    });
-    if (!proxyUrl || this.pdfSyncSocketUrl !== url) return null;
-    return await new Promise(resolve => {
-      // Tinymist validates WebSocket origins. The native loopback bridge sets
-      // the upstream Origin to the Tinymist endpoint while this browser-facing
-      // socket remains confined to a one-connection local proxy.
-      const socket = new WebSocket(proxyUrl);
-      socket.binaryType = "arraybuffer";
-      let settled = false;
-      const finish = (value: WebSocket | null) => {
-        if (settled) return;
-        settled = true;
-        window.clearTimeout(timeout);
-        resolve(value);
-      };
-      const timeout = window.setTimeout(() => {
-        socket.close();
-        if (this.pdfSyncSocket === socket || this.pdfSyncSocketUrl === url) {
-          this.clearPdfSourceMapDocumentReadiness();
-          if (this.pdfSyncSocket === socket) this.pdfSyncSocket = null;
-        }
-        finish(null);
-      }, 10000);
-      socket.addEventListener("open", () => {
-        this.appendDeveloperLog({
-          kind: "info",
-          source,
-          message: `Source-map bridge connected locally; waiting for its Tinymist upstream: ${url}.`
-        });
-      }, { once: true });
-      socket.addEventListener("message", event => {
-        void this.handlePdfSyncSocketMessage(event.data, socket);
-        void tinymistDataPlaneFrameKind(event.data).then(frameKind => {
-          if (frameKind !== "transport" || this.pdfSyncSocketUrl !== url) return;
-          this.pdfSyncSocket = socket;
-          this.appendDeveloperLog({
-            kind: "info",
-            source,
-            message: `Tinymist source-map data plane connected without requesting a vector document snapshot: ${url}.`
-          });
-          // Typsastra renders the compiled PDF itself and consumes only
-          // Tinymist's jump/viewport source-map frames. The native bridge sends
-          // this transport acknowledgement only after its upstream handshake,
-          // so the first warm-up lookup cannot race ahead of the subscription.
-          finish(socket);
-        });
-      });
-      socket.addEventListener("close", () => {
-        if (this.pdfSyncSocket === socket) {
-          this.clearPdfSourceMapDocumentReadiness();
-          this.pdfSyncSocket = null;
-        }
-      });
-      socket.addEventListener("error", () => {
-        if (this.pdfSyncSocket === socket || this.pdfSyncSocketUrl === url) {
-          this.clearPdfSourceMapDocumentReadiness();
-          if (this.pdfSyncSocket === socket) this.pdfSyncSocket = null;
-        }
-        finish(null);
-      }, { once: true });
-    });
-  }
-
-  private async handlePdfSyncSocketMessage(data: unknown, socket = this.pdfSyncSocket): Promise<void> {
-    const frameKind = await tinymistDataPlaneFrameKind(data);
-    if (socket && tinymistDataPlaneFrameConfirmsSourceMap(frameKind)) {
-      this.markPdfSourceMapDocumentReady(socket);
-    }
-    if (frameKind === "document") {
-      return;
-    }
-    const text = await tinymistDataPlanePositionText(data);
-    if (!text) return;
+  private handlePdfSourceMapPositionPayload(text: string): void {
     const positions = parseTinymistPreviewPositions(text);
     if (positions.length === 0) {
       if (this.pendingPdfForwardSync) {
@@ -6287,30 +6084,16 @@ export class TypsastraWorkspaceController {
     // one can schedule another full vector update, even though the native bridge
     // discards that vector payload. Let a manual sync retry later if this single
     // background probe does not become ready.
-    let ready = this.pdfSyncDocumentReadySocket === session.socket;
-    if (!ready && this.pdfSyncSocket === session.socket) {
-      if (this.pdfSourceMapWarmupSocket !== session.socket || !this.pdfSourceMapWarmup) {
-        const socket = session.socket;
-        const warmup = (async () => {
-          await client.scrollPreview(session.taskId, {
-            event: "panelScrollTo",
-            filepath: nativeFilePath(target.filepath),
-            line: target.line,
-            character: target.character
-          });
-          return await this.waitForPdfSourceMapDocument(socket);
-        })();
-        this.pdfSourceMapWarmupSocket = socket;
-        this.pdfSourceMapWarmup = warmup;
-        void warmup.finally(() => {
-          if (this.pdfSourceMapWarmup === warmup) {
-            this.pdfSourceMapWarmup = null;
-            this.pdfSourceMapWarmupSocket = null;
-          }
-        });
-      }
-      ready = await (this.pdfSourceMapWarmup ?? Promise.resolve(false));
-    }
+    const ready = await this.sourceMapSessionController.ensureWarm(
+      session.socket,
+      () => client.scrollPreview(session.taskId, {
+        event: "panelScrollTo",
+        filepath: nativeFilePath(target.filepath),
+        line: target.line,
+        character: target.character,
+      }),
+      PDF_SOURCE_MAP_READY_TIMEOUT_MS,
+    );
     if (generation !== this.pdfPreviewGeneration) return;
     this.appendDeveloperLog({
       kind: ready ? "info" : "warning",
@@ -6354,42 +6137,6 @@ export class TypsastraWorkspaceController {
     // PDF presentation and the first visible-page render have priority over
     // optional cursor-sync preparation.
     this.pdfSourceMapWarmupTimer = window.setTimeout(attempt, 250);
-  }
-
-  private waitForPdfSourceMapDocument(
-    socket: WebSocket,
-    timeoutMs = PDF_SOURCE_MAP_READY_TIMEOUT_MS
-  ): Promise<boolean> {
-    if (this.pdfSyncDocumentReadySocket === socket) return Promise.resolve(true);
-    if (this.pdfSyncSocket !== socket || !this.pdfSyncDocumentReadyPromise) return Promise.resolve(false);
-    const readiness = this.pdfSyncDocumentReadyPromise;
-    return new Promise(resolve => {
-      let settled = false;
-      const finish = (ready: boolean) => {
-        if (settled) return;
-        settled = true;
-        window.clearTimeout(timeout);
-        resolve(ready);
-      };
-      const timeout = window.setTimeout(() => finish(false), timeoutMs);
-      void readiness.then(finish);
-    });
-  }
-
-  private markPdfSourceMapDocumentReady(socket: WebSocket): void {
-    if (this.pdfSyncSocket !== socket || this.pdfSyncDocumentReadySocket === socket) return;
-    this.pdfSyncDocumentReadySocket = socket;
-    this.resolvePdfSyncDocumentReady?.(true);
-    this.resolvePdfSyncDocumentReady = null;
-  }
-
-  private clearPdfSourceMapDocumentReadiness(): void {
-    this.resolvePdfSyncDocumentReady?.(false);
-    this.resolvePdfSyncDocumentReady = null;
-    this.pdfSyncDocumentReadyPromise = null;
-    this.pdfSyncDocumentReadySocket = null;
-    this.pdfSourceMapWarmup = null;
-    this.pdfSourceMapWarmupSocket = null;
   }
 
   private initializePreviewPageControls(): void {
@@ -6590,162 +6337,37 @@ export class TypsastraWorkspaceController {
     this.updateManualForwardSyncAction();
   }
 
-  private async handleLspDiagnostics(uri: string, diagnostics: LspDiagnostic[], version?: number) {
-    const rawPath = filePathFromUri(uri);
-    if (this.isRenderCachePath(rawPath)) {
-      this.appendDeveloperLog({
-        kind: "info",
-        source: "preview diagnostics",
-        message: `Ignored ${diagnostics.length} diagnostic(s) from private render mirror: ${rawPath}.`
-      });
-      return;
-    }
-    const originalPath = this.mapToOriginalPath(rawPath);
-    if (!isTypstDocumentPath(originalPath)) return;
-    const isActive = this.activeFilePath && filePathKey(originalPath) === filePathKey(this.activeFilePath);
-    if (isActive && this.diagnosticWaitStartedAt !== null) {
-      this.performanceController.recordFirst({
-        name: "diagnostics.first",
-        milliseconds: performance.now() - this.diagnosticWaitStartedAt,
-        detail: { diagnosticCount: diagnostics.length }
-      });
-      this.diagnosticWaitStartedAt = null;
-    }
+  private handleLspDiagnostics(uri: string, diagnostics: LspDiagnostic[], version?: number): Promise<void> {
+    return this.diagnosticsController.handleLspDiagnostics(uri, diagnostics, version);
+  }
 
-    const isPackageFile = originalPath.toLowerCase().includes("typst/packages") || 
-                          originalPath.toLowerCase().includes("typst\\packages") ||
-                          originalPath.toLowerCase().includes("packages/preview") ||
-                          originalPath.toLowerCase().includes("packages\\preview");
-    if (isPackageFile) {
-      if (isActive) {
-        this.editorInstance.dispatch({
-          effects: setEditorDiagnosticsEffect.of([])
-        });
-      }
-      return;
-    }
-
-    if (isActive && !this.shouldAcceptLspDiagnostics(uri, originalPath, version)) return;
-
-    const cacheableDiagnostics = diagnostics.filter(diagnostic =>
-      !diagnostic.message.includes("cannot export multiple images without a page number template")
-    );
-    this.lspDiagnosticsByFile.set(filePathKey(originalPath), cacheableDiagnostics);
-
-    const filteredDiagnostics = cacheableDiagnostics.filter(diagnostic => {
-      if (!isActive) return true;
-      if (!/label.*does not exist|unknown label/i.test(diagnostic.message)) return true;
-      const externalLabels = this.previewImported && this.previewStandalone
-        ? new Set(externalReferenceLabels(this.editorInstance.state.doc.toString()))
-        : new Set<string>();
-      return ![...externalLabels].some(label =>
-        diagnostic.message.includes(label) || this.diagnosticSourceText(diagnostic).includes(`@${label}`)
-      );
-    });
-
-    if (isActive) {
-      const editorDiagnostics: EditorDiagnostic[] = [];
-      const staleDiagnostics = new Set<LspDiagnostic>();
-      const rawPath = filePathFromUri(uri);
-      const fromRenderCache = this.isRenderCachePath(rawPath);
-      const relPath = originalPath.startsWith(this.workspaceRootPath!)
-        ? originalPath.substring(this.workspaceRootPath!.length).replace(/^[/\\]+/, "")
-        : originalPath;
-      const cacheContent = fromRenderCache ? await this.pdfGeneratedPreviewText(originalPath) : "";
-
-      for (const diagnostic of filteredDiagnostics) {
-        let from: number | null = null;
-        let to: number | null = null;
-        if (fromRenderCache) {
-          from = await this.mapCacheLspPositionToOriginalEditorOffset(relPath, diagnostic.range.start, cacheContent);
-          to = await this.mapCacheLspPositionToOriginalEditorOffset(relPath, diagnostic.range.end, cacheContent);
-        } else {
-          from = this.editorPositionFromLspPosition(diagnostic.range.start);
-          to = this.editorPositionFromLspPosition(diagnostic.range.end);
-        }
-        if (from !== null && to !== null) {
-          if (looksLikeStalePrefixDiagnostic(this.editorInstance.state.doc, from, Math.max(from, to), diagnostic.message)) {
-            staleDiagnostics.add(diagnostic);
-            continue;
-          }
-          editorDiagnostics.push({
-            from,
-            to: Math.max(from, to),
-            severity: this.diagnosticSeverityFromLsp(diagnostic.severity),
-            message: diagnostic.message
-          });
-        }
-      }
-
-      if (!this.shouldAcceptLspDiagnostics(uri, originalPath, version)) return;
-
-      this.editorInstance.dispatch({
-        effects: setEditorDiagnosticsEffect.of(editorDiagnostics)
-      });
-
-      this.logConsoleController.setDiagnostics(originalPath, filteredDiagnostics
-        .filter(diagnostic => !staleDiagnostics.has(diagnostic))
-        .map((diagnostic) => this.logEntryFromDiagnostic(uri, diagnostic)));
-    } else {
-      this.logConsoleController.setDiagnostics(originalPath, filteredDiagnostics.map((diagnostic) => this.logEntryFromDiagnostic(uri, diagnostic)));
-    }
-
-    // Diagnostics belong in the editor and Problems panel. A transient syntax
-    // error must not cover the last successfully compiled preview; the render
-    // pipeline owns the empty-preview error state and clears it after recovery.
+  private recoverPreviewAfterAcceptedDiagnostics(diagnostics: readonly LspDiagnostic[]): void {
     if (
-      isActive
-      && this.effectivePreviewRenderMode === "on-type"
-      && this.lastFailedPreviewContents !== null
-      && !filteredDiagnostics.some(diagnostic => diagnostic.severity === 1)
-    ) {
-      const latestContents = this.editorInstance.state.doc.toString();
-      if (
-        latestContents !== this.lastFailedPreviewContents
-        && latestContents !== this.lastPreviewRecoveryRequestedContents
-        && activeFileCanRenderPreview(
-          this.activeFilePath,
-          this.pinnedMainFilePath,
-          this.previewImported,
-          this.previewDisabled
-        )
-      ) {
-        // A compiler failure can settle at the same time as the editor's valid
-        // revision. Treat the accepted diagnostic-clear event as a recovery
-        // boundary so that valid content cannot fall between those two queues.
-        this.lastPreviewRecoveryRequestedContents = latestContents;
-        this.appendDeveloperLog({
-          kind: "info",
-          source: "preview scheduler",
-          message: `LSP accepted a corrected revision after preview failure; requeueing ${latestContents.length} UTF-16 code unit(s).`
-        });
-        void this.renderPdfPreview(latestContents);
-      }
-    }
+      this.effectivePreviewRenderMode !== "on-type"
+      || this.lastFailedPreviewContents === null
+      || diagnostics.some(diagnostic => diagnostic.severity === 1)
+    ) return;
+
+    const latestContents = this.editorInstance.state.doc.toString();
+    if (
+      latestContents === this.lastFailedPreviewContents
+      || latestContents === this.lastPreviewRecoveryRequestedContents
+      || !activeFileCanRenderPreview(
+        this.activeFilePath,
+        this.pinnedMainFilePath,
+        this.previewImported,
+        this.previewDisabled,
+      )
+    ) return;
+
+    this.lastPreviewRecoveryRequestedContents = latestContents;
+    this.appendDeveloperLog({
+      kind: "info",
+      source: "preview scheduler",
+      message: `LSP accepted a corrected revision after preview failure; requeueing ${latestContents.length} UTF-16 code unit(s).`,
+    });
+    void this.renderPdfPreview(latestContents);
   }
-
-
-
-  private diagnosticSourceText(diagnostic: LspDiagnostic): string {
-    const from = this.editorPositionFromLspPosition(diagnostic.range.start);
-    const to = this.editorPositionFromLspPosition(diagnostic.range.end);
-    if (from === null || to === null) return "";
-    return this.editorInstance.state.doc.sliceString(from, Math.max(from, to));
-  }
-
-  private logEntryFromDiagnostic(uri: string, diagnostic: LspDiagnostic): LogConsoleEntryInput {
-    const filePath = this.mapToOriginalPath(filePathFromUri(uri));
-    return {
-      kind: this.diagnosticSeverityFromLsp(diagnostic.severity),
-      source: diagnostic.source ?? "typst",
-      filePath,
-      fileName: fileNameFromPath(filePath),
-      message: diagnostic.message,
-      line: diagnostic.range.start.line + 1,
-      column: (diagnostic.range.start.character ?? 0) + 1
-    };
-  }
-
   private appendLspLog(entry: LspLogEntry) {
     this.logConsoleController.appendLog({
       kind: entry.kind,
@@ -6755,124 +6377,22 @@ export class TypsastraWorkspaceController {
     });
   }
 
-  private async previewPackageFailureHint(
+  private previewPackageFailureHint(
     failure: PreviewCompilerFailure,
-    preparedPreview: PreparedPdfPreview | null
+    preparedPreview: PreparedPdfPreview | null,
   ): Promise<PreviewPackageFailureHint | null> {
-    if (
-      !failure.package
-      || !failure.packageCacheRoot
-      || !preparedPreview?.reachableSourcePaths.length
-    ) return null;
-
-    const projectImports: TypstPackageImport[] = [];
-    for (const path of preparedPreview.reachableSourcePaths.slice(0, 128)) {
-      const originalPath = this.mapToOriginalPath(path);
-      const generated = this.pdfPreviewGeneratedFiles.get(filePathKey(originalPath));
-      const openTab = this.openTabs.find(tab => filePathKey(tab.path) === filePathKey(originalPath));
-      const source = generated?.preparedText
-        ?? (openTab?.contentLoaded ? openTab.content : null)
-        ?? await invoke<string>("read_workspace_file", { path: originalPath }).catch(() => "");
-      projectImports.push(...typstPackageImports(source, originalPath));
-    }
-
-    const uniqueImports = projectImports.filter((entry, index, entries) =>
-      entries.findIndex(candidate =>
-        candidate.package.spec === entry.package.spec
-        && filePathKey(candidate.filePath) === filePathKey(entry.filePath)
-        && candidate.line === entry.line
-      ) === index
+    return this.previewFailureController.packageFailureHint(
+      failure,
+      preparedPreview?.reachableSourcePaths ?? [],
     );
-    for (const projectImport of uniqueImports) {
-      const chain = await this.typstPackageDependencyChain(
-        projectImport.package,
-        failure.package,
-        failure.packageCacheRoot
-      );
-      if (!chain) continue;
-      const relation = chain.length === 1
-        ? `${projectImport.package.spec} is the package that failed.`
-        : `${projectImport.package.spec} loads ${chain.slice(1).map(entry => entry.spec).join(" → ")}.`;
-      return {
-        projectImport,
-        message: `${relation}\nUpdate ${projectImport.package.spec} to a release compatible with the selected Typst version.`
-      };
-    }
-    return null;
-  }
-
-  private async typstPackageDependencyChain(
-    root: TypstPackageReference,
-    target: TypstPackageReference,
-    packageCacheRoot: string
-  ): Promise<TypstPackageReference[] | null> {
-    const targetSpec = target.spec.toLocaleLowerCase();
-    const queue: TypstPackageReference[][] = [[root]];
-    const visited = new Set<string>();
-    while (queue.length > 0 && visited.size < 64) {
-      const chain = queue.shift()!;
-      const current = chain[chain.length - 1];
-      const key = current.spec.toLocaleLowerCase();
-      if (key === targetSpec) return chain;
-      if (visited.has(key) || chain.length >= 5) continue;
-      visited.add(key);
-
-      const packageDirectory = `${packageCacheRoot}/${current.namespace}/${current.name}/${current.version}`;
-      const manifest = await invoke<string>("read_workspace_file", {
-        path: `${packageDirectory}/typst.toml`
-      }).catch(() => "");
-      const entrypoint = typstPackageEntrypoint(manifest);
-      if (!entrypoint) continue;
-      const entrypointPath = `${packageDirectory}/${entrypoint}`;
-      const packageSource = await invoke<string>("read_workspace_file", {
-        path: entrypointPath
-      }).catch(() => "");
-      for (const dependency of typstPackageImports(packageSource, entrypointPath)) {
-        queue.push([...chain, dependency.package]);
-      }
-    }
-    return null;
   }
 
   private publishPreviewCompilerFailure(
     failure: PreviewCompilerFailure,
-    packageHint: PreviewPackageFailureHint | null
+    packageHint: PreviewPackageFailureHint | null,
   ): void {
-    // The prepared render mirror is private implementation detail. Tinymist
-    // normally publishes the same error against the original workspace file,
-    // so exposing the export failure as a second cache-file problem produces a
-    // duplicate that navigates users into .typsastra. Keep the preview overlay
-    // as the export failure surface and let the original LSP diagnostic own the
-    // Problems entry.
-    const failureComesFromRenderMirror = failure.location !== null
-      && this.isRenderCachePath(failure.location.filePath);
-    if (!failureComesFromRenderMirror) {
-      this.logConsoleController.appendLog({
-        kind: "error",
-        source: "compiler",
-        message: failure.message,
-        channel: "lsp",
-        counted: true,
-        filePath: failure.location?.filePath,
-        fileName: failure.location ? fileNameFromPath(failure.location.filePath) : undefined,
-        line: failure.location?.line,
-        column: failure.location?.column
-      });
-    }
-    if (!packageHint) return;
-    this.logConsoleController.appendLog({
-      kind: "error",
-      source: "package compatibility",
-      message: packageHint.message,
-      channel: "lsp",
-      counted: true,
-      filePath: packageHint.projectImport.filePath,
-      fileName: fileNameFromPath(packageHint.projectImport.filePath),
-      line: packageHint.projectImport.line,
-      column: packageHint.projectImport.column
-    });
+    this.previewFailureController.publish(failure, packageHint);
   }
-
   private appendDeveloperLog(entry: LspLogEntry) {
     const source = entry.source ?? "developer";
     if (!this.isDeveloperLogEnabled(this.developerLogCategory(source))) return;
@@ -6917,225 +6437,29 @@ export class TypsastraWorkspaceController {
   }
 
   private updateSpellcheckLog(issues: readonly SpellingIssue[]): void {
-    const filePath = this.activeFilePath;
-    if (!filePath || !this.editorInstance) {
-      this.logConsoleController.setSpellcheckIssues([]);
-      return;
-    }
-    const doc = this.editorInstance.state.doc;
-    const grouped = new Map<string, {
-      issue: SpellingIssue;
-      providers: Set<string>;
-      locations: Array<{
-        filePath: string;
-        fileName: string;
-        line: number;
-        column: number;
-        offset: number;
-        toOffset: number;
-      }>;
-      offsets: Set<string>;
-    }>();
-    for (const issue of issues) {
-      // Preserve the source spelling exactly. Case and Unicode form are part
-      // of the displayed word's identity even if providers normalize lookup.
-      const key = spellcheckConsoleGroupKey(issue.sourceText, issue.ignored);
-      const group = grouped.get(key) ?? {
-        issue,
-        providers: new Set<string>(),
-        locations: [],
-        offsets: new Set<string>()
-      };
-      group.providers.add(issue.provider);
-      const offset = Math.max(0, Math.min(issue.from, doc.length));
-      const toOffset = Math.max(offset, Math.min(issue.to, doc.length));
-      const offsetKey = `${offset}:${toOffset}`;
-      if (!group.offsets.has(offsetKey)) {
-        const line = doc.lineAt(offset);
-        group.offsets.add(offsetKey);
-        group.locations.push({
-          filePath,
-          fileName: fileNameFromPath(filePath),
-          line: line.number,
-          column: offset - line.from + 1,
-          offset,
-          toOffset
-        });
-      }
-      grouped.set(key, group);
-    }
-    this.logConsoleController.setSpellcheckIssues([...grouped.values()].map(group => ({
-      kind: group.issue.ignored ? "info" : "warning",
-      channel: "spellcheck",
-      counted: !group.issue.ignored,
-      source: [...group.providers].join(", "),
-      filePath,
-      fileName: fileNameFromPath(filePath),
-      message: `${group.issue.ignored ? "Ignored unknown word" : "Unknown word"}: “${group.issue.sourceText}”`,
-      locations: group.locations
-    })));
-    this.syncSelectedSpellingLocation();
+    this.diagnosticsController.updateSpellcheckLog(issues);
   }
-
   private syncSelectedSpellingLocation(): void {
-    if (!this.activeFilePath || !this.editorInstance) {
-      this.logConsoleController.setActiveSpellcheckLocation(null);
-      return;
-    }
-    const selection = this.editorInstance.state.selection.main;
-    const issue = this.spellcheckController.issueAt(selection.from < selection.to ? selection.from : selection.head);
-    this.logConsoleController.setActiveSpellcheckLocation(
-      issue ? this.activeFilePath : null,
-      issue?.from,
-      issue?.to
-    );
+    this.diagnosticsController.syncSelectedSpellingLocation();
+  }
+  private clearDiagnostics(): void {
+    this.diagnosticsController.clear();
   }
 
-  private shouldAcceptLspDiagnostics(_uri: string, originalPath: string, version?: number): boolean {
-    if (typeof version === "number") {
-      return version >= this.latestDocumentVersion;
-    }
-
-    if (this.documentSessionController.hasPendingSyncFor(originalPath, filePathKey)) {
-      return false;
-    }
-    // Tinymist currently omits `params.version` from diagnostics. Once the
-    // active document has no unsent edit, the newest publication for that URI
-    // must be accepted and replace the previous diagnostics, as required by
-    // the LSP publication model. Source-aware stale-prefix filtering below
-    // handles the short-lived completion race without discarding real errors.
-    return true;
-  }
-
-  private clearDiagnostics() {
-    this.lspDiagnosticsByFile.clear();
-    this.logConsoleController.clearDiagnostics();
-    this.clearEditorDiagnostics();
-  }
-
-  private clearEditorDiagnostics() {
-    if (this.editorInstance) {
-      this.editorInstance.dispatch({
-        effects: setEditorDiagnosticsEffect.of([])
-      });
-    }
+  private clearEditorDiagnostics(): void {
+    this.diagnosticsController.clearEditorDiagnostics();
   }
 
   private restoreCachedEditorDiagnostics(path: string): void {
-    const cached = this.lspDiagnosticsByFile.get(filePathKey(path));
-    if (!cached || filePathKey(path) !== filePathKey(this.activeFilePath ?? "")) return;
-
-    const externalLabels = this.previewImported && this.previewStandalone
-      ? new Set(externalReferenceLabels(this.editorInstance.state.doc.toString()))
-      : new Set<string>();
-    const editorDiagnostics: EditorDiagnostic[] = [];
-    for (const diagnostic of cached) {
-      if (
-        /label.*does not exist|unknown label/i.test(diagnostic.message)
-        && [...externalLabels].some(label =>
-          diagnostic.message.includes(label) || this.diagnosticSourceText(diagnostic).includes(`@${label}`)
-        )
-      ) {
-        continue;
-      }
-      const from = this.editorPositionFromLspPosition(diagnostic.range.start);
-      const to = this.editorPositionFromLspPosition(diagnostic.range.end);
-      if (from === null || to === null) continue;
-      if (looksLikeStalePrefixDiagnostic(
-        this.editorInstance.state.doc,
-        from,
-        Math.max(from, to),
-        diagnostic.message
-      )) {
-        continue;
-      }
-      editorDiagnostics.push({
-        from,
-        to: Math.max(from, to),
-        severity: this.diagnosticSeverityFromLsp(diagnostic.severity),
-        message: diagnostic.message
-      });
-    }
-    this.editorInstance.dispatch({
-      effects: setEditorDiagnosticsEffect.of(editorDiagnostics)
-    });
-  }
-
-  private diagnosticSeverityFromLsp(severity: number | undefined): EditorDiagnosticSeverity {
-    switch (severity) {
-      case 1:
-        return "error";
-      case 2:
-        return "warning";
-      case 3:
-        return "info";
-      case 4:
-        return "hint";
-      default:
-        return "info";
-    }
+    this.diagnosticsController.restoreCachedEditorDiagnostics(path);
   }
 
   private editorPositionFromLspPosition(position: LspSourcePosition): number | null {
-    if (this.lspClient) {
-      return this.lspClient.editorPositionFromLspPosition(position);
-    }
-
-    const doc = this.editorInstance.state.doc;
-    if (!doc.length) return 0;
-
-    const lineNumber = Math.max(1, Math.min(position.line + 1, doc.lines));
-    const line = doc.line(lineNumber);
-    const character = this.utf8ByteOffsetToStringOffset(line.text, position.character ?? 0);
-    return Math.max(line.from, Math.min(line.from + character, line.to));
+    return this.diagnosticsController.editorPositionFromLspPosition(position);
   }
-
-  private async navigateToLogEntry(entry: LogConsoleEntryInput) {
-    if (!entry.line && entry.offset === undefined) return;
-    if (entry.filePath && filePathKey(entry.filePath) !== filePathKey(this.activeFilePath ?? "")) {
-      // A diagnostic navigation is an editor operation, not a request to
-      // change the preview document. In particular, errors in an included
-      // template commonly arrive while the configured main document cannot
-      // compile. Activating that template through the normal tab path would
-      // resolve and pin another preview target while Tinymist is handling the
-      // failed main generation, which can tear down the working LSP session.
-      // Keep the current preview identity and let activateEditorTab register
-      // the destination source with the existing Tinymist connection.
-      const previewSession = this.previewRootPath
-        ? this.capturePreviewSession()
-        : undefined;
-      await this.loadFile(entry.filePath, {
-        preservePreviewSession: previewSession
-      });
-    }
-    if (entry.filePath && filePathKey(entry.filePath) !== filePathKey(this.activeFilePath ?? "")) {
-      // A large-file guard or another interrupted navigation may have kept the
-      // destination closed. Never apply its offset to the previously active
-      // document.
-      return;
-    }
-    if (!this.getActiveTab()?.contentLoaded) return;
-    const cursor = entry.offset === undefined
-      ? this.editorPositionFromSourceLocation(entry.line ?? 1, entry.column ?? 1)
-      : Math.max(0, Math.min(entry.offset, this.editorInstance.state.doc.length));
-    const selectionEnd = entry.toOffset === undefined
-      ? cursor
-      : Math.max(cursor, Math.min(entry.toOffset, this.editorInstance.state.doc.length));
-    const effects = [EditorView.scrollIntoView(cursor, { y: "center" })];
-    foldedRanges(this.editorInstance.state).between(
-      Math.max(0, cursor - 1),
-      Math.min(this.editorInstance.state.doc.length, Math.max(cursor + 1, selectionEnd)),
-      (from, to) => {
-        if (from <= cursor && to >= cursor) effects.unshift(unfoldEffect.of({ from, to }));
-      }
-    );
-    this.editorInstance.dispatch({
-      selection: { anchor: cursor, head: selectionEnd },
-      effects
-    });
-    this.editorInstance.focus();
+  private navigateToLogEntry(entry: LogConsoleEntryInput): Promise<void> {
+    return this.diagnosticsController.navigateToLogEntry(entry);
   }
-
   private async navigateToLspLocation(uri: string, line: number, character: number) {
     const rawPath = filePathFromUri(uri);
     let filePath = this.mapToOriginalPath(rawPath);
@@ -7337,26 +6661,16 @@ export class TypsastraWorkspaceController {
     return this.externalWorkspaceController.handleChange(change);
   }
   private async retirePdfSourceMapSession(reason: string): Promise<void> {
-    const taskId = this.pdfSyncRegisteredTaskId;
     this.cancelManualForwardSync();
     this.previewSyncController.reset();
-    this.pdfSyncPreviewTaskKey = null;
-    this.pdfSyncRegisteredTaskId = null;
-    this.pdfSourceMapStartup = null;
-    this.pdfSourceMapStartupKey = null;
-    this.clearPdfSourceMapDocumentReadiness();
-    this.pdfSyncSocket?.close();
-    this.pdfSyncSocket = null;
-    this.pdfSyncSocketUrl = "";
-    if (taskId && this.lspClient) {
-      await this.lspClient.stopPreview(taskId).catch(error => {
-        this.appendDeveloperLog({
-          kind: "warning",
-          source: "workspace",
-          message: `Could not stop stale source-map task ${taskId}: ${String(error)}`
-        });
+    const taskId = this.sourceMapSessionController.registeredTaskId;
+    await this.sourceMapSessionController.retire(this.lspClient).catch(error => {
+      this.appendDeveloperLog({
+        kind: "warning",
+        source: "workspace",
+        message: `Could not stop stale source-map task ${taskId ?? "unknown"}: ${String(error)}`
       });
-    }
+    });
     this.appendDeveloperLog({
       kind: "info",
       source: "workspace",
@@ -8420,7 +7734,7 @@ export class TypsastraWorkspaceController {
     const previewTaskIds = new Set([
       this.previewTaskId,
       this.pdfPreviewSourceMapTaskId,
-      this.pdfSyncRegisteredTaskId
+      this.sourceMapSessionController.registeredTaskId
     ].filter((taskId): taskId is string => Boolean(taskId)));
     if (this.lspClient) {
       for (const taskId of previewTaskIds) {
@@ -8501,14 +7815,7 @@ export class TypsastraWorkspaceController {
     this.pdfPreviewGeneratedFiles.clear();
     this.managedPreviewPdfPathKeys.clear();
     this.managedImageToolPathKeys.clear();
-    this.pdfSyncPreviewTaskKey = null;
-    this.pdfSyncRegisteredTaskId = null;
-    this.pdfSourceMapStartup = null;
-    this.pdfSourceMapStartupKey = null;
-    this.clearPdfSourceMapDocumentReadiness();
-    this.pdfSyncSocket?.close();
-    this.pdfSyncSocket = null;
-    this.pdfSyncSocketUrl = "";
+    this.sourceMapSessionController.reset();
     this.externalPreviewRefreshPending = false;
     this.lastPdfPath = "";
     this.lastPdfIdentity = "";
@@ -8602,8 +7909,8 @@ export class TypsastraWorkspaceController {
 
     window.addEventListener("beforeunload", () => {
       this.systemResumeMonitor.stop();
-      if (this.pdfSyncRegisteredTaskId && this.lspClient) {
-        void this.lspClient.stopPreview(this.pdfSyncRegisteredTaskId).catch(() => {});
+      if (this.sourceMapSessionController.registeredTaskId && this.lspClient) {
+        void this.lspClient.stopPreview(this.sourceMapSessionController.registeredTaskId).catch(() => {});
       }
       this.workspaceController.stopWatching();
       this.saveWorkspaceState();

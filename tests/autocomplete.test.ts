@@ -567,7 +567,7 @@ describe("LSP autocomplete edits", () => {
     expect(isTypstFunctionArgumentContextAt(tuple, tuple.line(2).to, true)).toBe(false);
   });
 
-  test("treats a function comma as the start of the next argument", async () => {
+  test("recognizes a function comma boundary but waits for spacing to reopen completion", async () => {
     const sameLine = Text.of(["#figure(caption: [Example],"]);
     expect(isTypstFunctionArgumentContextAt(sameLine, sameLine.length)).toBe(true);
 
@@ -578,8 +578,10 @@ describe("LSP autocomplete edits", () => {
     expect(isTypstFunctionArgumentContextAt(tuple, tuple.length)).toBe(false);
 
     const source = await Bun.file(new URL("../src/editor/autocomplete.ts", import.meta.url)).text();
+    expect(source).toContain('const isFunctionArgumentNameTrigger = lastChar === " "');
+    expect(source).toContain('const isFunctionArgumentValueTrigger = lastChar === " "');
     expect(source).toContain(
-      'const isFunctionArgumentTrigger = (lastChar === "," || lastChar === " ")'
+      "const isFunctionArgumentTrigger = isFunctionArgumentNameTrigger"
     );
     expect(source).toContain("&& !isFunctionArgumentTrigger");
   });
@@ -754,14 +756,12 @@ describe("LSP autocomplete edits", () => {
     expect(source).toContain("startCompletion(view)");
   });
 
-  test("opens value completion after accepting a named argument field", async () => {
+  test("does not force value completion immediately after accepting a named argument field", async () => {
     const source = await Bun.file(new URL("../src/editor/autocomplete.ts", import.meta.url)).text();
-    expect(source).toContain("const opensArgumentValueCompletion = isFunctionArgumentStart");
-    expect(source).toContain("&& isNamedArgumentCompletion(item)");
-    expect(source).toContain("if (opensArgumentValueCompletion)");
-    expect(source).toMatch(
-      /if \(opensArgumentValueCompletion\) \{[\s\S]*?startCompletion\(view\);[\s\S]*?\}/
-    );
+    expect(source).not.toContain("const opensArgumentValueCompletion = isFunctionArgumentStart");
+    expect(source).not.toContain("if (opensArgumentValueCompletion)");
+    expect(source).toContain('const isFunctionArgumentValueTrigger = lastChar === " "');
+    expect(source).toContain("isTypstFunctionArgumentValueContextAt(");
   });
 });
 

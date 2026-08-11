@@ -78,6 +78,9 @@ describe("compiled PDF transport", () => {
 
   test("pins the exact prepared revision transiently while exporting in every render mode", async () => {
     const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
+    const diagnosticsSource = await Bun.file(
+      new URL("../src/diagnostics/diagnosticsController.ts", import.meta.url)
+    ).text();
     const renderStart = source.indexOf("private async renderPdfPreview");
     const preparedPaths = source.indexOf("const preparedPaths = [...new Set([", renderStart);
     const legacyClose = source.indexOf("await this.closePreparedPreviewDocuments()", preparedPaths);
@@ -97,7 +100,7 @@ describe("compiled PDF transport", () => {
     expect(source).toContain("...preparedPreview.changedPaths");
     expect(source).toContain("changedPaths: result.changedFiles");
     expect(source).not.toContain("syncPreparedPreviewDocuments");
-    expect(source).toContain("if (this.isRenderCachePath(rawPath))");
+    expect(diagnosticsSource).toContain("if (this.port.isRenderCachePath(rawPath))");
     expect(source).toContain("Tinymist's watched-file invalidation can complete");
   });
 
@@ -114,22 +117,31 @@ describe("compiled PDF transport", () => {
 
   test("keeps editor diagnostics on original sources and recompiles explicit saves in either mode", async () => {
     const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
+    const diagnosticsSource = await Bun.file(
+      new URL("../src/diagnostics/diagnosticsController.ts", import.meta.url)
+    ).text();
     const saveStart = source.indexOf("private async performSaveActiveFile");
     const saveEnd = source.indexOf("\n  private ", saveStart + 10);
     const saveMethod = source.slice(saveStart, saveEnd);
     expect(source).toContain("await this.updatePinnedMain(previewLspMainPath(target))");
     expect(source).not.toContain("cachedPreviewCompilerPath");
-    expect(source).toContain("if (this.isRenderCachePath(rawPath))");
+    expect(diagnosticsSource).toContain("if (this.port.isRenderCachePath(rawPath))");
     expect(saveMethod).toContain("void this.renderPdfPreview(content)");
     expect(saveMethod).not.toContain('effectivePreviewRenderMode === "on-save"');
   });
 
   test("recovers the latest editor snapshot after a failed on-type render", async () => {
     const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
+    const diagnosticsSource = await Bun.file(
+      new URL("../src/diagnostics/diagnosticsController.ts", import.meta.url)
+    ).text();
+    const failureSource = await Bun.file(
+      new URL("../src/diagnostics/previewFailureController.ts", import.meta.url)
+    ).text();
     const renderStart = source.indexOf("private async renderPdfPreview");
     const renderEnd = source.indexOf("\n  private ", renderStart + 10);
     const renderMethod = source.slice(renderStart, renderEnd);
-    const diagnosticsStart = source.indexOf("private async handleLspDiagnostics");
+    const diagnosticsStart = source.indexOf("private handleLspDiagnostics");
     const diagnosticsEnd = source.indexOf("\n  private ", diagnosticsStart + 10);
     const diagnosticsMethod = source.slice(diagnosticsStart, diagnosticsEnd);
 
@@ -144,44 +156,56 @@ describe("compiled PDF transport", () => {
     expect(renderMethod).toContain('this.setLspStatus({ kind: "preview-error", message: "PDF compile failed" });');
     expect(diagnosticsMethod).not.toContain('this.previewFrame.setError("Preview Render Failed"');
     expect(diagnosticsMethod).not.toContain("this.previewFrame.clearErrorOverlay()");
-    expect(diagnosticsMethod).toContain("this.lastFailedPreviewContents !== null");
-    expect(diagnosticsMethod).toContain("LSP accepted a corrected revision after preview failure");
+    expect(diagnosticsMethod).toContain("this.diagnosticsController.handleLspDiagnostics");
+    expect(source).toContain("private recoverPreviewAfterAcceptedDiagnostics");
+    expect(source).toContain("this.lastFailedPreviewContents === null");
+    expect(source).toContain("LSP accepted a corrected revision after preview failure");
     expect(source).toContain("parsePreviewCompilerFailure(error)");
     expect(renderMethod).toContain("this.publishPreviewCompilerFailure(failure, packageHint)");
-    expect(source).toContain("const failureComesFromRenderMirror = failure.location !== null");
-    expect(source).toContain("if (!failureComesFromRenderMirror)");
-    expect(source).toContain("private async previewPackageFailureHint(");
-    expect(source).toContain("private async typstPackageDependencyChain(");
-    expect(source).toMatch(
+    expect(failureSource).toContain("const failureComesFromRenderMirror = failure.location !== null");
+    expect(failureSource).toContain("if (!failureComesFromRenderMirror)");
+    expect(source).toContain("this.previewFailureController.packageFailureHint");
+    expect(failureSource).toContain("private async packageDependencyChain(");
+    expect(failureSource).toMatch(
       /source:\s*"package compatibility",[\s\S]*?kind:\s*"error"|kind:\s*"error",[\s\S]*?source:\s*"package compatibility"/
     );
+    expect(diagnosticsSource).toContain("this.port.acceptedDiagnosticsChanged(filteredDiagnostics)");
   });
 
   test("keeps the current preview session while navigating to a diagnostic source", async () => {
     const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
-    const navigateStart = source.indexOf("private async navigateToLogEntry");
+    const diagnosticsSource = await Bun.file(
+      new URL("../src/diagnostics/diagnosticsController.ts", import.meta.url)
+    ).text();
+    const navigateStart = source.indexOf("private navigateToLogEntry");
     const navigateEnd = source.indexOf("\n  private ", navigateStart + 10);
     const navigateMethod = source.slice(navigateStart, navigateEnd);
 
-    expect(navigateMethod).toContain("const previewSession = this.previewRootPath");
-    expect(navigateMethod).toContain("preservePreviewSession: previewSession");
-    expect(navigateMethod).not.toContain("await this.loadFile(entry.filePath);");
+    expect(navigateMethod).toContain("this.diagnosticsController.navigateToLogEntry(entry)");
+    expect(diagnosticsSource).toContain("await this.port.openDiagnosticFile(entry.filePath)");
+    expect(source).toContain("const previewSession = this.previewRootPath");
+    expect(source).toContain("preservePreviewSession: previewSession");
+    expect(diagnosticsSource).not.toContain("loadFile(");
   });
 
   test("restores retained diagnostics when a source tab becomes active", async () => {
     const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
+    const diagnosticsSource = await Bun.file(
+      new URL("../src/diagnostics/diagnosticsController.ts", import.meta.url)
+    ).text();
     const activateStart = source.indexOf("private async activateEditorTab");
     const activateEnd = source.indexOf("\n  private ", activateStart + 10);
     const activateMethod = source.slice(activateStart, activateEnd);
-    const diagnosticsStart = source.indexOf("private async handleLspDiagnostics");
+    const diagnosticsStart = source.indexOf("private handleLspDiagnostics");
     const diagnosticsEnd = source.indexOf("\n  private ", diagnosticsStart + 10);
     const diagnosticsMethod = source.slice(diagnosticsStart, diagnosticsEnd);
 
     expect(activateMethod).toContain("this.clearEditorDiagnostics()");
     expect(activateMethod).not.toContain("this.clearDiagnostics()");
     expect(activateMethod).toContain("this.restoreCachedEditorDiagnostics(path)");
-    expect(diagnosticsMethod).toContain("this.lspDiagnosticsByFile.set(filePathKey(originalPath), cacheableDiagnostics)");
-    expect(source).toContain("private restoreCachedEditorDiagnostics(path: string): void");
+    expect(diagnosticsMethod).toContain("this.diagnosticsController.handleLspDiagnostics");
+    expect(diagnosticsSource).toContain("this.lspDiagnosticsByFile.set(this.port.pathKey(originalPath), cacheableDiagnostics)");
+    expect(diagnosticsSource).toContain("restoreCachedEditorDiagnostics(path: string): void");
   });
 
   test("validates copied workspace caches before starting Tinymist", async () => {
