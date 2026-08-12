@@ -250,7 +250,7 @@ export class PdfPreviewRenderController {
       return;
     }
     const reportRenderStatus = force || !this.deps.previewFrame.currentUrl;
-    if (force) this.deps.previewFrame.setLoading("Recompiling PDF preview...");
+    if (force) this.deps.previewFrame.setLoading("Recompiling live preview…");
     if (this.runningValue) {
       this.queuedContents = contents;
       this.queuedForced ||= force;
@@ -279,7 +279,7 @@ export class PdfPreviewRenderController {
     );
     if (reportRenderStatus) this.deps.setLspStatus({ kind: "syncing", message: "Compiling preview" });
     if (!force && !this.deps.previewFrame.currentUrl) {
-      this.deps.previewFrame.setLoading("Compiling PDF preview...");
+      this.deps.previewFrame.setLoading("Compiling live preview…");
     }
 
     try {
@@ -646,6 +646,9 @@ export class PdfPreviewRenderController {
     deleteOnClose = false,
   ): Promise<number> {
     if (this.deps.isPdfBlocked(path)) return 0;
+    if (surface === "pdf") {
+      this.deps.previewFrame.setLoading("Preparing PDF preview…", false);
+    }
     const requestGeneration = ++this.loadRequestGeneration;
     if (PDF_TRANSPORT_MODE === "range") {
       const byteLength = await this.deps.previewFrame.loadPdfPath(

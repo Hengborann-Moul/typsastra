@@ -53,6 +53,10 @@ export class ImagePreviewController {
     this.port.updateToolbar(previewPath);
     this.port.setMessage(
       `<div id="interactive-image-container" style="position:relative;width:100%;height:100%;background:var(--ui-bg);overflow:hidden;display:flex;align-items:center;justify-content:center;user-select:none;box-sizing:border-box;">` +
+      `<div id="interactive-image-loading" class="preview-loading-placeholder" role="status" aria-live="polite">` +
+      `<div class="preview-loading-spinner" aria-hidden="true"></div>` +
+      `<div class="preview-loading-message">Preparing image preview…</div>` +
+      `</div>` +
       `<img id="interactive-image-el" alt="Image preview" draggable="false" style="max-width:none;max-height:none;position:absolute;cursor:grab;user-select:none;will-change:transform;visibility:hidden;" />` +
       `</div>`,
     );
@@ -116,12 +120,16 @@ export class ImagePreviewController {
         resetToFit();
         fit = true;
         updateZoom();
+        document.getElementById("interactive-image-loading")?.remove();
       });
     };
-    image.onerror = () => this.port.setError(
-      "Image preview unavailable",
-      "Typsastra could not decode this image.",
-    );
+    image.onerror = () => {
+      document.getElementById("interactive-image-loading")?.remove();
+      this.port.setError(
+        "Image preview unavailable",
+        "Typsastra could not decode this image.",
+      );
+    };
     image.src = src;
 
     container.addEventListener("wheel", event => {

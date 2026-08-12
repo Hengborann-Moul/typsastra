@@ -583,6 +583,7 @@ export class ImageToolsController {
     button.textContent = "Preparing…";
     const output = this.inspector.querySelector<HTMLElement>(".image-tool-output")!;
     try {
+      this.showImagePreview(null, image.path);
       this.generatedPreview = await invoke<ImageToolPreviewResult>("image_tool_generate_preview", {
         request: { workspaceRootPath: this.workspaceRoot, sourcePath: image.path, ...options },
       });
@@ -600,6 +601,9 @@ export class ImageToolsController {
 
   private async loadOriginalProxy(image: ProjectImageAsset): Promise<void> {
     if (!this.workspaceRoot) return;
+    if (this.committed?.path === image.path) {
+      this.showImagePreview(null, image.path);
+    }
     const scale = Math.min(1, 1600 / Math.max(image.width, image.height));
     try {
       this.originalProxy = await invoke<ImageToolPreviewResult>("image_tool_generate_preview", {

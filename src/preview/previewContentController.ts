@@ -73,11 +73,15 @@ export class PreviewContentController {
     if (!source) {
       this.deps.imagePreview.clear();
       this.deps.updateActionsToolbar(imagePath ?? "image-tools.png");
+      if (imagePath) {
+        this.deps.previewFrame.setLoading("Preparing image preview…", false);
+        return;
+      }
       this.deps.previewFrame.setMessage(
         `<div class="preview-disabled-placeholder">` +
         `<div class="guardrail-placeholder-content">` +
         `<div class="preview-disabled-title preview-accent-title">Image Preview</div>` +
-        `<div class="preview-disabled-msg">${imagePath ? "Loading the selected image preview." : "Select an image in the sidebar to preview it."}</div>` +
+        `<div class="preview-disabled-msg">Select an image in the sidebar to preview it.</div>` +
         `</div></div>`,
       );
       return;

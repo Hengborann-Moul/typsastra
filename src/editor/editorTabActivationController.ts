@@ -97,6 +97,9 @@ export class EditorTabActivationController {
         deps.showLargeFileConfirmation(tab, notice);
         return;
       }
+      if (isBinaryImagePath(tab.path)) {
+        deps.presentation.showImageLoading(tab.path);
+      }
       await deps.loadEditorTabContent(tab);
     }
     deps.clearGuardrailAlignment();

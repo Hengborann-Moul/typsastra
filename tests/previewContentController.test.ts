@@ -9,6 +9,7 @@ describe("preview content controller", () => {
     expect(source).toContain("export interface PreviewContentDependencies");
     expect(source).toContain("public renderImageToolPreview(");
     expect(source).toContain("public renderInteractiveImageViewer(");
+    expect(source).toContain('setLoading("Preparing image preview…", false)');
     expect(source).toContain("public async refreshActivePreviewRoot(");
     expect(source).toContain('invoke<PreviewTarget>("resolve_preview_main"');
     expect(source).not.toContain(": any");
@@ -23,5 +24,19 @@ describe("preview content controller", () => {
     expect(source).toContain("return this.previewContentController.noMainFileMessage();");
     expect(source).toContain("this.previewContentController.renderImageToolPreview(source, imagePath);");
     expect(source).toContain("return this.previewContentController.refreshActivePreviewRoot(forceRender);");
+  });
+
+  test("shows image loading before lazy editor and image-tool decoding", async () => {
+    const activation = await Bun.file(
+      new URL("../src/editor/editorTabActivationController.ts", import.meta.url),
+    ).text();
+    const imageTools = await Bun.file(
+      new URL("../src/components/imageTools.ts", import.meta.url),
+    ).text();
+
+    expect(activation.indexOf("deps.presentation.showImageLoading(tab.path)")).toBeLessThan(
+      activation.indexOf("await deps.loadEditorTabContent(tab)"),
+    );
+    expect(imageTools).toContain("this.showImagePreview(null, image.path);");
   });
 });

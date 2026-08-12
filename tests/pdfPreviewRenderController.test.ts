@@ -13,6 +13,9 @@ describe("PDF preview render controller", () => {
     expect(source).toContain("public async render(contents: string, force = false)");
     expect(source).toContain("public schedule(contents: string, delayMs: number)");
     expect(source).toContain("public async loadPdfPath(");
+    expect(source).toContain('surface === "pdf"');
+    expect(source).toContain('setLoading("Preparing PDF preview…", false)');
+    expect(source).toContain('setLoading("Compiling live preview…")');
     expect(source).toContain("public resetForWorkspaceClose(): void");
     expect(source).not.toContain(": any");
     expect(source).not.toContain("host: object");

@@ -400,7 +400,6 @@ export class PreviewFrame {
       ? this.pendingRestoredScrollTop!
       : this.captureScrollPosition();
     this.clearErrorOverlay();
-    this.clearMessageHost();
 
     const iframe = await this.ensureIframe();
     if (generation !== this.pdfGeneration) return 0;
@@ -1056,6 +1055,10 @@ export class PreviewFrame {
       this.commitFinalCanvas(slot, canvas);
       active.canvasCommitted = true;
       slot.dataset.renderKey = renderKey;
+      // Keep the shared loading presentation visible until PDF.js has
+      // produced an actual page. Installing page slots alone would expose a
+      // blank viewer while the first visible canvas is still rendering.
+      this.clearLoadingHost();
 
       const annotationStartedAt = performance.now();
       const annotationLinks = await this.renderAnnotationLinks(page, cssViewport, doc);
@@ -1918,19 +1921,26 @@ export class PreviewFrame {
     this.messageHost = host;
   }
 
-  public setLoading(message: string): void {
+  public setLoading(message: string, preservePreview = true): void {
+    const markup = `<div class="preview-loading-placeholder" role="status" aria-live="polite">`
+      + `<div class="preview-loading-spinner" aria-hidden="true"></div>`
+      + `<div class="preview-loading-message">${escapeHtml(message)}</div>`
+      + `</div>`;
+    if (!preservePreview) {
+      this.setMessage(markup);
+      this.messageHost?.classList.add("preview-loading-overlay", "preview-loading-replacement");
+      return;
+    }
     this.clearMessageHost();
     const host = document.createElement("div");
     host.className = "preview-message-host preview-loading-overlay";
-    host.innerHTML = `<div class="preview-loading-placeholder">`
-      + `<div class="preview-loading-spinner"></div>`
-      + `<div class="preview-loading-message">${escapeHtml(message)}</div>`
-      + `</div>`;
+    host.innerHTML = markup;
     this.pane.appendChild(host);
     this.messageHost = host;
   }
 
   public setError(title: string, message: string): void {
+    this.clearLoadingHost();
     this.clearErrorOverlay();
     const overlay = document.createElement("div");
     overlay.className = "compiler-preview-error-overlay";
@@ -1956,6 +1966,11 @@ export class PreviewFrame {
   private clearMessageHost(): void {
     this.messageHost?.remove();
     this.messageHost = null;
+  }
+
+  private clearLoadingHost(): void {
+    if (!this.messageHost?.querySelector(".preview-loading-placeholder")) return;
+    this.clearMessageHost();
   }
 
   private reportInteractionStatus(status: PreviewInteractionStatus): void {

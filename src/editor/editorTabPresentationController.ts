@@ -39,6 +39,12 @@ export class EditorTabPresentationController {
   get isLoading(): boolean { return this.loading; }
   set isLoading(value: boolean) { this.loading = value; }
 
+  showImageLoading(path: string): void {
+    this.deps.imagePreview().clear();
+    this.deps.updatePreviewActionsToolbar(path);
+    this.deps.previewFrame().setLoading("Preparing image preview…", false);
+  }
+
   presentNonText(
     tab: EditorTab,
     path: string,
