@@ -209,12 +209,14 @@ describe("compiled PDF transport", () => {
   });
 
   test("validates copied workspace caches before starting Tinymist", async () => {
-    const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
+    const source = await Bun.file(
+      new URL("../src/workspace/workspaceLifecycleController.ts", import.meta.url),
+    ).text();
     const validation = source.indexOf(
       'await invoke("cleanup_workspace_preview_files", { workspaceRootPath: selected })'
     );
     const startup = source.indexOf(
-      'await this.restartTinymistSession("Connecting to new project...")'
+      'await app.restartTinymistSession("Connecting to new project...")'
     );
     expect(validation).toBeGreaterThan(-1);
     expect(startup).toBeGreaterThan(validation);

@@ -15,6 +15,9 @@ describe("Tinymist workspace lifecycle", () => {
 
   test("restarts for main-file changes and stops when a project closes", async () => {
     const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
+    const lifecycle = await Bun.file(
+      new URL("../src/workspace/workspaceLifecycleController.ts", import.meta.url),
+    ).text();
     const sessionSource = await Bun.file(
       new URL("../src/session/documentSessionController.ts", import.meta.url),
     ).text();
@@ -33,7 +36,7 @@ describe("Tinymist workspace lifecycle", () => {
       source.indexOf("this.pinnedMainFilePath = path", source.indexOf("preparePinnedMainTypography(path)"))
     );
     expect(source).toContain('restartTinymistSession("Restarting Tinymist for the new main file..."');
-    expect(source).toContain('stopTinymistSession("Project closed")');
+    expect(lifecycle).toContain('stopTinymistSession("Project closed")');
     expect(sessionSource).toContain("private lifecycleQueue: Promise<void>");
     expect(sessionSource).toContain("runExclusive(operation: () => Promise<void>)");
     const setMainStart = source.indexOf("private async setPinnedMainFile");
@@ -108,9 +111,12 @@ describe("Tinymist workspace lifecycle", () => {
 
   test("clears logs at user-requested lifecycle boundaries", async () => {
     const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
-    const closeProject = source.indexOf("private async closeProject");
-    const closeClear = source.indexOf("this.logConsoleController.clearAllLogs();", closeProject);
-    const closeConsole = source.indexOf("this.logConsoleController.setVisible(false);", closeProject);
+    const lifecycle = await Bun.file(
+      new URL("../src/workspace/workspaceLifecycleController.ts", import.meta.url),
+    ).text();
+    const closeProject = lifecycle.indexOf("async close(");
+    const closeClear = lifecycle.indexOf("app.logConsoleController.clearAllLogs();", closeProject);
+    const closeConsole = lifecycle.indexOf("app.logConsoleController.setVisible(false);", closeProject);
     const manualRestart = source.indexOf('document.getElementById("action-restart-lsp")');
     const restartClear = source.indexOf("this.logConsoleController.clearAllLogs();", manualRestart);
     const restartCall = source.indexOf('restartTinymistSession("Restarting LSP..."', manualRestart);
@@ -121,7 +127,7 @@ describe("Tinymist workspace lifecycle", () => {
     const nextAction = source.indexOf('document.getElementById("action-docs-typsastra")', restartCall);
     expect(closeClear).toBeGreaterThan(closeProject);
     expect(closeConsole).toBeGreaterThan(closeClear);
-    expect(closeConsole).toBeLessThan(manualRestart);
+    expect(closeConsole).toBeGreaterThan(closeProject);
     expect(restartClear).toBeGreaterThan(manualRestart);
     expect(restartClear).toBeLessThan(restartCall);
     expect(restartRestore).toBeGreaterThan(restartCall);

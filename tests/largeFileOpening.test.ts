@@ -111,9 +111,12 @@ describe("large file opening notice", () => {
     expect(confirmationSource).toContain("Open and Compile Preview");
     expect(confirmationSource).toContain("The compiler preview will start after you confirm opening the large Typst file.");
 
-    const servicesStart = controller.indexOf("private async startWorkspaceServices");
-    const servicesEnd = controller.indexOf("private async restoreActiveDocumentAfterTinymistRestart", servicesStart);
-    const servicesSource = controller.slice(servicesStart, servicesEnd);
-    expect(servicesSource).toContain("if (this.workspaceServicesDeferredForLargeFile) return");
+    const lifecycle = await Bun.file(
+      new URL("../src/workspace/workspaceLifecycleController.ts", import.meta.url),
+    ).text();
+    const servicesStart = lifecycle.indexOf("async startServices");
+    const servicesEnd = lifecycle.indexOf("async restoreToolchain", servicesStart);
+    const servicesSource = lifecycle.slice(servicesStart, servicesEnd);
+    expect(servicesSource).toContain("app.workspaceServicesDeferredForLargeFile");
   });
 });

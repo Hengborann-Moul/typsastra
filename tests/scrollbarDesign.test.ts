@@ -64,9 +64,12 @@ describe("cross-platform scrollbar design", () => {
   test("restores the workspace preview offset on the first PDF presentation", async () => {
     const source = await Bun.file(new URL("../src/preview/previewFrame.ts", import.meta.url)).text();
     const controller = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
+    const lifecycle = await Bun.file(
+      new URL("../src/workspace/workspaceLifecycleController.ts", import.meta.url),
+    ).text();
     expect(source).toContain("restoreWorkspaceScrollPosition(scrollTop: number)");
     expect(source).toContain("this.pendingRestoredScrollTop");
-    expect(controller).toContain("this.previewFrame.restoreWorkspaceScrollPosition(state.previewScrollTop)");
+    expect(lifecycle).toContain("app.previewFrame.restoreWorkspaceScrollPosition(state.previewScrollTop)");
     expect(controller).toContain("previewScrollTop: this.previewScrollTop");
   });
 

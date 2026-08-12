@@ -73,15 +73,13 @@ import {
   TYPSASTRA_GREEN_RIPPLE_SHADOW
 } from "./ui/brandColors";
 import { LayoutController } from "./layout/layoutController";
-import {
-  workspaceRestoreCandidates,
-  type WorkspaceMetadata
-} from "./workspace/workspaceStateStore";
+import type { WorkspaceMetadata } from "./workspace/workspaceStateStore";
 import { RecentProjectsController, recentProjectShortcutIndex } from "./workspace/recentProjectsController";
 import {
   type WorkspaceChange
 } from "./workspace/workspaceWatcher";
 import { WorkspaceController } from "./workspace/workspaceController";
+import { WorkspaceLifecycleController } from "./workspace/workspaceLifecycleController";
 import { ProjectImportController } from "./workspace/projectImportController";
 import { ExternalWorkspaceController } from "./workspace/externalWorkspaceController";
 import {
@@ -152,12 +150,6 @@ class PreviewPreparationInterrupted extends Error {
 function isPreviewOnlyWindow(): boolean {
   return new URLSearchParams(window.location.search).get("mode") === "preview";
 }
-
-
-type ExamplesWorkspace = {
-  workspacePath: string;
-  entryPath: string;
-};
 
 
 type EditorTab = {
@@ -686,6 +678,7 @@ export class TypsastraWorkspaceController {
       message: `Failed to save workspace state: ${String(error)}`,
     }),
   });
+  private readonly workspaceLifecycleController = new WorkspaceLifecycleController(this);
   private readonly imagePreviewController = new ImagePreviewController({
     setMessage: html => this.previewFrame.setMessage(html),
     setError: (title, detail) => this.previewFrame.setError(title, detail),
@@ -5404,119 +5397,6 @@ export class TypsastraWorkspaceController {
     return this.workspaceController.saveState();
   }
 
-  private loadWorkspaceMetadata(workspacePath: string): Promise<WorkspaceMetadata> {
-    return this.workspaceController.loadMetadata(workspacePath);
-  }
-
-  private absoluteWorkspacePath(workspacePath: string, relativePath: string | null): Promise<string | null> {
-    return this.workspaceController.absolutePath(workspacePath, relativePath);
-  }
-  private async restoreWorkspaceState(workspacePath: string, metadata: WorkspaceMetadata) {
-    try {
-      const state = metadata.workspace;
-      const project = metadata.project;
-      this.previewScrollTop = state.previewScrollTop;
-      this.previewFrame.restoreWorkspaceScrollPosition(state.previewScrollTop);
-      const inputContainer = document.getElementById("input-container-wrapper");
-      const previewContainerWrapper = document.getElementById("preview-container-wrapper");
-      this.layoutController.setDockedInputWidthPct(state.layout.inputContainerWidthPct);
-      inputContainer!.style.width = `${state.layout.inputContainerWidthPct}%`;
-      if (previewContainerWrapper) previewContainerWrapper.style.width = `${100 - state.layout.inputContainerWidthPct}%`;
-      this.sidebarController.restore({
-        visible: state.layout.sidebarVisible,
-        activeTool: state.layout.activeSidebarTool,
-      });
-      const pinnedMainFilePath = await this.absoluteWorkspacePath(workspacePath, project.mainFile);
-      this.pinnedMainFilePath = pinnedMainFilePath
-        && await invoke<boolean>("workspace_path_exists", { path: pinnedMainFilePath })
-        ? pinnedMainFilePath
-        : null;
-      this.mainDocumentScripts = this.pinnedMainFilePath
-        ? parseDocumentScripts(await invoke<string>("read_workspace_text_prefix", {
-            path: this.pinnedMainFilePath,
-            maxBytes: 65_536,
-          }))
-        : [];
-      if (project.mainFile && !this.pinnedMainFilePath) metadata.project.mainFile = null;
-      const explorerSidebar = document.getElementById("explorer-sidebar");
-      if (explorerSidebar) explorerSidebar.style.width = `${state.layout.explorerSidebarWidthPx}px`;
-
-      const restoredTabs = await Promise.all(state.openTabs.map(async tabInfo => ({
-        tabInfo,
-        path: await this.absoluteWorkspacePath(workspacePath, tabInfo.path)
-      })));
-      for (const { tabInfo, path } of restoredTabs) {
-        if (!path) continue;
-        if (this.openTabs.some(tab => filePathKey(tab.path) === filePathKey(path))) continue;
-        this.openTabs.push({
-          path,
-          content: "",
-          savedContent: "",
-          contentLoaded: !isSupportedInAppPath(path),
-          isDirty: false,
-          previewRootPath: null,
-          previewMainPath: null,
-          previewTaskId: null,
-          previewSessionKey: null,
-          previewImported: false,
-          previewStandalone: true,
-          previewDisabled: false,
-          version: 1,
-          latestVersion: 1,
-          selectionAnchor: tabInfo.selectionAnchor || 0,
-          selectionHead: tabInfo.selectionHead || 0,
-          scrollTop: tabInfo.scrollTop,
-          scrollLeft: tabInfo.scrollLeft,
-          // Bounds are validated after this tab is hydrated.
-          foldRanges: tabInfo.foldState === "user" && Array.isArray(tabInfo.foldRanges)
-            ? tabInfo.foldRanges as EditorFoldRange[]
-            : [],
-          foldStateExplicit: tabInfo.foldState === "user"
-        });
-      }
-      this.renderEditorTabs();
-
-      if (this.openTabs.length === 0) {
-        for (const candidate of workspaceRestoreCandidates(metadata)) {
-          const path = await this.absoluteWorkspacePath(workspacePath, candidate);
-          if (path && await invoke<boolean>("workspace_path_exists", { path })) {
-            await this.loadFile(path, { skipPreviewActivation: true });
-            return;
-          }
-        }
-      }
-
-      const activeFilePath = await this.absoluteWorkspacePath(workspacePath, state.activeFile);
-      const preferredTab = activeFilePath
-        ? this.openTabs.find(tab => filePathKey(tab.path) === filePathKey(activeFilePath))
-        : null;
-      const activationCandidates = preferredTab
-        ? [preferredTab, ...this.openTabs.filter(tab => tab !== preferredTab)]
-        : [...this.openTabs];
-      for (const tab of activationCandidates) {
-        try {
-          await this.activateEditorTab(tab.path, false, { skipPreviewActivation: true });
-          break;
-        } catch (error) {
-          console.warn("Failed to restore tab:", tab.path, error);
-          this.openTabs = this.openTabs.filter(candidate => candidate !== tab);
-          this.renderEditorTabs();
-        }
-      }
-      if (!this.activeFilePath) {
-        for (const candidate of workspaceRestoreCandidates(metadata)) {
-          const path = await this.absoluteWorkspacePath(workspacePath, candidate);
-          if (!path || this.openTabs.some(tab => filePathKey(tab.path) === filePathKey(path))) continue;
-          if (!await invoke<boolean>("workspace_path_exists", { path })) continue;
-          await this.loadFile(path, { skipPreviewActivation: true });
-          if (this.activeFilePath) break;
-        }
-      }
-    } catch (e) {
-      console.warn("Failed to restore workspace state:", e);
-      throw e;
-    }
-  }
 
   private handleWorkspaceChange(change: WorkspaceChange): Promise<void> {
     return this.externalWorkspaceController.handleChange(change);
@@ -6142,268 +6022,42 @@ export class TypsastraWorkspaceController {
     this.appendLspLog({ kind: "error", source: "workspace", message: `Workspace watcher failed: ${String(error)}` });
   }
 
-  private async openWorkspace(selected: string) {
-    if (this.workspaceRootPath && filePathKey(this.workspaceRootPath) === filePathKey(selected)) {
-      this.recentProjectsController.add(selected);
-      return;
-    }
-    if (this.workspaceRootPath && this.workspaceRootPath !== selected) {
-      const closed = await this.closeProject();
-      if (!closed) return;
-    }
-    this.workspaceLoading = true;
-    this.updateWorkspaceViewportVisibility();
-    // Claim the target before the first asynchronous operation so repeated
-    // open commands cannot start a second restoration of the same workspace.
-    this.workspaceRootPath = selected;
-    try {
-      await invoke("cleanup_workspace_preview_files", { workspaceRootPath: selected });
-      this.lspReady = false;
-      this.workspaceMetadata = await this.loadWorkspaceMetadata(selected);
-      this.workspaceMetadata.workspace.previewRenderMode ??=
-        this.settingsController.value.preview.renderMode;
-      this.settingsController.setWorkspacePreviewRenderMode(
-        this.workspaceMetadata.workspace.previewRenderMode,
-        mode => void this.setPreviewRenderMode(mode)
-      );
-      this.lastPreviewRenderMode = this.workspaceMetadata.workspace.previewRenderMode;
-      this.draftPreviewController.setMode(
-        this.workspaceMetadata.workspace.previewContentMode,
-        "normal",
-      );
-      this.spellcheckController.setTerminology(
-        this.settingsController.value.editor.globalTerminology,
-        this.workspaceMetadata.project.terminology,
-        this.settingsController.value.editor.languageTerminology,
-        this.settingsController.value.editor.scopedIgnoredWords,
-      );
-      this.settingsController.setProjectTerminology(
-        this.workspaceMetadata.project.terminology,
-        entries => {
-          if (!this.workspaceMetadata) return;
-          this.workspaceMetadata.project.terminology = entries;
-          this.spellcheckController.setTerminology(
-            this.settingsController.value.editor.globalTerminology,
-            entries,
-            this.settingsController.value.editor.languageTerminology,
-            this.settingsController.value.editor.scopedIgnoredWords,
-          );
-          void this.saveWorkspaceState();
-        },
-      );
-      await this.restoreWorkspaceToolchain(this.workspaceMetadata);
-      const expandedDirectories = (await Promise.all(
-        this.workspaceMetadata.workspace.expandedDirectories.map(path => this.absoluteWorkspacePath(selected, path))
-      )).filter((path): path is string => !!path);
-      await this.explorer.loadWorkspace(selected, expandedDirectories);
-      await this.restoreWorkspaceState(selected, this.workspaceMetadata);
-      await this.imageToolsController.setWorkspace(selected, this.pinnedMainFilePath);
-      if (this.sidebarController.activeTool === "images") this.imageToolsController.show();
-      if (this.activeFilePath) await this.explorer.revealPath(this.activeFilePath);
-      await this.saveWorkspaceState();
-      await this.explorer.loadWorkspace(selected);
-      await this.workspaceController.startWatching(selected);
-      this.recentProjectsController.add(selected);
-    } catch (error) {
-      this.workspaceController.stopWatching();
-      this.workspaceRootPath = null;
-      this.workspaceMetadata = null;
-      this.activeFilePath = null;
-      this.pinnedMainFilePath = null;
-      this.mainDocumentScripts = [];
-      this.openTabs = [];
-      this.explorer.setActiveFile(null);
-      this.explorer.clearWorkspace();
-      this.renderEditorTabs();
-      await message(String(error), { title: "Unable to Open Project", kind: "error" });
-      return;
-    } finally {
-      await this.editorFontManager.ready();
-      this.workspaceLoading = false;
-      this.updateWorkspaceViewportVisibility();
-
-      // During application startup the active tab is restored while the editor
-      // is hidden behind the workspace loading state. A hidden CodeMirror scroll
-      // container cannot reliably restore a non-zero scrollTop.
-      //
-      // Reapply the persisted viewport after the workspace becomes visible and
-      // CodeMirror has had a chance to measure its final geometry.
-      const activeTab = this.getActiveTab();
-    
-      if (
-        activeTab &&
-        (activeTab.scrollTop !== undefined || activeTab.scrollLeft !== undefined)
-      ) {
-        const activePath = activeTab.path;
-        const targetScrollTop = activeTab.scrollTop ?? 0;
-        const targetScrollLeft = activeTab.scrollLeft ?? 0;
-    
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => {
-            if (
-              !this.activeFilePath ||
-              filePathKey(this.activeFilePath) !== filePathKey(activePath)
-            ) {
-              return;
-            }
-    
-            this.editorInstance.requestMeasure();
-    
-            this.editorInstance.scrollDOM.scrollTop = targetScrollTop;
-            this.editorInstance.scrollDOM.scrollLeft = targetScrollLeft;
-    
-            this.editorController.updateCaretMarker();
-    
-            this.appendDeveloperLog({
-              kind: "info",
-              source: "editor state",
-              message:
-                `Restored startup editor viewport: top=${targetScrollTop.toFixed(0)}, `
-                + `left=${targetScrollLeft.toFixed(0)}`
-            });
-          });
-        });
-      }
-    }
-    void this.startWorkspaceServices(selected);
+  private openWorkspace(selected: string): Promise<void> {
+    return this.workspaceLifecycleController.open(selected);
   }
 
-  private async startWorkspaceServices(selected: string): Promise<void> {
-    try {
-      if (this.workspaceRootPath !== selected) return;
-      if (this.workspaceServicesDeferredForLargeFile) return;
-      if (
-        this.pinnedMainFilePath
-        && !await this.ensureLargePreviewApproved(this.pinnedMainFilePath)
-      ) {
-        return;
-      }
-      this.workspaceServicesDeferredForLargeFile = false;
-      if (this.pinnedMainFilePath) {
-        const typography = await this.preparePinnedMainTypography(this.pinnedMainFilePath);
-        if (this.workspaceRootPath !== selected) return;
-        if (typography === false) {
-          await invoke<boolean>("clear_scaled_workspace_fonts", { workspaceRootPath: selected });
-          this.pinnedMainFilePath = null;
-          this.mainDocumentScripts = [];
-          await this.saveWorkspaceState();
-        } else if (typography) {
-          this.editorToolbarController.synchronizeDocumentTypography(typography);
-        }
-      }
-      await this.prepareRenderProjectIfNeeded();
-      if (this.workspaceRootPath !== selected) return;
-      if (this.lspClient) {
-        try {
-          await this.restartTinymistSession("Connecting to new project...");
-          if (this.workspaceRootPath !== selected) return;
-        } catch (error) {
-          if (this.workspaceRootPath !== selected) return;
-          this.lspReady = false;
-          this.appendDeveloperLog({
-            kind: "error",
-            source: "lsp",
-            message: `Failed to restart Tinymist for workspace ${selected}: ${String(error)}`
-          });
-        }
-      }
-      if (this.workspaceRootPath === selected && this.activeFilePath) {
-        await this.restoreActiveDocumentAfterTinymistRestart();
-      }
-    } catch (error) {
-      if (this.workspaceRootPath === selected) {
-        this.appendDeveloperLog({
-          kind: "error",
-          source: "workspace",
-          message: `Workspace services failed to start: ${String(error)}`
-        });
-      }
-    }
+
+  private startWorkspaceServices(selected: string): Promise<void> {
+    return this.workspaceLifecycleController.startServices(selected);
   }
 
-  private async restoreWorkspaceToolchain(metadata: WorkspaceMetadata): Promise<void> {
-    this.recommendedWorkspaceToolchain = metadata.project.recommendedToolchain;
-    this.selectedWorkspaceToolchain = metadata.workspace.selectedToolchain;
-    if (!this.selectedWorkspaceToolchain) return;
-    try {
-      const status = await invoke<ToolchainStatus>("select_project_toolchain", {
-        tinymistVersion: this.selectedWorkspaceToolchain.tinymistVersion,
-        typstVersion: this.selectedWorkspaceToolchain.typstVersion
-      });
-      this.toolchainController.setStatus(status);
-    } catch (error) {
-      this.appendDeveloperLog({
-        kind: "warning",
-        source: "toolchain",
-        message: `Could not restore this workspace's selected toolchain: ${String(error)}`
-      });
-    }
-  }
+
 
   private importTypsastraProject(archivePath?: string): Promise<void> {
     return this.projectImportController.importProject(archivePath);
   }
 
-  private async completeProjectImport(
+  private completeProjectImport(
     imported: ImportedTypsastraProject,
     projectName: string,
   ): Promise<boolean> {
-    await this.openWorkspace(imported.workspacePath);
-    const activeToolchain = await invoke<ToolchainStatus>("get_toolchain_status").catch(() => null);
-    this.recommendedWorkspaceToolchain = {
-      tinymistVersion: imported.manifest.toolchain.tinymistVersion,
-      typstVersion: imported.manifest.toolchain.typstVersion,
-    };
-    this.selectedWorkspaceToolchain = activeToolchain?.tinymistVersion && activeToolchain.typstVersion
-      ? {
-          tinymistVersion: activeToolchain.tinymistVersion,
-          typstVersion: activeToolchain.typstVersion,
-        }
-      : null;
-    if (
-      !this.workspaceRootPath
-      || filePathKey(this.workspaceRootPath) !== filePathKey(imported.workspacePath)
-    ) {
-      return false;
-    }
-    await this.setPinnedMainFile(imported.mainFilePath);
-    await this.saveWorkspaceState();
-    this.setLspStatus({ kind: "preview-ready", message: `Imported ${projectName}` });
-    return true;
-  }
-  private async closeOtherTabs(pathToKeep: string) {
-    const tabsToClose = this.openTabs.filter(tab => tab.path !== pathToKeep);
-    for (const tab of tabsToClose) {
-      await this.closeEditorTab(tab.path, false);
-    }
+    return this.workspaceLifecycleController.completeImport(imported, projectName);
   }
 
-  private async restartWorkspace() {
-    if (this.workspaceRootPath) {
-      const currentWorkspace = this.workspaceRootPath;
-      await this.closeProject({ confirmUnsaved: false });
-      await this.openWorkspace(currentWorkspace);
-    }
+  private closeOtherTabs(pathToKeep: string): Promise<void> {
+    return this.workspaceLifecycleController.closeOtherTabs(pathToKeep);
   }
 
-  private async openExamplesWorkspace(): Promise<void> {
-    const button = document.getElementById("welcome-open-examples") as HTMLButtonElement | null;
-    if (button) button.disabled = true;
-    try {
-      const examples = await invoke<ExamplesWorkspace>("prepare_examples_workspace");
-      await this.openWorkspace(examples.workspacePath);
-      await this.loadFile(examples.entryPath);
-    } catch (error) {
-      this.appendLspLog({
-        kind: "error",
-        source: "examples",
-        message: `Failed to open examples: ${String(error)}`
-      });
-      await message(String(error), { title: "Unable to open examples", kind: "error" });
-    } finally {
-      if (button) button.disabled = false;
-    }
+
+  private restartWorkspace(): Promise<void> {
+    return this.workspaceLifecycleController.restart();
   }
+
+
+  private openExamplesWorkspace(): Promise<void> {
+    return this.workspaceLifecycleController.openExamples();
+  }
+
 
   private isPinnedMainFile(path: string): boolean {
     return this.pinnedMainFilePath !== null && filePathKey(this.pinnedMainFilePath) === filePathKey(path);
@@ -6575,129 +6229,10 @@ export class TypsastraWorkspaceController {
     }
   }
 
-  private async closeProject(options: { confirmUnsaved?: boolean } = {}): Promise<boolean> {
-    const confirmUnsaved = options.confirmUnsaved ?? true;
-    if (confirmUnsaved && this.openTabs.some(tab => tab.isDirty)) {
-      const shouldClose = await confirm(
-        "Close this project with unsaved changes? The editor state will be kept for session recovery, but the files are not saved to disk.",
-        { title: "Unsaved Changes", kind: "warning" }
-      );
-      if (!shouldClose) return false;
-    }
-
-    await this.saveWorkspaceState();
-    this.workspaceController.stopWatching();
-
-    const previewTaskIds = new Set([
-      this.previewTaskId,
-      this.pdfPreviewSourceMapTaskId,
-      this.sourceMapSessionController.registeredTaskId
-    ].filter((taskId): taskId is string => Boolean(taskId)));
-    if (this.lspClient) {
-      for (const taskId of previewTaskIds) {
-        void this.lspClient.stopPreview(taskId).catch(() => {});
-      }
-    }
-
-    try {
-      await this.stopTinymistSession("Project closed");
-    } catch (error) {
-      this.appendDeveloperLog({
-        kind: "warning",
-        source: "lsp",
-        message: `Tinymist did not stop cleanly while closing the project: ${String(error)}`
-      });
-    }
-
-    if (this.pdfPreviewTimer !== null) window.clearTimeout(this.pdfPreviewTimer);
-    this.pdfPreviewTimer = null;
-    this.typographyController.resetRuntime();
-    this.approvedLargePreviewRoots.clear();
-    this.inspectedPreviewRoots.clear();
-    this.blockedLargePreviewRoot = null;
-    this.draftPreviewController.reset();
-    this.previewScrollTop = 0;
-    if (this.previewScrollSaveTimer !== null) window.clearTimeout(this.previewScrollSaveTimer);
-    this.previewScrollSaveTimer = null;
-    this.pdfPreviewGeneration += 1;
-    this.previewSyncController.cancelManual();
-    this.tinymistPreviewRecoveryAttempts = 0;
-    this.tinymistPreviewRecovery = null;
-    this.queuedPdfPreviewContents = null;
-    this.queuedPdfPreviewForced = false;
-
-    this.workspaceRootPath = null;
-    this.sidebarController.reset();
-    document.body.classList.remove("image-tools-active");
-    void this.imageToolsController.setWorkspace(null, null);
-    this.workspaceMetadata = null;
-    this.settingsController.setWorkspacePreviewRenderMode(null);
-    this.lastPreviewRenderMode = this.settingsController.value.preview.renderMode;
-    this.workspaceLoading = false;
-    this.recommendedWorkspaceToolchain = null;
-    this.selectedWorkspaceToolchain = null;
-    this.activeFilePath = null;
-    this.explorer.setActiveFile(null);
-    this.openTabs = [];
-    this.pinnedMainFilePath = null;
-    this.mainDocumentScripts = [];
-    this.pinnedLspMainPath = null;
-    this.previewRootPath = null;
-    this.previewMainPath = null;
-    this.previewTaskId = null;
-    this.previewSessionKey = null;
-    this.previewImported = false;
-    this.previewStandalone = true;
-    this.previewDisabled = false;
-    this.pdfPreviewSourceMapRootPath = null;
-    this.pdfPreviewSourceMapTaskId = null;
-    this.pdfPreviewGeneratedFiles.clear();
-    this.managedPreviewPdfPathKeys.clear();
-    this.managedImageToolPathKeys.clear();
-    this.sourceMapSessionController.reset();
-    this.externalPreviewRefreshPending = false;
-    this.lastPdfPath = "";
-    this.lastPdfIdentity = "";
-    this.lastPdfSessionKey = "";
-    this.lastPdfSurface = "live";
-    this.imagePreviewController.clear();
-    this.updatePreviewActionsToolbar(null);
-
-    this.openedDocumentUris.clear();
-    this.externalConflictPaths.clear();
-    this.clearPendingLspSync();
-    this.previewSyncController.clearForward();
-    this.clearDiagnostics();
-    this.logConsoleController.clearAllLogs();
-    this.logConsoleController.setVisible(false);
-
-    this.isLoadingFile = true;
-    try {
-      this.editorInstance.setState(createTabEditorState({
-        doc: "",
-        anchor: 0,
-        head: 0,
-        extensions: this.editorExtensions,
-      }));
-      this.editorInstance.dispatch({ effects: this.currentEditorSettingsEffects() });
-      this.applyFoldRanges([]);
-    } finally {
-      this.isLoadingFile = false;
-    }
-    this.activateSpellcheckDocument(null);
-    this.editorFontManager.updateDocument("");
-    this.editorToolbarController.setDisabled(true);
-    if (this.activeMode === "WYSIWYM") this.mapMarkupToWysiwym("");
-    
-    // Clear workspace navigation
-    this.explorer.clearWorkspace();
-    this.documentOutlineController.clear();
-    this.previewFrame.clear();
-    this.renderEditorTabs();
-    this.setLspStatus({ kind: "stopped", message: "Project closed" });
-    this.updateWorkspaceViewportVisibility();
-    return true;
+  private closeProject(options: { confirmUnsaved?: boolean } = {}): Promise<boolean> {
+    return this.workspaceLifecycleController.close(options);
   }
+
 
   private bindGlobalEvents() {
     installModalFocusTrap();
