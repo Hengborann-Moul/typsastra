@@ -3,6 +3,8 @@ import { readFileSync } from "node:fs";
 
 const style = readFileSync(new URL("../src/style.css", import.meta.url), "utf8");
 const controller = readFileSync(new URL("../src/appController.ts", import.meta.url), "utf8");
+const previewWindowController = readFileSync(new URL("../src/preview/previewWindowController.ts", import.meta.url), "utf8");
+const settingsRuntimeController = readFileSync(new URL("../src/settingsRuntimeController.ts", import.meta.url), "utf8");
 const explorer = readFileSync(new URL("../src/components/explorer.ts", import.meta.url), "utf8");
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const editorExtensions = readFileSync(new URL("../src/editor/extensions.ts", import.meta.url), "utf8");
@@ -70,19 +72,10 @@ describe("theme-aware application accents", () => {
   });
 
   test("applies and follows the active theme in the undocked preview", () => {
-    const previewBootstrapStart = controller.indexOf("private async bootstrapPreviewWindow");
-    const previewBootstrapEnd = controller.indexOf(
-      "private updateWorkspaceViewportVisibility",
-      previewBootstrapStart
-    );
-    const previewBootstrap = controller.slice(previewBootstrapStart, previewBootstrapEnd);
-
-    expect(previewBootstrap).toContain("await this.settingsController.load()");
-    expect(previewBootstrap).toContain(
-      "await applyUIThemeVariables(this.settingsController.value.appearance.theme)"
-    );
-    expect(previewBootstrap).toContain('await listen<ThemeName>("preview-theme-update"');
-    expect(controller).toContain('emit("preview-theme-update", appearance.theme)');
+    expect(previewWindowController).toContain("await deps.loadSettings()");
+    expect(previewWindowController).toContain("await applyUIThemeVariables(deps.theme())");
+    expect(previewWindowController).toContain('await listen<ThemeName>("preview-theme-update"');
+    expect(settingsRuntimeController).toContain('emit("preview-theme-update", appearance.theme)');
   });
 
   test("keeps warning icons consistent across themes and surfaces", () => {

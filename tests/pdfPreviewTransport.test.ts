@@ -59,7 +59,7 @@ describe("compiled PDF transport", () => {
 
     expect(previewOwner).toContain("readonly pdf: PreviewFrame");
     expect(diagnostics).toBeGreaterThan(-1);
-    expect(callback).toContain("if (isPreviewOnlyWindow()) return;");
+    expect(callback).toContain("if (this.previewWindowController.isPreviewOnlyWindow()) return;");
   });
 
   test("keeps memory diagnostics safe before CodeMirror is initialized", async () => {
@@ -166,6 +166,9 @@ describe("compiled PDF transport", () => {
     const failureSource = await Bun.file(
       new URL("../src/diagnostics/previewFailureController.ts", import.meta.url)
     ).text();
+    const recoverySource = await Bun.file(
+      new URL("../src/diagnostics/previewDiagnosticsRecoveryController.ts", import.meta.url)
+    ).text();
     const renderStart = renderSource.indexOf("public async render(");
     const renderEnd = renderSource.indexOf("\n  public ", renderStart + 10);
     const renderMethod = renderSource.slice(renderStart, renderEnd);
@@ -183,17 +186,13 @@ describe("compiled PDF transport", () => {
     expect(renderMethod).toContain('this.deps.logConsole.clearLogsBySource(["compiler", "package compatibility"]);');
     expect(renderMethod).toContain('this.deps.setLspStatus({ kind: "preview-error", message: "PDF compile failed" });');
     expect(diagnosticsMethod).toContain("this.diagnosticsController.handleLspDiagnostics");
-    const recoveryStart = source.indexOf("private recoverPreviewAfterAcceptedDiagnostics");
-    const recoveryEnd = source.indexOf("\n  private ", recoveryStart + 10);
-    const recoveryMethod = source.slice(recoveryStart, recoveryEnd);
-    expect(recoveryMethod).toContain('this.previewFrame.setError(');
-    expect(recoveryMethod).toContain('"Preview Render Failed"');
-    expect(recoveryMethod).toContain("this.previewFrame.clearErrorOverlay()");
-    expect(recoveryMethod).toContain("this.lastFailedPreviewContents === null");
+    expect(source).toContain("this.previewDiagnosticsRecoveryController.recoverAfterAcceptedDiagnostics(diagnostics)");
+    expect(recoverySource).toContain('this.deps.previewFrame().setError(');
+    expect(recoverySource).toContain('"Preview Render Failed"');
+    expect(recoverySource).toContain("this.deps.previewFrame().clearErrorOverlay()");
+    expect(recoverySource).toContain("this.failedContents === null");
     expect(diagnosticsMethod).toContain("this.diagnosticsController.handleLspDiagnostics");
-    expect(source).toContain("private recoverPreviewAfterAcceptedDiagnostics");
-    expect(source).toContain("this.lastFailedPreviewContents === null");
-    expect(source).toContain("LSP accepted a corrected revision after preview failure");
+    expect(recoverySource).toContain("LSP accepted a corrected revision after preview failure");
     expect(renderSource).toContain("parsePreviewCompilerFailure(error)");
     expect(renderMethod).toContain("this.deps.previewFailure.publish(failure, packageHint)");
     expect(failureSource).toContain("const failureComesFromRenderMirror = failure.location !== null");
@@ -224,19 +223,20 @@ describe("compiled PDF transport", () => {
 
   test("restores retained diagnostics when a source tab becomes active", async () => {
     const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
+    const activationSource = await Bun.file(new URL("../src/editor/editorTabActivationController.ts", import.meta.url)).text();
     const diagnosticsSource = await Bun.file(
       new URL("../src/diagnostics/diagnosticsController.ts", import.meta.url)
     ).text();
-    const activateStart = source.indexOf("private async activateEditorTab");
-    const activateEnd = source.indexOf("\n  private ", activateStart + 10);
-    const activateMethod = source.slice(activateStart, activateEnd);
+    const activateStart = activationSource.indexOf("async activate(");
+    const activateEnd = activationSource.indexOf("\n  }", activateStart + 10);
+    const activateMethod = activationSource.slice(activateStart, activateEnd);
     const diagnosticsStart = source.indexOf("private handleLspDiagnostics");
     const diagnosticsEnd = source.indexOf("\n  private ", diagnosticsStart + 10);
     const diagnosticsMethod = source.slice(diagnosticsStart, diagnosticsEnd);
 
-    expect(activateMethod).toContain("this.clearEditorDiagnostics()");
-    expect(activateMethod).not.toContain("this.clearDiagnostics()");
-    expect(activateMethod).toContain("this.restoreCachedEditorDiagnostics(path)");
+    expect(activateMethod).toContain("deps.clearEditorDiagnostics()");
+    expect(activateMethod).not.toContain("clearDiagnostics()");
+    expect(activateMethod).toContain("deps.restoreCachedEditorDiagnostics(path)");
     expect(diagnosticsMethod).toContain("this.diagnosticsController.handleLspDiagnostics");
     expect(diagnosticsSource).toContain("this.lspDiagnosticsByFile.set(this.port.pathKey(originalPath), cacheableDiagnostics)");
     expect(diagnosticsSource).toContain("restoreCachedEditorDiagnostics(path: string): void");

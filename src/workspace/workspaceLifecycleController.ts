@@ -62,7 +62,7 @@ export interface WorkspaceLifecycleDependencies {
   inspectedPreviewRoots: Set<string>;
   pdfPreviewGeneratedFiles: Map<string, unknown>;
   managedImageToolPathKeys: Set<string>;
-  openedDocumentUris: Set<string>;
+  lspDocumentController: { resetSessionState(): void };
   externalConflictPaths: Set<string>;
   previewFrame: {
     currentUrl: string | null;
@@ -512,6 +512,10 @@ export class WorkspaceLifecycleController {
       if (!shouldClose) return false;
     }
 
+    // Retire the visible document before any asynchronous persistence or
+    // compiler teardown. In particular, project replacement must never leave
+    // the previous project's PDF visible while the new workspace starts.
+    app.previewFrame.clear();
     await app.saveWorkspaceState();
     app.workspaceController.stopWatching();
     const previewTaskIds = new Set([
@@ -572,7 +576,7 @@ export class WorkspaceLifecycleController {
     app.externalPreviewRefreshPending = false;
     app.imagePreviewController.clear();
     app.updatePreviewActionsToolbar(null);
-    app.openedDocumentUris.clear();
+    app.lspDocumentController.resetSessionState();
     app.externalConflictPaths.clear();
     app.clearPendingLspSync();
     app.previewSyncController.clearForward();
@@ -599,7 +603,6 @@ export class WorkspaceLifecycleController {
     if (app.activeMode === "WYSIWYM") app.mapMarkupToWysiwym("");
     app.explorer.clearWorkspace();
     app.documentOutlineController.clear();
-    app.previewFrame.clear();
     app.renderEditorTabs();
     app.setLspStatus({ kind: "stopped", message: "Project closed" });
     app.updateWorkspaceViewportVisibility();

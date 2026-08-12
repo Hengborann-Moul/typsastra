@@ -11,10 +11,13 @@ describe("file types", () => {
   test("routes Typst, Markdown, and plain-text files to separate editor modes", async () => {
     const extensions = await Bun.file(new URL("../src/editor/extensions.ts", import.meta.url)).text();
     const controller = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
+    const presentation = await Bun.file(
+      new URL("../src/editor/editorTabPresentationController.ts", import.meta.url),
+    ).text();
     expect(extensions).toContain("languageCompartment.of(typstLanguage)");
     expect(controller).toContain("private editorLanguageForPath(path: string): Extension");
     expect(controller).toContain("if (isMarkdownDocumentPath(path)) return this.markdownEditorLanguage");
-    expect(controller).toContain("languageCompartment.reconfigure(this.editorLanguageForPath(path))");
+    expect(presentation).toContain("languageCompartment.reconfigure(this.deps.editorLanguageForPath(path))");
   });
 
   test("recognizes supported editor and image formats case-insensitively", () => {

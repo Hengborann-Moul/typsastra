@@ -15,6 +15,9 @@ describe("Tinymist workspace lifecycle", () => {
 
   test("restarts for main-file changes and stops when a project closes", async () => {
     const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
+    const pinnedMainSource = await Bun.file(
+      new URL("../src/workspace/pinnedMainFileController.ts", import.meta.url),
+    ).text();
     const lifecycle = await Bun.file(
       new URL("../src/workspace/workspaceLifecycleController.ts", import.meta.url),
     ).text();
@@ -24,31 +27,37 @@ describe("Tinymist workspace lifecycle", () => {
     const typographySource = await Bun.file(
       new URL("../src/typography/typographyController.ts", import.meta.url),
     ).text();
+    const typographyApplicationSource = await Bun.file(
+      new URL("../src/typography/documentTypographyApplicationController.ts", import.meta.url),
+    ).text();
 
-    expect(source).toContain("mainChanged && this.lspClient");
-    expect(source).toContain("preparePinnedMainTypography(path)");
+    expect(pinnedMainSource).toContain("mainChanged && deps.hasLspClient()");
+    expect(pinnedMainSource).toContain("await deps.prepareTypography(path)");
     expect(typographySource).toContain("scaled_workspace_font_set_status");
     expect(typographySource).toContain("activate_scaled_workspace_fonts");
     expect(typographySource).toContain("this.port.synchronizeDocumentTypography(config)");
-    expect(source).toContain("ownsWorkspaceTypography && !await this.typographyController.confirmScaleRange(config)");
+    expect(typographyApplicationSource).toContain("ownsWorkspaceTypography && !await typography.confirmScaleRange(config)");
     expect(typographySource).toContain("if (!this.port.isPinnedMainFile(activeFilePath))");
-    expect(source.indexOf("preparePinnedMainTypography(path)")).toBeLessThan(
-      source.indexOf("this.pinnedMainFilePath = path", source.indexOf("preparePinnedMainTypography(path)"))
+    expect(pinnedMainSource.indexOf("await deps.prepareTypography(path)")).toBeLessThan(
+      pinnedMainSource.indexOf("deps.setPinnedMainFilePath(path)")
     );
-    expect(source).toContain('restartTinymistSession("Restarting Tinymist for the new main file..."');
+    expect(pinnedMainSource).toContain('deps.restartTinymistSession("Restarting Tinymist for the new main file...")');
     expect(lifecycle).toContain('stopTinymistSession("Project closed")');
     expect(sessionSource).toContain("private lifecycleQueue: Promise<void>");
     expect(sessionSource).toContain("runExclusive(operation: () => Promise<void>)");
-    const setMainStart = source.indexOf("private async setPinnedMainFile");
-    const setMainEnd = source.indexOf("private async closeProject", setMainStart);
-    const setMainSource = source.slice(setMainStart, setMainEnd);
-    expect(setMainSource).toContain("this.blockedLargePreviewRoot = null");
-    expect(setMainSource).toContain("await this.largePreviewNoticeForRoot(path)");
-    expect(setMainSource).toContain("this.workspaceServicesDeferredForLargeFile = true");
-    expect(setMainSource).toContain('stopTinymistSession("Large Typst file waiting for editor approval")');
-    expect(source).toContain("private async restoreActiveDocumentAfterTinymistRestart");
-    expect(source).toContain("if (mainChanged && (!path || mainWasAlreadyActive))");
-    expect(source).toContain("await this.restoreActiveDocumentAfterTinymistRestart();");
+    expect(pinnedMainSource).toContain("deps.clearBlockedLargePreviewRoot()");
+    expect(pinnedMainSource).toContain("await deps.largePreviewNoticeForRoot(path)");
+    expect(pinnedMainSource).toContain("deps.setWorkspaceServicesDeferred(true)");
+    expect(pinnedMainSource).toContain('deps.stopTinymistSession("Large Typst file waiting for editor approval")');
+    const lspSyncSource = await Bun.file(
+      new URL("../src/session/lspSyncController.ts", import.meta.url),
+    ).text();
+    expect(source).toContain("private restoreActiveDocumentAfterTinymistRestart");
+    expect(source).toContain("return this.lspSyncController.restoreActiveDocumentAfterRestart(forcePreview)");
+    expect(lspSyncSource).toContain("async restoreActiveDocumentAfterRestart(forcePreview = true)");
+    expect(lspSyncSource).toContain("await this.deps.updatePinnedMain(mainPath, true)");
+    expect(pinnedMainSource).toContain("if (mainChanged && (!path || mainWasAlreadyActive))");
+    expect(pinnedMainSource).toContain("await deps.restoreActiveDocumentAfterRestart(mainWasAlreadyActive)");
   });
 
   test("continues opening a replacement after late teardown cleanup fails", async () => {
@@ -65,7 +74,9 @@ describe("Tinymist workspace lifecycle", () => {
   });
 
   test("reloads template typography and synchronizes restored directives", async () => {
-    const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
+    const activationSource = await Bun.file(
+      new URL("../src/editor/editorTabActivationController.ts", import.meta.url),
+    ).text();
     const typographySource = await Bun.file(
       new URL("../src/typography/typographyController.ts", import.meta.url),
     ).text();
@@ -76,15 +87,15 @@ describe("Tinymist workspace lifecycle", () => {
     expect(typographySource).toContain('this.port.restartTinymistSession("Reloading template typography...")');
     const presentation = presentationSource.indexOf("presentText(tab: EditorTab, path: string)");
     const tabDispatch = presentationSource.indexOf("editor.dispatch({", presentation);
-    const activation = source.indexOf("private async activateEditorTab");
-    const presentText = source.indexOf("this.editorTabPresentationController.presentText(tab, path)", activation);
-    const activeTabCommit = source.indexOf("this.activeFilePath = path;", presentText);
-    const typographyResolve = source.indexOf(
-      "await this.typographyController.effective(path, tab.content)",
+    const activation = activationSource.indexOf("async activate(");
+    const presentText = activationSource.indexOf("deps.presentation.presentText(tab, path)", activation);
+    const activeTabCommit = activationSource.indexOf("deps.setActiveFilePath(path)", presentText);
+    const typographyResolve = activationSource.indexOf(
+      "await deps.typography.effective(path, tab.content)",
       activeTabCommit,
     );
-    const typographySync = source.indexOf(
-      "this.editorToolbarController.synchronizeDocumentTypography(activeTypography)",
+    const typographySync = activationSource.indexOf(
+      "deps.toolbar.synchronizeDocumentTypography(activeTypography)",
       typographyResolve,
     );
     expect(tabDispatch).toBeGreaterThan(presentation);
@@ -115,6 +126,9 @@ describe("Tinymist workspace lifecycle", () => {
     const contentSource = await Bun.file(
       new URL("../src/preview/previewContentController.ts", import.meta.url),
     ).text();
+    const lifecycleSource = await Bun.file(
+      new URL("../src/workspace/workspaceLifecycleController.ts", import.meta.url),
+    ).text();
     const preparation = preparationSource.indexOf("public async prepareProjectIfNeeded");
     const preparationEnd = preparationSource.indexOf("\n  public ", preparation + 10);
     const method = preparationSource.slice(preparation, preparationEnd);
@@ -123,7 +137,9 @@ describe("Tinymist workspace lifecycle", () => {
     expect(method).not.toContain('renderMode !== "on-type"');
     expect(contentSource).toContain("await this.deps.updatePinnedMain(previewLspMainPath(target))");
     expect(source).not.toContain("cachedPreviewCompilerPath");
-    expect(normalizedSource).toContain("await this.prepareRenderProjectIfNeeded();\n        await this.restartTinymistSession");
+    const normalizedLifecycleSource = lifecycleSource.replace(/\r\n/g, "\n");
+    expect(normalizedLifecycleSource).toContain("await app.prepareRenderProjectIfNeeded();");
+    expect(normalizedLifecycleSource).toContain("await app.restartTinymistSession(\"Connecting to new project...\")");
   });
 
   test("corrects unsupported compiler-font scales after reporting them", async () => {
@@ -145,6 +161,8 @@ describe("Tinymist workspace lifecycle", () => {
       new URL("../src/workspace/workspaceLifecycleController.ts", import.meta.url),
     ).text();
     const closeProject = lifecycle.indexOf("async close(");
+    const closePreview = lifecycle.indexOf("app.previewFrame.clear();", closeProject);
+    const closeSave = lifecycle.indexOf("await app.saveWorkspaceState();", closeProject);
     const closeClear = lifecycle.indexOf("app.logConsoleController.clearAllLogs();", closeProject);
     const closeConsole = lifecycle.indexOf("app.logConsoleController.setVisible(false);", closeProject);
     const manualRestart = eventBindings.indexOf('document.getElementById("action-restart-lsp")');
@@ -157,9 +175,13 @@ describe("Tinymist workspace lifecycle", () => {
       restartCall
     );
     const restartEnd = source.indexOf("},", restartRestore);
+    expect(closePreview).toBeGreaterThan(closeProject);
+    expect(closePreview).toBeLessThan(closeSave);
     expect(closeClear).toBeGreaterThan(closeProject);
     expect(closeConsole).toBeGreaterThan(closeClear);
     expect(closeConsole).toBeGreaterThan(closeProject);
+    expect(lifecycle).toContain("app.lspDocumentController.resetSessionState();");
+    expect(lifecycle).not.toContain("app.openedDocumentUris.clear();");
     expect(manualRestart).toBeGreaterThan(-1);
     expect(restartBinding).toBeGreaterThan(manualRestart);
     expect(restartClear).toBeGreaterThan(restartStart);

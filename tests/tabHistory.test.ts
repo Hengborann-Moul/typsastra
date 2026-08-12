@@ -93,15 +93,15 @@ describe("per-tab editor history", () => {
   });
 
   test("tab switches restore a document-aware scroll snapshot before asynchronous typography work", async () => {
-    const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
+    const activationSource = await Bun.file(new URL("../src/editor/editorTabActivationController.ts", import.meta.url)).text();
     const stateSource = await Bun.file(
       new URL("../src/editor/editorTabStateController.ts", import.meta.url),
     ).text();
     const capture = stateSource.indexOf("tab.scrollSnapshot = editor.scrollSnapshot()");
     const restoreOwned = stateSource.indexOf("if (tab.scrollSnapshot)");
-    const activation = source.indexOf("private async activateEditorTab");
-    const restore = source.indexOf("this.restoreEditorTabViewport(tab, path)", activation);
-    const typography = source.indexOf("await this.typographyController.effective(path, tab.content)", activation);
+    const activation = activationSource.indexOf("async activate(");
+    const restore = activationSource.indexOf("deps.restoreEditorTabViewport(tab, path)", activation);
+    const typography = activationSource.indexOf("await deps.typography.effective(path, tab.content)", activation);
 
     expect(capture).toBeGreaterThan(-1);
     expect(restoreOwned).toBeGreaterThan(capture);
