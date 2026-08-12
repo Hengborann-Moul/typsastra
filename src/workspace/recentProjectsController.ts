@@ -142,6 +142,7 @@ export class RecentProjectsController {
   private popupSearch: HTMLInputElement | null = null;
   private popupList: HTMLElement | null = null;
   private popupSelectionIndex = 0;
+  private changeListener: (() => void) | null = null;
 
   constructor(
     private readonly onOpen: (path: string) => void | Promise<void>,
@@ -173,6 +174,19 @@ export class RecentProjectsController {
     });
 
     this.render();
+  }
+
+  public observe(listener: () => void): void {
+    this.changeListener = listener;
+    listener();
+  }
+
+  public visibleEntries(): readonly string[] {
+    return this.read().slice(0, visibleRecentProjects);
+  }
+
+  public open(path: string): void {
+    void this.openProject(path);
   }
 
   public add(path: string): void {
@@ -233,6 +247,7 @@ export class RecentProjectsController {
     const projects = this.read();
     this.renderWelcome(projects.slice(0, visibleRecentProjects));
     this.renderFileMenu(projects.slice(0, visibleRecentProjects));
+    this.changeListener?.();
   }
 
   private renderWelcome(projects: readonly string[]): void {

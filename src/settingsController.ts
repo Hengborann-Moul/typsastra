@@ -25,6 +25,7 @@ import {
   type LanguageProviderCapabilities
 } from "./languageSupport";
 import { isAltGraphKeyboardEvent } from "./ui/keyboardModifiers";
+import { nativeAppMenuOwnsShortcuts } from "./platform/nativeAppMenuSpec";
 
 type SettingsPayload = { path: string; settings: unknown | null };
 type SystemFontCatalog = { all: string[]; monospace: string[] };
@@ -316,7 +317,7 @@ export class SettingsController {
     document.addEventListener("keydown", event => {
       if (isAltGraphKeyboardEvent(event)) return;
       const isMac = navigator.userAgent.toLowerCase().includes("mac");
-      if ((isMac ? event.metaKey : event.ctrlKey) && event.code === "Comma") {
+      if ((isMac ? event.metaKey : event.ctrlKey) && event.code === "Comma" && !nativeAppMenuOwnsShortcuts()) {
         event.preventDefault();
         openSettings();
       } else if (event.key === "Escape" && !overlay.classList.contains("hidden")) {

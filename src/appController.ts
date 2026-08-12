@@ -106,6 +106,7 @@ import { AppUpdateController } from "./appUpdateController";
 import { WebviewStorageController } from "./webviewStorageController";
 import { SystemResumeMonitor } from "./platform/systemResume";
 import { WorkspaceResumeController } from "./platform/workspaceResumeController";
+import { installNativeAppMenu, type NativeAppMenuHandle } from "./platform/nativeAppMenu";
 import { setImageOptimizationWarningsEffect } from "./editor/imageWarnings";
 import type { EditorTab, PreviewSessionState } from "./editor/editorTab";
 import { DocumentPersistenceController, type SaveIntent } from "./editor/documentPersistenceController";
@@ -984,6 +985,7 @@ export class TypsastraWorkspaceController {
       );
     }
   );
+  private nativeAppMenu: NativeAppMenuHandle | null = null;
   private readonly editorToolbarController = new EditorToolbarController({
     getMode: () => this.activeMode,
     getEditor: () => this.editorInstance,
@@ -1629,6 +1631,7 @@ export class TypsastraWorkspaceController {
     await this.performanceController.timeStartup("show main window", () => getCurrentWindow().show());
     this.appUpdateController.initialize();
     this.webviewStorageController.initialize();
+    void this.installNativeAppMenu();
     this.editorController.refreshLayout("main window shown");
     this.performanceController.recordStartupTiming("frontend startup", "frontend bootstrap until window shown", this.startupStart);
     this.performanceController.recordFirst({
@@ -1667,6 +1670,19 @@ export class TypsastraWorkspaceController {
       activeFilePath: this.activeFilePath,
       workspaceRootPath: this.workspaceRootPath,
       loading: this.workspaceLoading,
+    });
+    this.nativeAppMenu?.syncWorkspaceState(this.workspaceRootPath !== null);
+  }
+
+  private async installNativeAppMenu(): Promise<void> {
+    this.recentProjectsController.observe(() => this.nativeAppMenu?.refreshRecentProjects());
+    this.nativeAppMenu = await installNativeAppMenu({
+      wordWrapEnabled: () => this.settingsController.value.editor.wordWrap,
+      editorToolbarVisible: () => this.settingsController.value.editor.visualToolbar,
+      workspaceOpen: () => this.workspaceRootPath !== null,
+      recentProjects: () => this.recentProjectsController.visibleEntries(),
+      openRecentProject: path => this.recentProjectsController.open(path),
+      showAllRecentProjects: () => this.recentProjectsController.showPopup(),
     });
   }
 
@@ -1759,6 +1775,7 @@ export class TypsastraWorkspaceController {
     const { editor } = settings;
     this.settingsRuntimeController.apply(settings);
     this.editorToolbarController.setVisible(editor.visualToolbar);
+    this.nativeAppMenu?.syncCheckState({ wordWrap: editor.wordWrap, editorToolbar: editor.visualToolbar });
   }
 
   private currentEditorSettingsEffects() {
