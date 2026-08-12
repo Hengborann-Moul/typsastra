@@ -2,7 +2,9 @@ import { describe, expect, test } from "bun:test";
 
 describe("large-image preview recommendation", () => {
   test("uses aggregate image pressure without blocking preview compilation", async () => {
-    const controller = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
+    const controller = await Bun.file(
+      new URL("../src/preview/pdfPreviewRenderController.ts", import.meta.url),
+    ).text();
     const draftController = await Bun.file(new URL("../src/preview/draftPreviewController.ts", import.meta.url)).text();
     const start = draftController.indexOf("updateImageHeavyWarning");
     const end = draftController.indexOf("updateControl", start);
@@ -22,10 +24,10 @@ describe("large-image preview recommendation", () => {
     expect(draftController).toContain('this.modeValue !== "draft" && actions.length < 3');
     expect(draftController).toContain('await this.port.setPreviewRenderMode("on-save")');
     expect(draftController).toContain("Compilation will continue normally");
-    const renderStart = controller.indexOf("private async renderPdfPreview");
-    const renderEnd = controller.indexOf("private schedulePdfPreview", renderStart);
+    const renderStart = controller.indexOf("public async render(");
+    const renderEnd = controller.indexOf("public recompileManually", renderStart);
     const renderMethod = controller.slice(renderStart, renderEnd);
-    expect(renderMethod).toContain("this.draftPreviewController.updateImageHeavyWarning(imageProfile);");
+    expect(renderMethod).toContain("this.deps.draftPreview.updateImageHeavyWarning(imageProfile);");
     expect(renderMethod).not.toContain("recommendOnSaveForImageHeavyPreview");
     expect(renderMethod).not.toMatch(/updateImageHeavyPreviewWarning\(imageProfile\)[\s\S]{0,80}return;/);
   });

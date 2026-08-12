@@ -458,8 +458,8 @@ const searchMatchCounter = ViewPlugin.fromClass(class {
     status.className = "cm-search-match-count";
     status.setAttribute("role", "status");
     status.setAttribute("aria-live", "polite");
-    const close = panel.querySelector('button[name="close"]');
-    panel.insertBefore(status, close);
+    const searchRow = panel.querySelector<HTMLElement>(".cm-search-row");
+    searchRow?.append(status);
     return status;
   }
 

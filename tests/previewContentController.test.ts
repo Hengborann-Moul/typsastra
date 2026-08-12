@@ -1,0 +1,27 @@
+import { describe, expect, test } from "bun:test";
+
+describe("preview content controller", () => {
+  test("owns active preview-surface selection behind explicit dependencies", async () => {
+    const source = await Bun.file(
+      new URL("../src/preview/previewContentController.ts", import.meta.url),
+    ).text();
+
+    expect(source).toContain("export interface PreviewContentDependencies");
+    expect(source).toContain("public renderImageToolPreview(");
+    expect(source).toContain("public renderInteractiveImageViewer(");
+    expect(source).toContain("public async refreshActivePreviewRoot(");
+    expect(source).toContain('invoke<PreviewTarget>("resolve_preview_main"');
+    expect(source).not.toContain(": any");
+    expect(source).not.toContain("host: object");
+    expect(source).not.toContain("new Proxy(");
+  });
+
+  test("keeps appController preview-content methods as delegates", async () => {
+    const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
+
+    expect(source).toContain("new PreviewContentController({");
+    expect(source).toContain("return this.previewContentController.noMainFileMessage();");
+    expect(source).toContain("this.previewContentController.renderImageToolPreview(source, imagePath);");
+    expect(source).toContain("return this.previewContentController.refreshActivePreviewRoot(forceRender);");
+  });
+});

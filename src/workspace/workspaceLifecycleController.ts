@@ -52,20 +52,8 @@ export interface WorkspaceLifecycleDependencies {
   previewImported: boolean;
   previewStandalone: boolean;
   previewDisabled: boolean;
-  pdfPreviewSourceMapRootPath: string | null;
-  pdfPreviewSourceMapTaskId: string | null;
-  pdfPreviewTimer: number | null;
-  pdfPreviewGeneration: number;
-  queuedPdfPreviewContents: string | null;
-  queuedPdfPreviewForced: boolean;
-  tinymistPreviewRecoveryAttempts: number;
-  tinymistPreviewRecovery: Promise<boolean> | null;
   externalPreviewRefreshPending: boolean;
   lastPreviewRenderMode: PreviewRenderMode | undefined;
-  lastPdfPath: string;
-  lastPdfIdentity: string;
-  lastPdfSessionKey: string;
-  lastPdfSurface: "live" | "pdf";
   isLoadingFile: boolean;
   editorExtensions: Extension;
   editorInstance: EditorView;
@@ -73,14 +61,20 @@ export interface WorkspaceLifecycleDependencies {
   approvedLargePreviewRoots: Set<string>;
   inspectedPreviewRoots: Set<string>;
   pdfPreviewGeneratedFiles: Map<string, unknown>;
-  managedPreviewPdfPathKeys: Set<string>;
   managedImageToolPathKeys: Set<string>;
-  openedDocumentUris: Set<string>;
+  lspDocumentController: { resetSessionState(): void };
   externalConflictPaths: Set<string>;
   previewFrame: {
     currentUrl: string | null;
     restoreWorkspaceScrollPosition(scrollTop: number): void;
     clear(): void;
+  };
+  pdfPreviewRenderController: {
+    sourceMapTaskId: string | null;
+    resetForWorkspaceClose(): void;
+  };
+  pdfPreviewPreparationController: {
+    clearGeneratedFiles(): void;
   };
   layoutController: {
     setDockedInputWidthPct(width: number): void;
@@ -280,8 +274,21 @@ export class WorkspaceLifecycleController {
       return;
     }
     if (app.workspaceRootPath && app.workspaceRootPath !== selected) {
-      const closed = await this.close();
-      if (!closed) return;
+      const previousWorkspace = app.workspaceRootPath;
+      try {
+        const closed = await this.close();
+        if (!closed) return;
+      } catch (error) {
+        // Closing releases workspace ownership before resetting the remaining
+        // presentation state. A late UI-reset failure must not consume the
+        // user's first attempt to open the replacement project. If ownership
+        // was not released, however, continuing could mix two workspaces.
+        if (app.workspaceRootPath !== null) throw error;
+        console.warn(
+          `Project teardown for ${previousWorkspace} completed with a non-critical cleanup error; continuing with ${selected}.`,
+          error,
+        );
+      }
     }
     app.workspaceLoading = true;
     app.updateWorkspaceViewportVisibility();
@@ -505,11 +512,15 @@ export class WorkspaceLifecycleController {
       if (!shouldClose) return false;
     }
 
+    // Retire the visible document before any asynchronous persistence or
+    // compiler teardown. In particular, project replacement must never leave
+    // the previous project's PDF visible while the new workspace starts.
+    app.previewFrame.clear();
     await app.saveWorkspaceState();
     app.workspaceController.stopWatching();
     const previewTaskIds = new Set([
       app.previewTaskId,
-      app.pdfPreviewSourceMapTaskId,
+      app.pdfPreviewRenderController.sourceMapTaskId,
       app.sourceMapSessionController.registeredTaskId,
     ].filter((taskId: string | null): taskId is string => Boolean(taskId)));
     if (app.lspClient) {
@@ -525,8 +536,8 @@ export class WorkspaceLifecycleController {
       });
     }
 
-    if (app.pdfPreviewTimer !== null) window.clearTimeout(app.pdfPreviewTimer);
-    app.pdfPreviewTimer = null;
+    app.pdfPreviewRenderController.resetForWorkspaceClose();
+    app.pdfPreviewPreparationController.clearGeneratedFiles();
     app.typographyController.resetRuntime();
     app.approvedLargePreviewRoots.clear();
     app.inspectedPreviewRoots.clear();
@@ -535,12 +546,7 @@ export class WorkspaceLifecycleController {
     app.previewScrollTop = 0;
     if (app.previewScrollSaveTimer !== null) window.clearTimeout(app.previewScrollSaveTimer);
     app.previewScrollSaveTimer = null;
-    app.pdfPreviewGeneration += 1;
     app.previewSyncController.cancelManual();
-    app.tinymistPreviewRecoveryAttempts = 0;
-    app.tinymistPreviewRecovery = null;
-    app.queuedPdfPreviewContents = null;
-    app.queuedPdfPreviewForced = false;
 
     app.workspaceRootPath = null;
     app.sidebarController.reset();
@@ -565,20 +571,12 @@ export class WorkspaceLifecycleController {
     app.previewImported = false;
     app.previewStandalone = true;
     app.previewDisabled = false;
-    app.pdfPreviewSourceMapRootPath = null;
-    app.pdfPreviewSourceMapTaskId = null;
-    app.pdfPreviewGeneratedFiles.clear();
-    app.managedPreviewPdfPathKeys.clear();
     app.managedImageToolPathKeys.clear();
     app.sourceMapSessionController.reset();
     app.externalPreviewRefreshPending = false;
-    app.lastPdfPath = "";
-    app.lastPdfIdentity = "";
-    app.lastPdfSessionKey = "";
-    app.lastPdfSurface = "live";
     app.imagePreviewController.clear();
     app.updatePreviewActionsToolbar(null);
-    app.openedDocumentUris.clear();
+    app.lspDocumentController.resetSessionState();
     app.externalConflictPaths.clear();
     app.clearPendingLspSync();
     app.previewSyncController.clearForward();
@@ -605,7 +603,6 @@ export class WorkspaceLifecycleController {
     if (app.activeMode === "WYSIWYM") app.mapMarkupToWysiwym("");
     app.explorer.clearWorkspace();
     app.documentOutlineController.clear();
-    app.previewFrame.clear();
     app.renderEditorTabs();
     app.setLspStatus({ kind: "stopped", message: "Project closed" });
     app.updateWorkspaceViewportVisibility();

@@ -26,13 +26,17 @@ describe("cross-platform scrollbar design", () => {
 
   test("distinguishes live preview from directly opened PDF surfaces", async () => {
     const source = await Bun.file(new URL("../src/preview/previewFrame.ts", import.meta.url)).text();
-    const controller = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
+    const controller = await Bun.file(
+      new URL("../src/preview/pdfPreviewRenderController.ts", import.meta.url),
+    ).text();
     expect(source).toContain('export type PreviewSurface = "live" | "pdf"');
     expect(source).toContain('iframeDoc.documentElement.dataset.previewSurface = surface');
     expect(source).toContain(':root[data-preview-surface="pdf"]{--preview-surface-bg:#b8b8b8}');
     expect(source).toContain('background:var(--preview-surface-bg)');
     expect(controller).toContain('surface: PreviewSurface = isTypstDocumentPath(identity) ? "live" : "pdf"');
-    expect(controller).toContain('this.previewFrame.loadPdfBytes(bytes, identity, sessionKey, surface)');
+    expect(controller).toContain(
+      'this.deps.previewFrame.loadPdfBytes(bytes, identity, sessionKey, surface)',
+    );
   });
 
   test("does not build an unused PDF text layer", async () => {
@@ -106,11 +110,16 @@ describe("cross-platform scrollbar design", () => {
 
   test("preserves a compiled PDF behind non-Typst preview messages", async () => {
     const source = await Bun.file(new URL("../src/preview/previewFrame.ts", import.meta.url)).text();
-    const controller = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
+    const presentation = await Bun.file(
+      new URL("../src/editor/editorTabPresentationController.ts", import.meta.url),
+    ).text();
+    const activation = await Bun.file(
+      new URL("../src/editor/editorPreviewActivationController.ts", import.meta.url),
+    ).text();
     expect(source).toContain("setMessageOverlay(html: string)");
     expect(source).toContain("this.mountedSessionKey !== sessionKey");
     expect(source).toContain("this.clearMessageHost();");
-    expect(controller).toContain("this.previewFrame.setMessageOverlay(");
-    expect(controller).toContain("previewPresentationReused = this.previewFrame.activateSession(tab.previewSessionKey)");
+    expect(presentation).toContain("this.deps.previewFrame().setMessageOverlay(");
+    expect(activation).toContain("presentationReused = this.deps.previewFrame().activateSession(tab.previewSessionKey)");
   });
 });

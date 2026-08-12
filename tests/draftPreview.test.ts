@@ -4,6 +4,11 @@ import { join } from "node:path";
 
 const root = join(import.meta.dir, "..");
 const controller = readFileSync(join(root, "src", "appController.ts"), "utf8");
+const previewWindowController = readFileSync(join(root, "src", "preview", "previewWindowController.ts"), "utf8");
+const editorInitializationController = readFileSync(join(root, "src", "editor", "editorInitializationController.ts"), "utf8");
+const pdfRenderController = readFileSync(join(root, "src", "preview", "pdfPreviewRenderController.ts"), "utf8");
+const pdfPreparationController = readFileSync(join(root, "src", "preview", "pdfPreviewPreparationController.ts"), "utf8");
+const sourceNavigationController = readFileSync(join(root, "src", "preview", "previewSourceNavigationController.ts"), "utf8");
 const appEventBindings = readFileSync(join(root, "src", "ui", "appEventBindings.ts"), "utf8");
 const draftController = readFileSync(
   join(root, "src", "preview", "draftPreviewController.ts"),
@@ -26,8 +31,8 @@ describe("Draft Preview", () => {
     expect(html).toContain('class="preview-content-mode-track"');
     expect(html).toContain('class="preview-content-mode-thumb"');
     expect(controller).toContain("previewContentMode: this.draftPreviewController.mode");
-    expect(controller).toContain('previewContentMode: "normal"');
-    expect(controller).toContain('this.draftPreviewController.mode === "draft" ? "normal" : "draft"');
+    expect(pdfPreparationController).toContain('previewContentMode: "normal"');
+    expect(previewWindowController).toContain('deps.draftPreview.mode === "draft" ? "normal" : "draft"');
     expect(styles).toMatch(/\.preview-content-mode-toggle\s*\{[^}]*width:\s*108px;[^}]*min-width:\s*108px;/s);
     expect(styles).toMatch(
       /\.preview-content-mode-thumb\s*\{[^}]*background:\s*var\(--ui-text\);/
@@ -64,8 +69,8 @@ describe("Draft Preview", () => {
   });
 
   test("commits the requested mode and image manifest only after PDF presentation", () => {
-    const presentation = controller.indexOf("await this.loadPdfPath(");
-    const modeCommit = controller.indexOf("await this.draftPreviewController.presentGeneration({", presentation);
+    const presentation = pdfRenderController.indexOf("await this.loadPdfPath(");
+    const modeCommit = pdfRenderController.indexOf("await this.deps.draftPreview.presentGeneration({", presentation);
     expect(presentation).toBeGreaterThan(-1);
     expect(modeCommit).toBeGreaterThan(presentation);
     expect(draftController).toContain("this.presentedModeValue = input.mode");
@@ -78,7 +83,7 @@ describe("Draft Preview", () => {
     expect(previewFrame).toContain("URL.revokeObjectURL");
     expect(previewFrame).toContain('name: "preview.draft-hover"');
     expect(previewFrame).toContain("this.onPreviewClick({ draftImageId: annotationTarget.id })");
-    expect(controller).toContain("await this.navigateToDraftPreviewImage(point.draftImageId)");
+    expect(sourceNavigationController).toContain("await this.navigateToDraftPreviewImage(point.draftImageId)");
     expect(previewFrame).not.toContain('if (this.annotationTargets.get(annotationLink)?.kind === "draft-image")');
     expect(plan).toContain("including its fixed-size path label");
   });
@@ -115,50 +120,28 @@ describe("Draft Preview", () => {
   });
 
   test("keeps Draft hover thumbnails available in the undocked preview", () => {
-    const previewBootstrapStart = controller.indexOf("private async bootstrapPreviewWindow");
-    const previewBootstrapEnd = controller.indexOf(
-      "private updateWorkspaceViewportVisibility",
-      previewBootstrapStart
-    );
-    const previewBootstrap = controller.slice(previewBootstrapStart, previewBootstrapEnd);
-
-    expect(previewBootstrap).toContain(
-      "this.workspaceRootPath = update.draftAssetRootPath ?? null"
-    );
-    expect(previewBootstrap).toContain("this.draftPreviewController.installPresentedState({");
-    expect(previewBootstrap).toContain("generation: update.draftThumbnailGeneration ?? 0");
-    expect(previewBootstrap).toContain("assets: update.draftAssets ?? []");
+    expect(previewWindowController).toContain("deps.setWorkspaceRootPath(update.draftAssetRootPath ?? null)");
+    expect(previewWindowController).toContain("deps.draftPreview.installPresentedState({");
+    expect(previewWindowController).toContain("generation: update.draftThumbnailGeneration ?? 0");
+    expect(previewWindowController).toContain("assets: update.draftAssets ?? []");
     expect(draftController).toContain("this.assetsValue = new Map((input.assets ?? [])");
   });
 
   test("keeps the undocked Normal/Draft control themed and interactive", () => {
-    const previewBootstrapStart = controller.indexOf("private async bootstrapPreviewWindow");
-    const previewBootstrapEnd = controller.indexOf(
-      "private updateWorkspaceViewportVisibility",
-      previewBootstrapStart
-    );
-    const previewBootstrap = controller.slice(previewBootstrapStart, previewBootstrapEnd);
-
-    expect(previewBootstrap).toContain('"preview-content-mode-request"');
-    expect(previewBootstrap).toContain("this.draftPreviewController.updateControl(true)");
+    expect(previewWindowController).toContain('"preview-content-mode-request"');
+    expect(previewWindowController).toContain("deps.draftPreview.updateControl(true)");
     expect(draftController).toContain("this.updateControl(false)");
-    expect(previewBootstrap).not.toContain("contentModeToggle.disabled = true");
-    expect(appEventBindings).toContain(
-      'listenEvent<PreviewContentMode>("preview-content-mode-request"'
-    );
+    expect(previewWindowController).not.toContain("contentModeToggle.disabled = true");
+    expect(appEventBindings).toContain('listenEvent<PreviewContentMode>("preview-content-mode-request"');
   });
 
   test("initializes preview options inside the undocked window", () => {
-    expect(controller).toContain(
-      'this.initializeUndockedPreviewOptions(action => emit("preview-window-action", action))'
-    );
-    expect(controller).toContain('data-preview-action="zoom-fit"');
-    expect(controller).toContain('data-preview-action="export-pdf"');
-    expect(controller).toContain('data-preview-action="open-external"');
-    expect(controller).toContain('data-preview-action="dock"');
-    expect(appEventBindings).toContain(
-      'listenEvent<"export-pdf" | "open-external">("preview-window-action"'
-    );
+    expect(previewWindowController).toContain('this.initializeOptions(action => emit("preview-window-action", action))');
+    expect(previewWindowController).toContain('data-preview-action="zoom-fit"');
+    expect(previewWindowController).toContain('data-preview-action="export-pdf"');
+    expect(previewWindowController).toContain('data-preview-action="open-external"');
+    expect(previewWindowController).toContain('data-preview-action="dock"');
+    expect(appEventBindings).toContain('listenEvent<"export-pdf" | "open-external">("preview-window-action"');
   });
 
   test("starts one fixed native thumbnail queue after Draft presentation", () => {
@@ -179,8 +162,8 @@ describe("Draft Preview", () => {
 
     expect(mirror).toContain("collect_reachable_typst_files");
     expect(mirror).toContain("draft_reachable_files");
-    expect(controller).toContain("result.draftReachableFiles");
-    expect(controller).toContain("draftReachableFileKeys.has");
+    expect(pdfPreparationController).toContain("result.draftReachableFiles");
+    expect(pdfPreparationController).toContain("draftReachableFileKeys.has");
     expect(draftController).toContain("documentRootPath: this.thumbnailDocumentRootPath");
     expect(thumbnails).toContain("thumbnail_document_namespace");
     expect(thumbnails).toContain("thumbnail_root.join(cache_namespace)");
@@ -195,25 +178,25 @@ describe("Draft Preview", () => {
 
     expect(native).toContain('"draft-thumbnail-queue-metric"');
     expect(native).not.toContain('"draft-thumbnail-metric"');
-    expect(controller).toContain(
+    expect(editorInitializationController).toContain(
       'listen<DraftThumbnailQueueMetric>("draft-thumbnail-queue-metric"'
     );
-    expect(controller).toContain("Draft thumbnail cache ${metric.status}");
-    expect(controller).not.toContain(
+    expect(editorInitializationController).toContain("Draft thumbnail cache ${metric.status}");
+    expect(editorInitializationController).not.toContain(
       'listen<DraftThumbnailMetric>("draft-thumbnail-metric"'
     );
   });
 
   test("reports persisted Draft preparation reuse separately from same-generation overlays", () => {
-    expect(controller).toContain("projectManifestCacheHits");
-    expect(controller).toContain("overlayManifestCacheHits");
-    expect(controller).toContain("overlayPreparations");
-    expect(controller).toContain("result.draftCacheHits");
-    expect(controller).toContain("generated.draftCacheHit");
-    expect(controller).toContain("backendTypMs");
-    expect(controller).toContain("backendAssetMs");
-    expect(controller).toContain("projectPreparationMs");
-    expect(controller).toContain("overlayPreparationMs");
+    expect(pdfRenderController).toContain("projectManifestCacheHits");
+    expect(pdfRenderController).toContain("overlayManifestCacheHits");
+    expect(pdfRenderController).toContain("overlayPreparations");
+    expect(pdfPreparationController).toContain("result.draftCacheHits");
+    expect(pdfPreparationController).toContain("generated.draftCacheHit");
+    expect(pdfRenderController).toContain("backendTypMs");
+    expect(pdfRenderController).toContain("backendAssetMs");
+    expect(pdfRenderController).toContain("projectPreparationMs");
+    expect(pdfRenderController).toContain("overlayPreparationMs");
   });
 
   test("keeps cached hover previews compact in storage and on screen", () => {

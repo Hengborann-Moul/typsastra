@@ -11,6 +11,7 @@ import {
   selectMatches,
   setSearchQuery
 } from "@codemirror/search";
+import { createAppIcon, type AppIconName } from "../ui/icons";
 import { runScopeHandlers, type EditorView, type Panel, type ViewUpdate } from "@codemirror/view";
 
 const GENERIC_DIACRITICS = /[\u0300-\u036f\u1ab0-\u1aff\u1dc0-\u1dff\u20d0-\u20ff\ufe20-\ufe2f]/gu;
@@ -284,19 +285,49 @@ function input(attributes: Record<string, string | boolean | EventListener>): HT
   return element;
 }
 
-function button(name: string, label: string, action: () => void): HTMLButtonElement {
+function editorCaretInput(field: HTMLInputElement): HTMLSpanElement {
+  const shell = document.createElement("span");
+  shell.className = "cm-search-textfield-shell";
+  const measure = document.createElement("span");
+  measure.className = "cm-search-caret-measure";
+  const caret = document.createElement("span");
+  caret.className = "cm-search-editor-caret";
+  shell.append(field, measure, caret);
+
+  const updateCaret = () => {
+    const selection = field.selectionStart ?? 0;
+    const selectionEnd = field.selectionEnd ?? selection;
+    caret.style.visibility = selection === selectionEnd ? "visible" : "hidden";
+    measure.textContent = field.value.slice(0, selection) || "\u200b";
+    const measuredWidth = selection === 0 ? 0 : measure.getBoundingClientRect().width;
+    caret.style.left = `${6 + measuredWidth - field.scrollLeft}px`;
+  };
+  for (const event of ["focus", "input", "click", "keyup", "select", "scroll"]) {
+    field.addEventListener(event, updateCaret);
+  }
+  field.addEventListener("focus", () => requestAnimationFrame(updateCaret));
+  updateCaret();
+  return shell;
+}
+
+function iconButton(name: string, label: string, icon: AppIconName, action: () => void): HTMLButtonElement {
   const element = document.createElement("button");
   element.type = "button";
   element.name = name;
-  element.className = "cm-button";
-  element.textContent = label;
+  element.className = "cm-button cm-search-icon-button";
+  element.title = label;
+  element.setAttribute("aria-label", label);
+  element.append(createAppIcon(icon, { size: 16 }));
   element.addEventListener("click", action);
   return element;
 }
 
-function checkboxLabel(field: HTMLInputElement, label: string): HTMLLabelElement {
+function iconToggle(field: HTMLInputElement, label: string, icon: AppIconName): HTMLLabelElement {
   const element = document.createElement("label");
-  element.append(field, document.createTextNode(label));
+  element.className = "cm-search-icon-toggle";
+  element.title = label;
+  field.setAttribute("aria-label", label);
+  element.append(field, createAppIcon(icon, { size: 16 }));
   return element;
 }
 
@@ -370,12 +401,14 @@ export class TypsastraSearchPanel implements Panel {
     const searchRow = document.createElement("div");
     searchRow.className = "cm-search-row";
     searchRow.append(
-      this.searchField,
-      button("next", "next", () => findNext(view)),
-      button("prev", "previous", () => findPrevious(view)),
-      button("select", "all", () => selectMatches(view)),
-      checkboxLabel(this.caseField, "match case"),
-      checkboxLabel(this.regexpField, "regexp")
+      editorCaretInput(this.searchField),
+      iconButton("next", "Next match", "arrowDown", () => findNext(view)),
+      iconButton("prev", "Previous match", "arrowUp", () => findPrevious(view)),
+      iconButton("select", "Select all matches", "listChecks", () => selectMatches(view)),
+      iconToggle(this.caseField, "Match case", "caseSensitive"),
+      iconToggle(this.regexpField, "Use regular expression", "regex"),
+      iconToggle(this.wordField, "Match whole word", "wholeWord"),
+      iconToggle(this.diacriticsField, "Match diacritics", "languages")
     );
     
     const replaceRow = document.createElement("div");
@@ -383,35 +416,22 @@ export class TypsastraSearchPanel implements Panel {
     
     if (!view.state.readOnly) {
       replaceRow.append(
-        this.replaceField,
-        button("replace", "replace", () => replaceNext(view)),
-        button("replaceAll", "replace all", () => replaceAll(view))
+        editorCaretInput(this.replaceField),
+        iconButton("replace", "Replace next match", "replace", () => replaceNext(view)),
+        iconButton("replaceAll", "Replace all matches", "replaceAll", () => replaceAll(view))
       );
     }
-    
-    const optionsRow = document.createElement("div");
-    optionsRow.className = "cm-search-options";
-    optionsRow.append(
-      checkboxLabel(this.wordField, "by word"),
-      checkboxLabel(this.diacriticsField, "match diacritics")
-    );
 
     Object.assign(searchRow.style, {
       display: "flex",
       alignItems: "center",
-      gap: "12px"
+      gap: "4px"
     });
     
     Object.assign(replaceRow.style, {
       display: "flex",
       alignItems: "center",
-      gap: "12px"
-    });
-    
-    Object.assign(optionsRow.style, {
-      display: "flex",
-      alignItems: "center",
-      gap: "20px"
+      gap: "4px"
     });
     
     this.searchField.style.width = "280px";
@@ -419,10 +439,8 @@ export class TypsastraSearchPanel implements Panel {
     
     this.dom.append(searchRow);
     if (!view.state.readOnly) this.dom.append(replaceRow);
-    this.dom.append(optionsRow);
     
-    const close = button("close", "\u00d7", () => closeSearchPanel(view));
-    close.setAttribute("aria-label", "close");
+    const close = iconButton("close", "Close search", "x", () => closeSearchPanel(view));
     this.dom.append(close);
   }
 

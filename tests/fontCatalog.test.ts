@@ -9,11 +9,13 @@ import {
 
 describe("editor font catalog", () => {
   test("applies a tab's Unicode font policy before installing its text", async () => {
-    const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
-    const activation = source.indexOf("private async activateEditorTab");
-    const fontUpdate = source.indexOf("this.editorFontManager.prepareDocument(tab.content);", activation);
-    const documentDispatch = source.indexOf("this.editorInstance.dispatch({", fontUpdate);
-    expect(fontUpdate).toBeGreaterThan(activation);
+    const source = await Bun.file(
+      new URL("../src/editor/editorTabPresentationController.ts", import.meta.url),
+    ).text();
+    const presentation = source.indexOf("presentText(tab: EditorTab, path: string)");
+    const fontUpdate = source.indexOf("this.deps.fontManager().prepareDocument(tab.content)", presentation);
+    const documentDispatch = source.indexOf("editor.dispatch({", fontUpdate);
+    expect(fontUpdate).toBeGreaterThan(presentation);
     expect(documentDispatch).toBeGreaterThan(fontUpdate);
     expect(source.slice(documentDispatch, source.indexOf("});", documentDispatch) + 3))
       .toContain("...(editorFontEffect ? [editorFontEffect] : [])");
