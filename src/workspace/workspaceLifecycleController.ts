@@ -52,8 +52,6 @@ export interface WorkspaceLifecycleDependencies {
   previewImported: boolean;
   previewStandalone: boolean;
   previewDisabled: boolean;
-  tinymistPreviewRecoveryAttempts: number;
-  tinymistPreviewRecovery: Promise<boolean> | null;
   externalPreviewRefreshPending: boolean;
   lastPreviewRenderMode: PreviewRenderMode | undefined;
   isLoadingFile: boolean;
@@ -276,8 +274,21 @@ export class WorkspaceLifecycleController {
       return;
     }
     if (app.workspaceRootPath && app.workspaceRootPath !== selected) {
-      const closed = await this.close();
-      if (!closed) return;
+      const previousWorkspace = app.workspaceRootPath;
+      try {
+        const closed = await this.close();
+        if (!closed) return;
+      } catch (error) {
+        // Closing releases workspace ownership before resetting the remaining
+        // presentation state. A late UI-reset failure must not consume the
+        // user's first attempt to open the replacement project. If ownership
+        // was not released, however, continuing could mix two workspaces.
+        if (app.workspaceRootPath !== null) throw error;
+        console.warn(
+          `Project teardown for ${previousWorkspace} completed with a non-critical cleanup error; continuing with ${selected}.`,
+          error,
+        );
+      }
     }
     app.workspaceLoading = true;
     app.updateWorkspaceViewportVisibility();
@@ -532,8 +543,6 @@ export class WorkspaceLifecycleController {
     if (app.previewScrollSaveTimer !== null) window.clearTimeout(app.previewScrollSaveTimer);
     app.previewScrollSaveTimer = null;
     app.previewSyncController.cancelManual();
-    app.tinymistPreviewRecoveryAttempts = 0;
-    app.tinymistPreviewRecovery = null;
 
     app.workspaceRootPath = null;
     app.sidebarController.reset();

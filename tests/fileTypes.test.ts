@@ -31,10 +31,12 @@ describe("file types", () => {
   });
 
   test("probes unknown extensions before falling back to external opening", async () => {
-    const controller = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
-    expect(controller).toContain('invoke<boolean>("is_probably_plain_text_file", { path })');
-    expect(controller).toContain("this.detectedPlainTextPaths.add(key)");
-    expect(controller).toContain("return [];");
+    const contentController = await Bun.file(
+      new URL("../src/editor/editorFileContentController.ts", import.meta.url),
+    ).text();
+    expect(contentController).toContain('invoke<boolean>("is_probably_plain_text_file", { path })');
+    expect(contentController).toContain("this.detectedPlainTextPaths.add(key)");
+    expect(contentController).toContain("return isPlainText;");
   });
 
   test("extracts only a file-name extension", () => {

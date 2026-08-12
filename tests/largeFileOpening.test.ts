@@ -100,11 +100,14 @@ describe("large file opening notice", () => {
 
   test("routes large Typst preview approval through the editor guard", async () => {
     const controller = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
-    const noticeStart = controller.indexOf("private async largeFileNoticeForTab");
-    const noticeEnd = controller.indexOf("private activeCompilerPreviewMatchesRoot", noticeStart);
-    const noticeSource = controller.slice(noticeStart, noticeEnd);
+    const previewGuard = await Bun.file(
+      new URL("../src/workspace/largePreviewGuardController.ts", import.meta.url),
+    ).text();
+    const noticeStart = previewGuard.indexOf("async noticeForTab(tab: EditorTab)");
+    const noticeEnd = previewGuard.indexOf("async previewTargetForUnloadedTab", noticeStart);
+    const noticeSource = previewGuard.slice(noticeStart, noticeEnd);
     expect(noticeSource).toContain("this.previewTargetForUnloadedTab(tab)");
-    expect(noticeSource).toContain("this.largePreviewNoticeForRoot(target.rootPath)");
+    expect(noticeSource).toContain("this.noticeForRoot(target.rootPath)");
 
     const guard = await Bun.file(
       new URL("../src/editor/editorFileGuardController.ts", import.meta.url),

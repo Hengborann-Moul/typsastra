@@ -182,8 +182,14 @@ describe("compiled PDF transport", () => {
     expect(renderMethod).toContain('this.deps.setLspStatus({ kind: "preview-ready", message: "Preview ready" });');
     expect(renderMethod).toContain('this.deps.logConsole.clearLogsBySource(["compiler", "package compatibility"]);');
     expect(renderMethod).toContain('this.deps.setLspStatus({ kind: "preview-error", message: "PDF compile failed" });');
-    expect(diagnosticsMethod).not.toContain('this.previewFrame.setError("Preview Render Failed"');
-    expect(diagnosticsMethod).not.toContain("this.previewFrame.clearErrorOverlay()");
+    expect(diagnosticsMethod).toContain("this.diagnosticsController.handleLspDiagnostics");
+    const recoveryStart = source.indexOf("private recoverPreviewAfterAcceptedDiagnostics");
+    const recoveryEnd = source.indexOf("\n  private ", recoveryStart + 10);
+    const recoveryMethod = source.slice(recoveryStart, recoveryEnd);
+    expect(recoveryMethod).toContain('this.previewFrame.setError(');
+    expect(recoveryMethod).toContain('"Preview Render Failed"');
+    expect(recoveryMethod).toContain("this.previewFrame.clearErrorOverlay()");
+    expect(recoveryMethod).toContain("this.lastFailedPreviewContents === null");
     expect(diagnosticsMethod).toContain("this.diagnosticsController.handleLspDiagnostics");
     expect(source).toContain("private recoverPreviewAfterAcceptedDiagnostics");
     expect(source).toContain("this.lastFailedPreviewContents === null");

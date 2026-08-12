@@ -28,11 +28,14 @@ describe("Markdown preview contracts", () => {
     const controller = await Bun.file(
       new URL("../src/appController.ts", import.meta.url),
     ).text();
+    const presentation = await Bun.file(
+      new URL("../src/editor/editorTabPresentationController.ts", import.meta.url),
+    ).text();
 
     expect(controller).toContain("relativeFilePath(this.workspaceRootPath, absolute) === null");
     expect(controller).toContain("if (!isTypstDocumentPath(path)) return []");
     expect(controller).toContain("this.markdownPreviewFrame.schedule(this.activeFilePath, rawText)");
     expect(controller).toContain("this.activateSpellcheckDocument(isMarkdownDocument ? null : path)");
-    expect(controller).toContain("Leave the persistent PDF");
+    expect(presentation).toContain("Leave the persistent PDF");
   });
 });

@@ -75,31 +75,36 @@ describe("per-tab editor history", () => {
   });
 
   test("the workspace captures and restores history at tab boundaries", async () => {
-    const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
-    const persist = source.indexOf("private persistActiveTabState");
-    const capture = source.indexOf(
-      "tab.undoHistory = captureEditorUndoHistory(this.editorInstance.state)",
-      persist,
-    );
-    const activation = source.indexOf("private async activateEditorTab");
-    const restore = source.indexOf("this.editorInstance.setState(createTabEditorState({", activation);
-    const restoredHistory = source.indexOf("undoHistory: tab.undoHistory", restore);
+    const stateSource = await Bun.file(
+      new URL("../src/editor/editorTabStateController.ts", import.meta.url),
+    ).text();
+    const presentationSource = await Bun.file(
+      new URL("../src/editor/editorTabPresentationController.ts", import.meta.url),
+    ).text();
+    const capture = stateSource.indexOf("tab.undoHistory = captureEditorUndoHistory(editor.state)");
+    const restore = presentationSource.indexOf("editor.setState(createTabEditorState({");
+    const restoredHistory = presentationSource.indexOf("undoHistory: tab.undoHistory", restore);
 
-    expect(capture).toBeGreaterThan(persist);
-    expect(restore).toBeGreaterThan(activation);
+    expect(capture).toBeGreaterThan(-1);
+    expect(restore).toBeGreaterThan(-1);
     expect(restoredHistory).toBeGreaterThan(restore);
-    expect(source).not.toContain("Transaction.addToHistory.of(false)");
+    expect(stateSource).not.toContain("Transaction.addToHistory.of(false)");
+    expect(presentationSource).not.toContain("Transaction.addToHistory.of(false)");
   });
 
   test("tab switches restore a document-aware scroll snapshot before asynchronous typography work", async () => {
     const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
-    const persist = source.indexOf("private persistActiveTabState");
-    const capture = source.indexOf("tab.scrollSnapshot = this.editorInstance.scrollSnapshot()", persist);
+    const stateSource = await Bun.file(
+      new URL("../src/editor/editorTabStateController.ts", import.meta.url),
+    ).text();
+    const capture = stateSource.indexOf("tab.scrollSnapshot = editor.scrollSnapshot()");
+    const restoreOwned = stateSource.indexOf("if (tab.scrollSnapshot)");
     const activation = source.indexOf("private async activateEditorTab");
     const restore = source.indexOf("this.restoreEditorTabViewport(tab, path)", activation);
     const typography = source.indexOf("await this.typographyController.effective(path, tab.content)", activation);
 
-    expect(capture).toBeGreaterThan(persist);
+    expect(capture).toBeGreaterThan(-1);
+    expect(restoreOwned).toBeGreaterThan(capture);
     expect(restore).toBeGreaterThan(activation);
     expect(restore).toBeLessThan(typography);
   });

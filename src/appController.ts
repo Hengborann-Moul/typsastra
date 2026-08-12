@@ -1,5 +1,5 @@
 import { listen } from "@tauri-apps/api/event";
-import { confirm, message } from "@tauri-apps/plugin-dialog";
+import { message } from "@tauri-apps/plugin-dialog";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -14,21 +14,18 @@ import { editorMatchQuery, getEditorExtensions, themeCompartment, getThemeExtens
 import { typstLanguage } from "./editor/typstLanguage";
 import { createTypstAutocomplete } from "./editor/autocomplete";
 import { EditorController } from "./editor/editorController";
-import {
-  mergeDiscoveredSurroundWithOptions,
-  SURROUND_WITH_OPTIONS,
-  type SurroundWithCompletionItem,
-  type SurroundWithOption,
-} from "./editor/surroundWith";
+import { SurroundWithDiscoveryController } from "./editor/surroundWithDiscoveryController";
 import { isForwardSyncContentPosition } from "./editor/forwardSyncEligibility";
 import type { EditorFoldRange } from "./editor/folding";
 import { setEditorDiagnosticsEffect } from "./editor/diagnostics";
 import { WorkspaceExplorer } from "./components/explorer";
 import { SidebarController } from "./sidebar/sidebarController";
 import { TypographyController } from "./typography/typographyController";
+import { PinnedMainTypographyController } from "./typography/pinnedMainTypographyController";
 import { ImageToolsController, type ProjectImageReference } from "./components/imageTools";
 import { TinymistLspClient } from "./compiler/lsp";
 import { DocumentSessionController } from "./session/documentSessionController";
+import { LspDocumentController } from "./session/lspDocumentController";
 import { type EditorTextEdit, type LspDiagnostic, type LspInverseSyncResult, type LspLogEntry, type LspSourcePosition, type LspStatus } from "./compiler/lsp";
 import type { AppSettings, DeveloperLogCategory, PreviewRenderMode, ThemeName } from "./settings";
 import { SettingsController } from "./settingsController";
@@ -42,6 +39,8 @@ import { PreviewSyncController } from "./preview/previewSyncController";
 import { PreviewSourceNavigationController } from "./preview/previewSourceNavigationController";
 import { PreviewUiController } from "./preview/previewUiController";
 import { PreviewContentController } from "./preview/previewContentController";
+import { PreviewSessionController } from "./preview/previewSessionController";
+import { TinymistPreviewRecoveryController } from "./preview/tinymistPreviewRecoveryController";
 import { SourceMapSessionController } from "./preview/sourceMapSessionController";
 import { ImagePreviewController } from "./preview/imagePreviewController";
 import {
@@ -50,7 +49,7 @@ import {
 } from "./preview/draftPreviewController";
 import { PdfPreviewPreparationController } from "./preview/pdfPreviewPreparationController";
 import { PdfPreviewRenderController, type PdfUpdatePayload } from "./preview/pdfPreviewRenderController";
-import { activeFileCanRenderPreview, allowsStandalonePreview, documentScriptsForPreviewContext, participatesInPreviewCompilation, previewLspMainPath, previewRefreshStyle, previewSessionIdentity, researchDocumentIdentity, type PreviewTarget, type PreviewRefreshStyle } from "./preview/previewPolicy";
+import { activeFileCanRenderPreview, allowsStandalonePreview, participatesInPreviewCompilation, previewLspMainPath, previewRefreshStyle, type PreviewTarget, type PreviewRefreshStyle } from "./preview/previewPolicy";
 import { LogConsoleController, type LogConsoleEntryInput } from "./diagnostics/logConsoleController";
 import { DiagnosticsController } from "./diagnostics/diagnosticsController";
 import { PreviewFailureController } from "./diagnostics/previewFailureController";
@@ -58,6 +57,10 @@ import { EditorFontManager } from "./editor/fontManager";
 import { TabStripController } from "./editor/tabStripController";
 import { EditorSessionController } from "./editor/editorSessionController";
 import { EditorTabViewController } from "./editor/editorTabViewController";
+import { EditorTabStateController } from "./editor/editorTabStateController";
+import { EditorTabPresentationController } from "./editor/editorTabPresentationController";
+import { EditorTabLifecycleController, type EditorTabLoadOptions } from "./editor/editorTabLifecycleController";
+import { EditorPreviewActivationController } from "./editor/editorPreviewActivationController";
 import { AppDialogController } from "./ui/appDialog";
 import { LayoutController } from "./layout/layoutController";
 import type { WorkspaceMetadata } from "./workspace/workspaceStateStore";
@@ -72,11 +75,9 @@ import {
 } from "./workspace/workspaceLifecycleController";
 import { ProjectImportController } from "./workspace/projectImportController";
 import { ExternalWorkspaceController } from "./workspace/externalWorkspaceController";
-import {
-  largeFileOpeningNotice,
-  largeMainPreviewOpeningNotice,
-  type LargeFileOpeningNotice,
-} from "./workspace/largeFileOpening";
+import { ExternalFileReloadController } from "./workspace/externalFileReloadController";
+import { LargePreviewGuardController } from "./workspace/largePreviewGuardController";
+import type { LargeFileOpeningNotice } from "./workspace/largeFileOpening";
 import { PerformanceController } from "./performance/performanceController";
 import { EditorToolbarController } from "./editor/toolbarController";
 import { ContextMenuController } from "./components/contextMenuController";
@@ -87,7 +88,6 @@ import { bindAppEvents } from "./ui/appEventBindings";
 import { ReleaseSummaryController } from "./ui/releaseSummaryController";
 import { ProjectExportController } from "./export/projectExportController";
 import {
-  parseTypographyBlock,
   parseDocumentScripts,
   documentScriptsEdit,
   typographyEdit,
@@ -105,20 +105,18 @@ import { WebviewStorageController } from "./webviewStorageController";
 import { SystemResumeMonitor } from "./platform/systemResume";
 import { WorkspaceResumeController } from "./platform/workspaceResumeController";
 import { setImageOptimizationWarningsEffect } from "./editor/imageWarnings";
-import {
-  captureEditorUndoHistory,
-  createTabEditorState,
-} from "./editor/tabHistory";
+import { createTabEditorState } from "./editor/tabHistory";
 import type { EditorTab, PreviewSessionState } from "./editor/editorTab";
 import { DocumentPersistenceController, type SaveIntent } from "./editor/documentPersistenceController";
+import { DocumentLanguageController } from "./editor/documentLanguageController";
 import { EditorFileGuardController } from "./editor/editorFileGuardController";
+import { EditorFileContentController } from "./editor/editorFileContentController";
 
 import {
   ensureTypographyTemplateApplication,
   findLocalTemplateApplication,
   findTemplateFunctionName,
   newTypographyTemplate,
-  templatePreviewSource,
   templateTypographyEdit
 } from "./editor/templateTypography";
 
@@ -140,16 +138,8 @@ type ActivateEditorTabOptions = {
   largeFileConfirmed?: boolean;
 };
 
-type LoadFileOptions = {
-  temporary?: boolean;
-  preservePreviewSession?: PreviewSessionState;
-  skipPreviewActivation?: boolean;
-  focusEditor?: boolean;
-};
 
-function normalizeEditorText(text: string): string {
-  return text.replace(/\r\n?/g, "\n");
-}
+
 
 export class TypsastraWorkspaceController {
   /**
@@ -158,6 +148,8 @@ export class TypsastraWorkspaceController {
    * than receiving the root as `object` and recovering it through `any`.
    */
   private createWorkspaceLifecycleDependencies(): WorkspaceLifecycleDependencies {
+    // This property is consumed dynamically by the temporary lifecycle proxy.
+    void this.inspectedPreviewRoots;
     const root = this;
     return new Proxy({} as WorkspaceLifecycleDependencies, {
       get(_target, property) {
@@ -173,42 +165,185 @@ export class TypsastraWorkspaceController {
   private readonly startupStart = performance.now();
   private activeMode: EditorMode = "CODE";
   private readonly editorSessionController = new EditorSessionController();
+  private readonly editorTabStateController = new EditorTabStateController({
+    editor: () => this.editorInstance,
+    editorController: () => this.editorController,
+    activeTab: () => this.getActiveTab(),
+    activeFilePath: () => this.activeFilePath,
+    workspaceLoading: () => this.workspaceLoading,
+    activeMode: () => this.activeMode,
+    currentVersion: () => this.currentVersion,
+    latestDocumentVersion: () => this.latestDocumentVersion,
+    isInternallySupportedPath: path => this.isInternallySupportedPath(path),
+    flushEditorContentMutation: () => this.flushEditorContentMutation(),
+    wysiwymMarkup: () => this.mapWysiwymToMarkup(),
+    renderTabs: () => this.renderEditorTabs(),
+    saveWorkspaceState: () => this.saveWorkspaceState(),
+  });
+  private readonly editorFileContentController = new EditorFileContentController({
+    normalizeFoldRanges: (value, docLength) => this.normalizeFoldRanges(value, docLength),
+  });
+  private readonly previewSessionController = new PreviewSessionController({
+    workspaceRootPath: () => this.workspaceRootPath,
+    previewRenderMode: () => this.effectivePreviewRenderMode,
+    readWorkspaceText: path => this.workspaceText(path),
+    logWarning: message => this.appendLspLog({ kind: "warning", source: "preview", message }),
+  });
+  private readonly lspDocumentController = new LspDocumentController({
+    client: () => this.documentSessionController.hasClient ? this.lspClient : undefined,
+    ready: () => this.lspReady,
+    activeFilePath: () => this.activeFilePath,
+    activeTab: () => this.getActiveTab(),
+    resolveDocument: (path, text) => this.getLspUriAndContent(path, text),
+    clearDiagnostics: () => this.clearDiagnostics(),
+    log: (kind, source, message) => this.appendDeveloperLog({ kind, source, message }),
+  });
+  private readonly documentLanguageController = new DocumentLanguageController({
+    languageService: () => this.documentLanguageService,
+    spellcheck: () => this.spellcheckController,
+    outline: () => this.documentOutlineController,
+    activeFilePath: () => this.activeFilePath,
+    pinnedMainFilePath: () => this.pinnedMainFilePath,
+    previewImported: () => this.previewImported,
+    isPinnedMainFile: path => this.isPinnedMainFile(path),
+    editorText: () => this.editorInstance.state.doc.toString(),
+    workspaceRootPath: () => this.workspaceRootPath,
+    activeTab: () => this.getActiveTab(),
+    editorCursorPosition: () => this.editorInstance.state.selection.main.head,
+  });
+  private readonly editorTabPresentationController = new EditorTabPresentationController({
+    editor: () => this.editorInstance,
+    editorExtensions: () => this.editorExtensions,
+    currentSettingsEffects: () => this.currentEditorSettingsEffects(),
+    editorLanguageForPath: path => this.editorLanguageForPath(path),
+    editorCompletionForPath: path => this.editorCompletionForPath(path),
+    fontManager: () => this.editorFontManager,
+    toolbar: () => this.editorToolbarController,
+    imagePreview: () => this.imagePreviewController,
+    previewFrame: () => this.previewFrame,
+    activeMode: () => this.activeMode,
+    updatePreviewActionsToolbar: path => this.updatePreviewActionsToolbar(path),
+    renderNonTextPlaceholder: (path, unsupported) => this.renderNonTextEditorPlaceholder(path, unsupported),
+    renderInteractiveImageViewer: source => this.renderInteractiveImageViewer(source),
+    loadPdfPath: path => { void this.loadPdfPath(path, path); },
+    applyFoldRanges: ranges => this.applyFoldRanges(ranges),
+    clearPreviewPane: () => { this.previewPane.innerHTML = ""; },
+    clearOutline: () => this.documentOutlineController.clear(),
+    mapMarkupToWysiwym: contents => { this.mapMarkupToWysiwym(contents); },
+  });
+  private readonly editorTabLifecycleController = new EditorTabLifecycleController({
+    session: this.editorSessionController,
+    presentation: this.editorTabPresentationController,
+    previewSession: this.previewSessionController,
+    lspDocuments: this.lspDocumentController,
+    typography: () => this.typographyController,
+    pinnedMainFilePath: () => this.pinnedMainFilePath,
+    persistActiveTabState: () => this.persistActiveTabState(),
+    promoteToPermanent: tab => this.promoteToPermanent(tab),
+    activateTab: (path, persistCurrent, options) => this.activateEditorTab(path, persistCurrent, options),
+    classifyUnknownTextPath: path => this.classifyUnknownTextPath(path),
+    renderTabs: () => this.renderEditorTabs(),
+    setExplorerActiveFile: path => this.explorer.setActiveFile(path),
+    activateSpellcheckDocument: path => this.activateSpellcheckDocument(path),
+    clearDiagnostics: () => this.clearDiagnostics(),
+    clearPendingLspSync: () => this.clearPendingLspSync(),
+    clearForwardSync: () => this.previewSyncController.clearForward(),
+    updateWorkspaceViewportVisibility: () => this.updateWorkspaceViewportVisibility(),
+    saveWorkspaceState: () => { void this.saveWorkspaceState(); },
+  });
+  private readonly editorPreviewActivationController = new EditorPreviewActivationController({
+    previewSession: this.previewSessionController,
+    lspDocuments: this.lspDocumentController,
+    previewFrame: () => this.previewFrame,
+    workspaceRootPath: () => this.workspaceRootPath,
+    pinnedMainFilePath: () => this.pinnedMainFilePath,
+    lspAvailable: () => this.lspReady && this.documentSessionController.hasClient,
+    currentVersion: () => this.currentVersion,
+    resolveLspDocument: (path, text) => this.getLspUriAndContent(path, text),
+    ensureLargePreviewApproved: rootPath => this.ensureLargePreviewApproved(rootPath),
+    invalidatePreviewWork: reason => this.invalidatePreviewWork(reason),
+    noMainFileMessage: () => this.noMainFileMessage(),
+    disabledPreviewMessage: () => this.disabledPreviewMessage(),
+    renderPdfPreview: contents => { void this.renderPdfPreview(contents); },
+  });
+  private readonly largePreviewGuardController = new LargePreviewGuardController({
+    previewSession: this.previewSessionController,
+    previewFrame: () => this.previewFrame,
+    workspaceRootPath: () => this.workspaceRootPath,
+    pinnedMainFilePath: () => this.pinnedMainFilePath,
+    pinnedLspMainPath: () => this.pinnedLspMainPath,
+    lspReady: () => this.lspReady,
+    activeTab: () => this.getActiveTab(),
+    isInternallySupportedPath: path => this.isInternallySupportedPath(path),
+    showLargeFileConfirmation: (tab, notice) => this.showLargeFileConfirmation(tab, notice),
+    setWorkspaceServicesDeferred: deferred => { this.workspaceServicesDeferredForLargeFile = deferred; },
+  });
+  private readonly externalFileReloadController = new ExternalFileReloadController({
+    presentation: this.editorTabPresentationController,
+    documentLanguage: this.documentLanguageController,
+    lspDocuments: this.lspDocumentController,
+    openTabs: () => this.openTabs,
+    activeFilePath: () => this.activeFilePath,
+    isInternallySupportedPath: path => this.isInternallySupportedPath(path),
+    closeTab: path => this.closeEditorTab(path, true),
+    loadPdfPath: path => { void this.loadPdfPath(path, path); },
+    renderTabs: () => this.renderEditorTabs(),
+    activeMode: () => this.activeMode,
+    mapMarkupToWysiwym: contents => { this.mapMarkupToWysiwym(contents); },
+    lspClient: () => this.documentSessionController.hasClient ? this.lspClient : undefined,
+    lspReady: () => this.lspReady,
+    resolveLspDocument: (path, contents) => this.getLspUriAndContent(path, contents),
+    pinnedMainFilePath: () => this.pinnedMainFilePath,
+    previewRenderMode: () => this.effectivePreviewRenderMode,
+    renderPdfPreview: contents => { void this.renderPdfPreview(contents); },
+    schedulePdfPreview: contents => this.schedulePdfPreview(contents),
+    setLspStatus: status => this.setLspStatus(status),
+    appendWorkspaceWarning: message => this.appendLspLog({ kind: "warning", source: "workspace", message }),
+  });
   private get activeFilePath(): string | null { return this.editorSessionController.activeFilePath; }
   private set activeFilePath(path: string | null) { this.editorSessionController.activeFilePath = path; }
   private get openTabs(): EditorTab[] { return this.editorSessionController.tabs; }
   private set openTabs(tabs: EditorTab[]) { this.editorSessionController.replaceTabs(tabs); }
-  private previewRootPath: string | null = null;
-  private previewMainPath: string | null = null;
-  private previewTaskId: string | null = null;
-  private previewSessionKey: string | null = null;
-  private previewImported = false;
-  private previewStandalone = true;
-  private previewDisabled = false;
-  private pinnedLspMainPath: string | null = null;
+  private get previewRootPath(): string | null { return this.previewSessionController.rootPath; }
+  private set previewRootPath(path: string | null) { this.previewSessionController.rootPath = path; }
+  private get previewMainPath(): string | null { return this.previewSessionController.mainPath; }
+  private set previewMainPath(path: string | null) { this.previewSessionController.mainPath = path; }
+  private get previewTaskId(): string | null { return this.previewSessionController.taskId; }
+  private set previewTaskId(taskId: string | null) { this.previewSessionController.taskId = taskId; }
+  private get previewSessionKey(): string | null { return this.previewSessionController.sessionKey; }
+  private set previewSessionKey(key: string | null) { this.previewSessionController.sessionKey = key; }
+  private get previewImported(): boolean { return this.previewSessionController.imported; }
+  private set previewImported(imported: boolean) { this.previewSessionController.imported = imported; }
+  private get previewStandalone(): boolean { return this.previewSessionController.standalone; }
+  private set previewStandalone(standalone: boolean) { this.previewSessionController.standalone = standalone; }
+  private get previewDisabled(): boolean { return this.previewSessionController.disabled; }
+  private set previewDisabled(disabled: boolean) { this.previewSessionController.disabled = disabled; }
+  private get pinnedLspMainPath(): string | null { return this.lspDocumentController.pinnedMainPath; }
+  private set pinnedLspMainPath(path: string | null) { this.lspDocumentController.pinnedMainPath = path; }
   private pinnedMainFilePath: string | null = null;
-  private mainDocumentScripts: DocumentTypography["fonts"] = [];
+  private get mainDocumentScripts(): DocumentTypography["fonts"] { return this.documentLanguageController.mainDocumentScripts; }
+  private set mainDocumentScripts(value: DocumentTypography["fonts"]) { this.documentLanguageController.mainDocumentScripts = value; }
   private workspaceRootPath: string | null = null;
   private workspaceMetadata: WorkspaceMetadata | null = null;
   private workspaceLoading = false;
   private workspaceServicesDeferredForLargeFile = false;
-  private readonly approvedLargePreviewRoots = new Set<string>();
-  private readonly inspectedPreviewRoots = new Set<string>();
-  private blockedLargePreviewRoot: string | null = null;
+  private get approvedLargePreviewRoots(): Set<string> { return this.largePreviewGuardController.approvedRoots; }
+  private get inspectedPreviewRoots(): Set<string> { return this.largePreviewGuardController.inspectedRoots; }
+  private get blockedLargePreviewRoot(): string | null { return this.largePreviewGuardController.blockedRoot; }
+  private set blockedLargePreviewRoot(rootPath: string | null) { this.largePreviewGuardController.blockedRoot = rootPath; }
   private previewScrollTop = 0;
   private previewScrollSaveTimer: number | null = null;
   private recommendedWorkspaceToolchain: { tinymistVersion: string; typstVersion: string } | null = null;
   private selectedWorkspaceToolchain: { tinymistVersion: string; typstVersion: string } | null = null;
-  private currentVersion = 1;
-  private isLoadingFile = false;
+  private get currentVersion(): number { return this.lspDocumentController.currentVersion; }
+  private set currentVersion(version: number) { this.lspDocumentController.currentVersion = version; }
+  private get isLoadingFile(): boolean { return this.editorTabPresentationController.isLoading; }
+  private set isLoadingFile(loading: boolean) { this.editorTabPresentationController.isLoading = loading; }
   private readonly lspSyncDebounceMs = 50;
   private forwardSyncDebounceMs = 120;
-  private latestDocumentVersion = 1;
+  private get latestDocumentVersion(): number { return this.lspDocumentController.latestVersion; }
+  private set latestDocumentVersion(version: number) { this.lspDocumentController.latestVersion = version; }
   private diagnosticWaitStartedAt: number | null = null;
-  private readonly detectedPlainTextPaths = new Set<string>();
-  private readonly classifiedUnknownPaths = new Set<string>();
-  private documentOutlineUpdateTimer: number | null = null;
-  private documentOutlineUpdateGeneration = 0;
-  private readonly openedDocumentUris = new Set<string>();
   private lastKhmerRenderPrepState: boolean | undefined = undefined;
   private lastPreviewRenderMode: PreviewRefreshStyle | undefined = undefined;
   private projectImportQueue: Promise<void> = Promise.resolve();
@@ -225,9 +360,7 @@ export class TypsastraWorkspaceController {
   private get lastPdfSurface(): PreviewSurface { return this.pdfPreviewRenderController.lastPdfSurface; }
   private lastFailedPreviewContents: string | null = null;
   private lastPreviewRecoveryRequestedContents: string | null = null;
-  private tinymistPreviewRecoveryAttempts = 0;
-  private tinymistPreviewRecovery: Promise<boolean> | null = null;
-  private readonly externalConflictPaths = new Set<string>();
+  private get externalConflictPaths(): Set<string> { return this.externalFileReloadController.conflictPaths; }
   private externalPreviewRefreshPending = false;
   private get managedPreviewPdfPathKeys(): ReadonlySet<string> { return this.pdfPreviewRenderController.managedPdfPathKeys; }
   private readonly managedImageToolPathKeys = new Set<string>();
@@ -321,7 +454,7 @@ export class TypsastraWorkspaceController {
     onRestarted: () => {
       // Temporary discovery documents can interfere with restoration of the
       // real workspace document immediately after a restart.
-      this.surroundWithOptions = SURROUND_WITH_OPTIONS;
+      this.surroundWithDiscoveryController.reset();
     },
     setStoppedStatus: message => this.setLspStatus({ kind: "stopped", message }),
     setStartingStatus: message => this.setLspStatus({ kind: "starting", message }),
@@ -355,18 +488,23 @@ export class TypsastraWorkspaceController {
     getPreviewRenderMode: () => this.effectivePreviewRenderMode,
     getPreparationRevision: () => this.pdfPreparationRevision,
     getLspClient: () => this.lspClient,
-    listOpenedDocumentUris: () => [...this.openedDocumentUris],
-    addOpenedDocumentUri: uri => this.openedDocumentUris.add(uri),
-    removeOpenedDocumentUri: uri => this.openedDocumentUris.delete(uri),
-    nextDocumentVersion: () => ++this.currentVersion,
+    listOpenedDocumentUris: () => this.lspDocumentController.listOpenedUris(),
+    addOpenedDocumentUri: uri => this.lspDocumentController.addOpenedUri(uri),
+    removeOpenedDocumentUri: uri => this.lspDocumentController.removeOpenedUri(uri),
+    nextDocumentVersion: () => this.lspDocumentController.nextVersion(),
     isRenderCachePath: path => this.isRenderCachePath(path),
     log: (kind, source, message) => this.appendDeveloperLog({ kind, source, message }),
   });
   private get pdfPreviewGeneratedFiles() {
     return this.pdfPreviewPreparationController.generatedFiles;
   }
-  private surroundWithOptions: readonly SurroundWithOption[] = SURROUND_WITH_OPTIONS;
-  private surroundWithDiscoveryGeneration = 0;
+  private readonly surroundWithDiscoveryController = new SurroundWithDiscoveryController({
+    client: () => this.documentSessionController.hasClient ? this.lspClient : null,
+    workspaceRootPath: () => this.workspaceRootPath,
+    ready: () => this.lspReady,
+    appendLog: (kind, message) => this.appendDeveloperLog({ kind, source: "lsp autocomplete", message }),
+  });
+  private get surroundWithOptions() { return this.surroundWithDiscoveryController.options; }
 
   private codePane = document.getElementById("code-editor-pane")!;
   private editorTabBar = document.getElementById("editor-tab-bar")!;
@@ -704,6 +842,13 @@ export class TypsastraWorkspaceController {
       }
     },
   });
+  private readonly pinnedMainTypographyController = new PinnedMainTypographyController({
+    typography: () => this.typographyController,
+    workspaceRootPath: () => this.workspaceRootPath,
+    readWorkspaceText: path => this.workspaceText(path),
+    writeWorkspaceText: (path, text) => this.writeWorkspaceText(path, text),
+    appendLog: (kind, source, text) => this.appendLspLog({ kind, source, message: text }),
+  });
   private readonly documentLanguageService = new DocumentLanguageService();
   private readonly recentProjectsController = new RecentProjectsController(
     path => this.openWorkspace(path),
@@ -1030,12 +1175,24 @@ export class TypsastraWorkspaceController {
     onRenderSucceeded: () => {
       this.lastFailedPreviewContents = null;
       this.lastPreviewRecoveryRequestedContents = null;
-      this.tinymistPreviewRecoveryAttempts = 0;
+      this.tinymistPreviewRecoveryController.resetAttempts();
     },
     onRenderFailed: contents => {
       this.lastFailedPreviewContents = contents;
       this.lastPreviewRecoveryRequestedContents = null;
     },
+  });
+  private readonly tinymistPreviewRecoveryController = new TinymistPreviewRecoveryController({
+    workspaceRootPath: () => this.workspaceRootPath,
+    activeFilePath: () => this.activeFilePath,
+    hasClient: () => this.documentSessionController.hasClient,
+    lspReady: () => this.lspReady,
+    previewFrame: () => this.previewFrame,
+    restartTinymistSession: status => this.restartTinymistSession(status),
+    restoreActiveDocumentAfterRestart: () => this.restoreActiveDocumentAfterTinymistRestart(false),
+    queueRecovery: contents => this.pdfPreviewRenderController.queueRecovery(contents),
+    setLspStatus: status => this.setLspStatus(status),
+    appendLog: (kind, message) => this.appendDeveloperLog({ kind, source: "lsp lifecycle", message }),
   });
   private readonly previewSourceNavigationController = new PreviewSourceNavigationController({
     previewSync: this.previewSyncController,
@@ -1791,139 +1948,36 @@ export class TypsastraWorkspaceController {
     this.editorTabViewController.render();
   }
 
-  private async promoteToPermanent(tab: EditorTab) {
-    if (!tab.temporary) return;
-    tab.temporary = false;
-    this.renderEditorTabs();
-    this.saveWorkspaceState();
+  private promoteToPermanent(tab: EditorTab): Promise<void> {
+    return this.editorTabStateController.promoteToPermanent(tab);
   }
 
   private getActiveTab(): EditorTab | null {
     return this.editorSessionController.activeTab;
   }
 
-  private persistActiveTabState() {
-    if (this.workspaceLoading) return;
-    this.flushEditorContentMutation();
-    const tab = this.getActiveTab();
-    if (!tab || !tab.contentLoaded || !this.editorInstance) return;
-    if (!this.isInternallySupportedPath(tab.path) || isBinaryImagePath(tab.path) || fileExtension(tab.path) === "pdf") return;
-
-    const content = this.activeMode === "WYSIWYM"
-      ? this.mapWysiwymToMarkup()
-      : this.editorInstance.state.doc.toString();
-    const selection = this.editorInstance.state.selection.main;
-    tab.content = content;
-    tab.isDirty = tab.content !== tab.savedContent;
-    tab.version = this.currentVersion;
-    tab.latestVersion = this.latestDocumentVersion;
-    tab.selectionAnchor = selection.anchor;
-    tab.selectionHead = selection.head;
-    tab.scrollTop = this.editorInstance.scrollDOM.scrollTop;
-    tab.scrollLeft = this.editorInstance.scrollDOM.scrollLeft;
-    tab.scrollSnapshot = this.editorInstance.scrollSnapshot();
-    tab.foldRanges = tab.foldStateExplicit ? this.collectCurrentFoldRanges() : [];
-    tab.undoHistory = captureEditorUndoHistory(this.editorInstance.state);
-  }
-
-  private collectCurrentFoldRanges(): EditorFoldRange[] {
-    return this.editorController.collectFoldRanges();
+  private persistActiveTabState(): void {
+    this.editorTabStateController.persistActive();
   }
 
   private restoreEditorTabViewport(tab: EditorTab, path: string): void {
-    if (tab.scrollSnapshot) {
-      // A CodeMirror snapshot retains the top document anchor as well as its
-      // pixel offset. Unlike assigning scrollTop directly, it remains stable
-      // while the newly activated document's virtual line geometry settles.
-      this.editorInstance.dispatch({ effects: tab.scrollSnapshot });
-      return;
-    }
-
-    if (tab.scrollTop === undefined && tab.scrollLeft === undefined) return;
-    const restoredPath = path;
-    const targetScrollTop = tab.scrollTop ?? 0;
-    const targetScrollLeft = tab.scrollLeft ?? 0;
-    const editor = this.editorInstance;
-    const restoreKey = { restoredPath };
-    const scheduleRestore = () => {
-      editor.requestMeasure({
-        key: restoreKey,
-        read: () => null,
-        write: () => {
-          if (
-            this.editorInstance !== editor
-            || !this.activeFilePath
-            || filePathKey(this.activeFilePath) !== filePathKey(restoredPath)
-          ) return;
-          editor.scrollDOM.scrollTop = targetScrollTop;
-          editor.scrollDOM.scrollLeft = targetScrollLeft;
-        },
-      });
-    };
-
-    // Workspace-restored tabs do not have an in-memory snapshot. Restore their
-    // serialized offsets once immediately and once after the first viewport
-    // draw so CodeMirror cannot overwrite them with provisional geometry.
-    scheduleRestore();
-    requestAnimationFrame(scheduleRestore);
+    this.editorTabStateController.restoreViewport(tab, path);
   }
 
-  private restoreTabFoldState(tab: EditorTab) {
-    tab.foldRanges = this.editorController.restoreFoldState(
-      tab.foldStateExplicit,
-      tab.foldRanges,
-    );
+  private restoreTabFoldState(tab: EditorTab): void {
+    this.editorTabStateController.restoreFoldState(tab);
   }
 
   private activateSpellcheckDocument(path: string | null): void {
-    this.configureDocumentLanguageTools(path ? this.editorInstance.state.doc.toString() : "");
-    this.spellcheckController.activateDocument(path ? filePathKey(path) : "");
+    this.documentLanguageController.activate(path);
   }
 
   private configureDocumentLanguageTools(text: string): void {
-    const activeEntries = parseDocumentScripts(text);
-    const activeOwnsDocumentConfiguration = !this.pinnedMainFilePath
-      || (this.activeFilePath !== null && this.isPinnedMainFile(this.activeFilePath));
-    if (activeOwnsDocumentConfiguration) this.mainDocumentScripts = activeEntries;
-    const entries = documentScriptsForPreviewContext(
-      this.activeFilePath,
-      this.pinnedMainFilePath,
-      this.previewImported,
-      activeEntries,
-      this.mainDocumentScripts
-    );
-    this.documentLanguageService.configure(entries);
-    this.spellcheckController.setDocumentScripts(entries);
+    this.documentLanguageController.configure(text);
   }
 
   private scheduleDocumentOutlineUpdate(path: string, delay = 180): void {
-    if (this.documentOutlineUpdateTimer !== null) {
-      window.clearTimeout(this.documentOutlineUpdateTimer);
-    }
-    const generation = ++this.documentOutlineUpdateGeneration;
-    // Outline parsing scans the full source and may resolve included files.
-    // Wait until typing pauses so it never blocks CodeMirror's input update.
-    this.documentOutlineUpdateTimer = window.setTimeout(() => {
-      this.documentOutlineUpdateTimer = null;
-      const activeTab = this.getActiveTab();
-      if (
-        generation !== this.documentOutlineUpdateGeneration
-        || !activeTab
-        || filePathKey(activeTab.path) !== filePathKey(path)
-      ) return;
-      void this.documentOutlineController.update(
-        path,
-        activeTab.content,
-        this.workspaceRootPath || "",
-        async candidatePath => {
-          try {
-            return await invoke<string>("read_workspace_file", { path: candidatePath });
-          } catch {
-            return null;
-          }
-        }
-      );
-    }, delay);
+    this.documentLanguageController.scheduleOutlineUpdate(path, delay);
   }
 
   private foldCurrentFile(): void {
@@ -1948,31 +2002,12 @@ export class TypsastraWorkspaceController {
     return this.editorController.normalizeFoldRanges(value, docLength);
   }
 
-  private updateActiveTabContent(content: string) {
-    const tab = this.getActiveTab();
-    if (!tab) return;
-
-    const wasDirty = tab.isDirty;
-    tab.content = content;
-    tab.isDirty = tab.content !== tab.savedContent;
-    
-    if (tab.isDirty && tab.temporary) {
-      void this.promoteToPermanent(tab);
-    } else if (wasDirty !== tab.isDirty) {
-      this.renderEditorTabs();
-    }
+  private updateActiveTabContent(content: string): void {
+    this.editorTabStateController.updateActiveContent(content);
   }
 
   private markActiveTabDirty(): void {
-    const tab = this.getActiveTab();
-    if (!tab) return;
-    const wasDirty = tab.isDirty;
-    tab.isDirty = true;
-    if (tab.temporary) {
-      void this.promoteToPermanent(tab);
-    } else if (!wasDirty) {
-      this.renderEditorTabs();
-    }
+    this.editorTabStateController.markActiveDirty();
   }
 
   private scheduleEditorContentMutation(doc: Text): void {
@@ -2056,13 +2091,7 @@ export class TypsastraWorkspaceController {
         tab.previewStandalone = true;
         tab.previewDisabled = false;
       }
-      this.previewRootPath = null;
-      this.previewMainPath = null;
-      this.previewTaskId = null;
-      this.previewSessionKey = null;
-      this.previewImported = false;
-      this.previewStandalone = true;
-      this.previewDisabled = false;
+      this.previewSessionController.reset();
       this.pinnedLspMainPath = null;
       this.pdfPreviewPreparationController.clearGeneratedFiles();
       this.pdfPreviewRenderController.invalidatePreparationScheduleOnly();
@@ -2075,30 +2104,7 @@ export class TypsastraWorkspaceController {
       this.renderEditorTabs();
       await this.saveWorkspaceState();
 
-      if (this.lspReady && this.lspClient) {
-        try {
-          for (const renamed of renamedTabs) {
-            const oldUri = filePathToUri(renamed.oldPath);
-            if (this.openedDocumentUris.delete(oldUri)) {
-              await this.lspClient.closeTextDocument(oldUri).catch(() => {});
-            }
-            if (!isTypstDocumentPath(renamed.tab.path)) continue;
-            const newUri = filePathToUri(renamed.tab.path);
-            await this.lspClient.openTextDocument(newUri, renamed.tab.content, renamed.tab.version);
-            this.openedDocumentUris.add(newUri);
-          }
-          await this.lspClient.notifyWorkspaceFilesChanged([
-            { uri: filePathToUri(oldPath), type: 3 },
-            { uri: filePathToUri(newPath), type: 1 }
-          ]);
-        } catch (error) {
-          this.appendDeveloperLog({
-            kind: "warning",
-            source: "workspace",
-            message: `The file was renamed, but Tinymist's document state could not be transferred: ${String(error)}`
-          });
-        }
-      }
+      await this.lspDocumentController.transferRenamedDocuments(renamedTabs, oldPath, newPath);
 
       await this.prepareRenderProjectIfNeeded();
       await this.refreshActivePreviewRoot(true);
@@ -2112,219 +2118,32 @@ export class TypsastraWorkspaceController {
     }
   }
 
-  private async closeEditorTab(path: string, skipDirtyCheck = false) {
-    if (this.pinnedMainFilePath && filePathKey(path) === filePathKey(this.pinnedMainFilePath)) {
-      return;
-    }
-    const tabIndex = this.openTabs.findIndex((tab) => tab.path === path);
-    if (tabIndex === -1) return;
-
-    if (this.activeFilePath === path) {
-      this.persistActiveTabState();
-    }
-
-    const tab = this.openTabs[tabIndex];
-    if (!skipDirtyCheck && tab.isDirty) {
-      const shouldClose = await confirm(
-        `Close ${fileNameFromPath(tab.path)} without saving?`,
-        { title: "Unsaved Changes", kind: "warning" }
-      );
-      if (!shouldClose) {
-        return;
-      }
-    }
-
-    const wasActive = this.activeFilePath === path;
-    this.openTabs.splice(tabIndex, 1);
-    this.typographyController.closeDocument(path);
-    await this.closeDocumentIfOpened(path);
-
-    if (wasActive) {
-      const nextTab = this.openTabs[Math.min(tabIndex, this.openTabs.length - 1)] ?? null;
-      this.activeFilePath = null;
-      this.previewRootPath = null;
-      this.previewMainPath = null;
-      this.previewTaskId = null;
-      this.previewSessionKey = null;
-      this.previewImported = false;
-      this.previewStandalone = true;
-      this.previewDisabled = false;
-      this.clearDiagnostics();
-      this.clearPendingLspSync();
-      this.previewSyncController.clearForward();
-
-      if (nextTab) {
-        await this.activateEditorTab(nextTab.path, false);
-      } else {
-        this.explorer.setActiveFile(null);
-        this.activateSpellcheckDocument(null);
-        this.isLoadingFile = true;
-        try {
-          this.editorInstance.setState(createTabEditorState({
-            doc: "",
-            anchor: 0,
-            head: 0,
-            extensions: this.editorExtensions,
-          }));
-          this.editorInstance.dispatch({ effects: this.currentEditorSettingsEffects() });
-          this.applyFoldRanges([]);
-        } finally {
-          this.isLoadingFile = false;
-        }
-        this.previewPane.innerHTML = "";
-        this.previewFrame.clear();
-        this.editorFontManager.updateDocument("");
-        this.documentOutlineController.clear();
-        if (this.activeMode === "WYSIWYM") {
-          this.mapMarkupToWysiwym("");
-        }
-      }
-    }
-
-    this.renderEditorTabs();
-    this.updateWorkspaceViewportVisibility();
-    this.saveWorkspaceState();
+  private closeEditorTab(path: string, skipDirtyCheck = false): Promise<void> {
+    return this.editorTabLifecycleController.close(path, skipDirtyCheck);
   }
 
-  private async largeFileNoticeForTab(tab: EditorTab) {
-    if (tab.sizeBytes === undefined) {
-      try {
-        tab.sizeBytes = await invoke<number>("workspace_file_size", { path: tab.path });
-      } catch {
-        return null;
-      }
-    }
-    const sizeNotice = largeFileOpeningNotice(tab.path, tab.sizeBytes);
-    if (sizeNotice?.kind === "pdf" || fileExtension(tab.path) === "pdf" || isBinaryImagePath(tab.path) || !this.isInternallySupportedPath(tab.path)) {
-      return sizeNotice;
-    }
-    if (!sizeNotice && tab.lineCount === undefined) {
-      try {
-        tab.lineCount = await invoke<number>("workspace_text_line_count", { path: tab.path });
-      } catch {
-        return null;
-      }
-    }
-    const textNotice = sizeNotice ?? largeFileOpeningNotice(tab.path, tab.sizeBytes, tab.lineCount);
-    if (textNotice || !isTypstDocumentPath(tab.path)) return textNotice;
-
-    const target = await this.previewTargetForUnloadedTab(tab);
-    if (!target?.rootPath || target.disabled) return null;
-    return this.largePreviewNoticeForRoot(target.rootPath);
+  private largeFileNoticeForTab(tab: EditorTab): Promise<LargeFileOpeningNotice | null> {
+    return this.largePreviewGuardController.noticeForTab(tab);
   }
 
-  private async previewTargetForUnloadedTab(tab: EditorTab): Promise<PreviewTarget | null> {
-    if (!isTypstDocumentPath(tab.path)) return null;
-    try {
-      return await invoke<PreviewTarget>("resolve_preview_main", {
-        filePath: tab.path,
-        workspaceRootPath: this.workspaceRootPath,
-        fileContents: tab.contentLoaded ? tab.content : null,
-        pinnedMainPath: this.pinnedMainFilePath
-      });
-    } catch {
-      return null;
-    }
+  private approveLargePreviewForTab(tab: EditorTab, notice: LargeFileOpeningNotice): Promise<void> {
+    return this.largePreviewGuardController.approveForTab(tab, notice);
   }
 
-  private async approveLargePreviewForTab(tab: EditorTab, notice: LargeFileOpeningNotice): Promise<void> {
-    const target = notice.previewRootPath
-      ? { rootPath: notice.previewRootPath }
-      : await this.previewTargetForUnloadedTab(tab);
-    const rootPath = target?.rootPath;
-    if (!rootPath) return;
-    const rootKey = filePathKey(rootPath);
-    this.approvedLargePreviewRoots.add(rootKey);
-    this.inspectedPreviewRoots.add(rootKey);
-    if (this.blockedLargePreviewRoot) {
-      const blockedKey = filePathKey(this.blockedLargePreviewRoot);
-      if (blockedKey === rootKey || blockedKey === filePathKey(tab.path)) {
-        this.blockedLargePreviewRoot = null;
-      }
-    }
+  private largePreviewNoticeForRoot(rootPath: string): Promise<LargeFileOpeningNotice | null> {
+    return this.largePreviewGuardController.noticeForRoot(rootPath);
   }
 
-  private activeCompilerPreviewMatchesRoot(rootPath: string): boolean {
-    const activeRootMatches = [this.previewRootPath, this.previewMainPath]
-      .some(path => path !== null && filePathKey(path) === filePathKey(rootPath));
-    const mountedSessionMatches = Boolean(
-      this.previewSessionKey
-      && this.previewFrame.currentSessionKey === this.previewSessionKey
-      && this.previewFrame.currentUrl
-    );
-    const lspAlreadyOwnsRoot = Boolean(
-      this.lspReady
-      && this.pinnedLspMainPath
-      && filePathKey(this.pinnedLspMainPath) === filePathKey(rootPath)
-    );
-    return lspAlreadyOwnsRoot || (activeRootMatches && mountedSessionMatches);
+  private ensureLargePreviewApproved(rootPath: string | null): Promise<boolean> {
+    return this.largePreviewGuardController.ensureApproved(rootPath);
   }
 
-  private async largePreviewNoticeForRoot(rootPath: string): Promise<LargeFileOpeningNotice | null> {
-    try {
-      const stats = await invoke<{ sizeBytes: number; lineCount: number; fileCount: number }>(
-        "typst_preview_source_stats",
-        { rootPath }
-      );
-      return largeMainPreviewOpeningNotice(
-        rootPath,
-        stats.sizeBytes,
-        stats.lineCount,
-        stats.fileCount
-      );
-    } catch {
-      return null;
-    }
-  }
-
-  private async ensureLargePreviewApproved(rootPath: string | null): Promise<boolean> {
-    if (!rootPath || this.activeCompilerPreviewMatchesRoot(rootPath)) return true;
-    const rootKey = filePathKey(rootPath);
-    if (this.approvedLargePreviewRoots.has(rootKey)) return true;
-    if (this.inspectedPreviewRoots.has(rootKey)) return true;
-    if (this.blockedLargePreviewRoot && filePathKey(this.blockedLargePreviewRoot) === rootKey) return false;
-    const notice = await this.largePreviewNoticeForRoot(rootPath);
-    if (!notice) {
-      this.inspectedPreviewRoots.add(rootKey);
-      return true;
-    }
-
-    this.blockedLargePreviewRoot = rootPath;
-    this.workspaceServicesDeferredForLargeFile = true;
-    const activeTab = this.getActiveTab();
-    if (activeTab) {
-      this.showLargeFileConfirmation(activeTab, notice);
-    } else {
-      this.previewFrame.setMessage(
-        `<div class="preview-disabled-placeholder guardrail-paired-placeholder">` +
-        `<div class="guardrail-placeholder-content">` +
-        `<div class="preview-disabled-title">Preview Waiting for File Approval</div>` +
-        `<div class="preview-disabled-msg">Open the large Typst file in the editor to start its compiler preview.</div>` +
-        `</div></div>`
-      );
-    }
-    return false;
-  }
-
-  private async loadEditorTabContent(tab: EditorTab): Promise<void> {
-    if (tab.contentLoaded) return;
-
-    const contents = fileExtension(tab.path) === "pdf"
-      ? ""
-      : isBinaryImagePath(tab.path)
-        ? await invoke<string>("read_workspace_file_as_base64", { path: tab.path })
-        : normalizeEditorText(await invoke<string>("read_workspace_file", { path: tab.path }));
-    tab.content = contents;
-    tab.savedContent = contents;
-    tab.contentLoaded = true;
-    tab.undoHistory = undefined;
-    tab.foldRanges = tab.foldRanges === null
-      ? null
-      : this.normalizeFoldRanges(tab.foldRanges, contents.length);
+  private loadEditorTabContent(tab: EditorTab): Promise<void> {
+    return this.editorFileContentController.loadTabContent(tab);
   }
 
   private isInternallySupportedPath(path: string): boolean {
-    return isSupportedInAppPath(path) || this.detectedPlainTextPaths.has(filePathKey(path));
+    return this.editorFileContentController.isInternallySupportedPath(path);
   }
 
   private editorLanguageForPath(path: string): Extension {
@@ -2402,17 +2221,8 @@ export class TypsastraWorkspaceController {
     document.getElementById("preview-container-wrapper")?.classList.toggle("markdown-preview-active", active);
   }
 
-  private async classifyUnknownTextPath(path: string): Promise<boolean> {
-    if (isSupportedInAppPath(path)) return true;
-    const key = filePathKey(path);
-    if (this.classifiedUnknownPaths.has(key)) {
-      return this.detectedPlainTextPaths.has(key);
-    }
-    const isPlainText = await invoke<boolean>("is_probably_plain_text_file", { path })
-      .catch(() => false);
-    this.classifiedUnknownPaths.add(key);
-    if (isPlainText) this.detectedPlainTextPaths.add(key);
-    return isPlainText;
+  private classifyUnknownTextPath(path: string): Promise<boolean> {
+    return this.editorFileContentController.classifyUnknownTextPath(path);
   }
 
   private async activateEditorTab(path: string, persistCurrent = true, options: ActivateEditorTabOptions = {}) {
@@ -2500,40 +2310,20 @@ export class TypsastraWorkspaceController {
 
     this.isLoadingFile = true;
     try {
-      const codeRenderPane = document.getElementById("code-render-pane");
-      const imageViewerPane = document.getElementById("image-viewer-pane");
-      const imageViewerImg = document.getElementById("image-viewer-img") as HTMLImageElement;
-
       const unsupportedFile = !this.isInternallySupportedPath(path);
       const isPdf = fileExtension(path) === "pdf";
       if (unsupportedFile || isBinaryImagePath(path) || isPdf) {
-        codeRenderPane?.classList.add("hidden");
-        imageViewerPane?.classList.remove("hidden");
-        if (imageViewerImg) imageViewerImg.style.display = "none"; // Hide image element in editor
-        
-        this.renderNonTextEditorPlaceholder(path, unsupportedFile);
-        document.getElementById("wysiwym-editor-pane")?.classList.add("hidden");
-
-        this.imagePreviewController.clear();
-
-        this.activateSpellcheckDocument(null);
-        this.documentOutlineController.clear();
-        if (!options.skipPreviewActivation) {
-          this.updatePreviewActionsToolbar(path);
-          if (isBinaryImagePath(path)) {
-            this.renderInteractiveImageViewer(tab.content);
-          } else if (isPdf) {
-            void this.loadPdfPath(path, path);
-          } else {
-            this.previewFrame.setMessage(
-              `<div class="preview-disabled-placeholder">` +
-              `<div class="preview-disabled-title">Preview Unavailable</div>` +
-              `<div class="preview-disabled-msg">Open this file with its system application to view it.</div>` +
-              `</div>`
-            );
-          }
-        }
-        this.editorToolbarController.setDisabled(true);
+        this.editorTabPresentationController.presentNonText(
+          tab,
+          path,
+          unsupportedFile,
+          isPdf,
+          options.skipPreviewActivation === true,
+          () => {
+            this.activateSpellcheckDocument(null);
+            this.documentOutlineController.clear();
+          },
+        );
         this.activeFilePath = path;
         this.draftPreviewController.publishWarnings();
         this.isLoadingFile = false;
@@ -2543,63 +2333,8 @@ export class TypsastraWorkspaceController {
         this.saveWorkspaceState();
         this.resumeDeferredWorkspaceServices();
         return;
-      } else {
-        this.imagePreviewController.clear();
-
-        this.updatePreviewActionsToolbar(path);
-        codeRenderPane?.classList.remove("hidden");
-        imageViewerPane?.classList.add("hidden");
-        if (imageViewerImg) imageViewerImg.style.display = "block"; // Reset styling
-        if (this.activeMode === "WYSIWYM") {
-          document.getElementById("wysiwym-editor-pane")?.classList.remove("hidden");
-        }
-        
-        const ext = path.split('.').pop()?.toLowerCase();
-        if (ext === "typ") {
-          this.editorToolbarController.setDisabled(false);
-        } else {
-          this.editorToolbarController.setDisabled(true);
-          if (ext === "md" || ext === "markdown") {
-            // Markdown owns an overlay renderer. Leave the persistent PDF
-            // presentation underneath untouched so returning to Typst is instant.
-          } else if (ext === "svg") {
-            this.previewFrame.setMessageOverlay(
-              `<div style="display:flex;align-items:center;justify-content:center;height:100%;width:100%;background:var(--ui-bg);box-sizing:border-box;padding:20px;overflow:auto;">` +
-              tab.content +
-              `</div>`
-            );
-          } else {
-            this.previewFrame.setMessageOverlay(
-              `<div class="preview-disabled-placeholder">` +
-              `<div class="preview-disabled-icon">🚫</div>` +
-              `<div class="preview-disabled-title">Preview Unavailable</div>` +
-              `<div class="preview-disabled-msg">Live preview is not supported for ${ext?.toUpperCase() || "this"} files.</div>` +
-              `</div>`
-            );
-          }
-        }
       }
-
-      // Apply the destination document's script-aware font stack before its
-      // text becomes visible. Updating it later allows one paint with the
-      // previous tab's fallback stack, which is especially noticeable for
-      // Khmer text.
-      const editorFontEffect = this.editorFontManager.prepareDocument(tab.content);
-      this.editorInstance.setState(createTabEditorState({
-        doc: tab.content,
-        anchor: tab.selectionAnchor,
-        head: tab.selectionHead,
-        extensions: this.editorExtensions,
-        undoHistory: tab.undoHistory,
-      }));
-      this.editorInstance.dispatch({
-        effects: [
-          ...this.currentEditorSettingsEffects(),
-          ...(editorFontEffect ? [editorFontEffect] : []),
-          languageCompartment.reconfigure(this.editorLanguageForPath(path)),
-          completionCompartment.reconfigure(this.editorCompletionForPath(path)),
-        ]
-      });
+      this.editorTabPresentationController.presentText(tab, path);
     } finally {
       this.isLoadingFile = false;
     }
@@ -2620,53 +2355,12 @@ export class TypsastraWorkspaceController {
     }
 
     if (path.toLowerCase().endsWith(".typ")) this.diagnosticWaitStartedAt = performance.now();
-    let previewPresentationReused = false;
-    let previewGuarded = false;
-    let previewTarget: PreviewTarget | null = null;
-    if (options.skipPreviewActivation) {
-      // Restore editor/tab state first. Preview and LSP setup will run when the
-      // toolchain reports readiness, avoiding startup-time restore failures.
-    } else if (options.preservePreviewSession) {
-      this.applyPreviewSessionToTab(tab, options.preservePreviewSession);
-      if (options.preservePreviewSession.previewSessionKey) {
-        previewPresentationReused = this.previewFrame.activateSession(options.preservePreviewSession.previewSessionKey);
-      }
-    } else if (!isTypstDocument) {
-      // Non-Typst text files remain editor-only. Their preview placeholder was
-      // selected above and they must never be resolved as compiler roots.
-    } else if (!this.pinnedMainFilePath) {
-      this.previewFrame.setMessage(this.noMainFileMessage());
-    } else {
-      previewTarget = await invoke<PreviewTarget>("resolve_preview_main", {
-        filePath: path,
-        workspaceRootPath: this.workspaceRootPath,
-        fileContents: tab.content,
-        pinnedMainPath: this.pinnedMainFilePath
-      });
-      if (previewTarget.disabled) {
-        this.applyPreviewTargetToTab(tab, previewTarget);
-        this.invalidatePreviewWork(`${path} does not participate in the configured main preview`);
-      } else {
-        previewTarget = await this.prepareTemplateAwarePreview(previewTarget, path, tab.content);
-        previewGuarded = !(await this.ensureLargePreviewApproved(previewTarget.rootPath));
-        if (previewGuarded) {
-          this.applyPreviewTargetToTab(tab, previewTarget);
-        } else {
-          const existingMainSession = this.captureCurrentMainSessionForImportedTarget(previewTarget);
-          if (existingMainSession) {
-            this.applyPreviewSessionToTab(tab, existingMainSession);
-            if (existingMainSession.previewSessionKey) {
-              previewPresentationReused = this.previewFrame.activateSession(existingMainSession.previewSessionKey);
-            }
-          } else {
-            this.applyPreviewTargetToTab(tab, previewTarget);
-            if (tab.previewSessionKey) {
-              previewPresentationReused = this.previewFrame.activateSession(tab.previewSessionKey);
-            }
-          }
-        }
-      }
-    }
+    const previewActivation = await this.editorPreviewActivationController.prepare(
+      tab,
+      path,
+      isTypstDocument,
+      options,
+    );
     // Resolve dependency ownership before activating language tools. Included
     // chapters, templates, and libraries inherit the main document's script
     // languages; unrelated files use only their own directive.
@@ -2684,40 +2378,13 @@ export class TypsastraWorkspaceController {
     }
 
 
-    if (!options.skipPreviewActivation && isTypstDocument && this.lspReady && this.lspClient) {
-      const lspRes = await this.getLspUriAndContent(path, tab.content);
-      if (lspRes) {
-        const { uri: lspUri, content: lspContent } = lspRes;
-        await this.openDocumentIfNeeded(lspUri, lspContent, this.currentVersion);
-      }
-      if (!previewGuarded) {
-        const lspMainPath = previewTarget
-          ? previewLspMainPath(previewTarget)
-          : (this.previewStandalone ? this.previewRootPath : (this.previewMainPath ?? this.previewRootPath));
-        const pinChanged = await this.updatePinnedMain(lspMainPath);
-        if (pinChanged) {
-          await this.recheckActiveDocumentAfterPin(tab.content);
-        }
-      }
-
-      if (previewGuarded) {
-        // The source editor remains active while preview startup waits for consent.
-      } else if (options.preservePreviewSession) {
-        // preserve
-      } else if (!this.pinnedMainFilePath) {
-        this.previewFrame.setMessage(this.noMainFileMessage());
-      } else if (previewTarget?.disabled) {
-        this.previewFrame.setMessage(this.disabledPreviewMessage());
-      } else if (this.previewRootPath) {
-        if (!previewPresentationReused) void this.renderPdfPreview(tab.content);
-      } else {
-        this.previewFrame.setMessage(`<div style="padding: 20px; color: var(--ui-header-text); font-family: var(--font-family-sans);">No preview root found for this library/template file. Diagnostics are still active.</div>`);
-      }
-    } else if (!options.skipPreviewActivation && isTypstDocument) {
-      if (!previewGuarded && !options.preservePreviewSession && this.previewRootPath && !this.previewDisabled) {
-        void this.renderPdfPreview(tab.content);
-      }
-    }
+    await this.editorPreviewActivationController.finish(
+      tab,
+      path,
+      isTypstDocument,
+      previewActivation,
+      options,
+    );
 
     if (this.activeMode === "WYSIWYM") {
       this.mapMarkupToWysiwym(tab.content);
@@ -2762,56 +2429,14 @@ export class TypsastraWorkspaceController {
     this.sourceMapSessionController.reset({ retry: false });
   }
 
-  private async discoverSurroundWithOptions(): Promise<void> {
-    const client = this.lspClient;
-    const workspaceRoot = this.workspaceRootPath;
-    const generation = ++this.surroundWithDiscoveryGeneration;
-    this.surroundWithOptions = SURROUND_WITH_OPTIONS;
-    if (!client || !workspaceRoot || !this.lspReady) return;
-
-    const source = "#none";
-    const virtualPath = await join(
-      workspaceRoot,
-      ".typsastra",
-      "cache",
-      "surround-with-discovery.typ",
-    );
-    const uri = filePathToUri(virtualPath);
-    try {
-      await client.openTextDocument(uri, source, generation);
-      const response = await client.request<
-        SurroundWithCompletionItem[] | { items?: SurroundWithCompletionItem[] } | null
-      >("textDocument/completion", {
-        textDocument: { uri },
-        position: { line: 0, character: 1 },
-        context: { triggerKind: 1 },
-      }, 5000);
-      if (generation !== this.surroundWithDiscoveryGeneration || client !== this.lspClient) return;
-      const items = Array.isArray(response) ? response : response?.items ?? [];
-      this.surroundWithOptions = mergeDiscoveredSurroundWithOptions(items);
-      this.appendDeveloperLog({
-        kind: "info",
-        source: "lsp autocomplete",
-        message: `Discovered ${this.surroundWithOptions.length - SURROUND_WITH_OPTIONS.length} additional bracket-capable Surround With function(s).`,
-      });
-    } catch (error) {
-      if (generation !== this.surroundWithDiscoveryGeneration) return;
-      this.appendDeveloperLog({
-        kind: "warning",
-        source: "lsp autocomplete",
-        message: `Using built-in Surround With functions because Tinymist discovery failed: ${String(error)}`,
-      });
-    } finally {
-      await client.closeTextDocument(uri).catch(() => {});
-    }
+  private discoverSurroundWithOptions(): Promise<void> {
+    return this.surroundWithDiscoveryController.discover();
   }
 
   private resetTinymistSessionState(): void {
-    this.surroundWithDiscoveryGeneration += 1;
-    this.surroundWithOptions = SURROUND_WITH_OPTIONS;
+    this.surroundWithDiscoveryController.reset();
     this.lspReady = false;
-    this.pinnedLspMainPath = null;
-    this.openedDocumentUris.clear();
+    this.lspDocumentController.resetSessionState();
     this.clearPendingLspSync();
     this.previewSyncController.clearForward();
     this.clearDiagnostics();
@@ -2832,68 +2457,7 @@ export class TypsastraWorkspaceController {
     contents: string,
     failedGeneration: number
   ): Promise<boolean> {
-    if (this.tinymistPreviewRecovery) return this.tinymistPreviewRecovery;
-    if (
-      this.tinymistPreviewRecoveryAttempts >= 1
-      || !this.workspaceRootPath
-      || !this.activeFilePath
-      || !this.lspClient
-    ) {
-      return Promise.resolve(false);
-    }
-
-    const workspacePath = this.workspaceRootPath;
-    const activePath = this.activeFilePath;
-    this.tinymistPreviewRecoveryAttempts += 1;
-    this.appendDeveloperLog({
-      kind: "warning",
-      source: "lsp lifecycle",
-      message: `Render generation ${failedGeneration} was interrupted because Tinymist stopped; attempting one automatic recovery.`
-    });
-    this.setLspStatus({ kind: "starting", message: "Recovering preview compiler" });
-    if (!this.previewFrame.currentUrl) {
-      this.previewFrame.setLoading("Recovering PDF preview...");
-    }
-
-    const recovery = (async () => {
-      try {
-        await this.restartTinymistSession("Recovering interrupted preview...");
-        if (
-          this.workspaceRootPath !== workspacePath
-          || filePathKey(this.activeFilePath ?? "") !== filePathKey(activePath)
-        ) {
-          return false;
-        }
-        await this.restoreActiveDocumentAfterTinymistRestart(false);
-        if (!this.lspReady) return false;
-
-        // A newer external edit may already be waiting behind the failed
-        // generation. Preserve it; otherwise retry the accepted revision that
-        // was interrupted. The render scheduler remains the sole serialization
-        // point for compilation and presentation.
-        this.pdfPreviewRenderController.queueRecovery(contents);
-        this.appendDeveloperLog({
-          kind: "info",
-          source: "lsp lifecycle",
-          message: `Tinymist recovered after render generation ${failedGeneration}; the latest preview revision was requeued.`
-        });
-        return true;
-      } catch (recoveryError) {
-        this.appendDeveloperLog({
-          kind: "error",
-          source: "lsp lifecycle",
-          message: `Automatic Tinymist recovery failed after render generation ${failedGeneration}: ${String(recoveryError)}`
-        });
-        return false;
-      }
-    })();
-    this.tinymistPreviewRecovery = recovery;
-    void recovery.finally(() => {
-      if (this.tinymistPreviewRecovery === recovery) {
-        this.tinymistPreviewRecovery = null;
-      }
-    });
-    return recovery;
+    return this.tinymistPreviewRecoveryController.recover(contents, failedGeneration);
   }
 
   private handlePreviewStartupFailure(context: {
@@ -2924,8 +2488,7 @@ export class TypsastraWorkspaceController {
     this.toolchainController.setStatus(status);
     this.lspReady = false;
     this.sourceMapSessionController.reset({ retry: false });
-    this.pinnedLspMainPath = null;
-    this.openedDocumentUris.clear();
+    this.lspDocumentController.resetSessionState();
     this.previewFrame.clear();
     await this.initLsp(status.lspAvailable);
     const activePath = this.activeFilePath;
@@ -2937,69 +2500,8 @@ export class TypsastraWorkspaceController {
 
 
 
-  private async loadFile(path: string, options: LoadFileOptions = {}) {
-    const existingTab = this.openTabs.find((tab) => filePathKey(tab.path) === filePathKey(path));
-    if (existingTab) {
-      if (!options.temporary) {
-        void this.promoteToPermanent(existingTab);
-      }
-      await this.activateEditorTab(existingTab.path, true, {
-        preservePreviewSession: options.preservePreviewSession,
-        skipPreviewActivation: options.skipPreviewActivation,
-        focusEditor: options.focusEditor
-      });
-      return;
-    }
-    if (this.activeFilePath && filePathKey(this.activeFilePath) === filePathKey(path)) {
-      this.activeFilePath = null;
-    }
-
-    try {
-      const internallySupported = await this.classifyUnknownTextPath(path);
-      const deferredContent = internallySupported && !isBinaryImagePath(path);
-      const contents = isBinaryImagePath(path)
-        ? await invoke<string>("read_workspace_file_as_base64", { path })
-        : "";
-      const newTab: EditorTab = {
-        path,
-        content: contents,
-        savedContent: contents,
-        contentLoaded: !deferredContent,
-        isDirty: false,
-        previewRootPath: null,
-        previewMainPath: null,
-        previewTaskId: null,
-        previewSessionKey: null,
-        previewImported: false,
-        previewStandalone: true,
-        previewDisabled: false,
-        version: 1,
-        latestVersion: 1,
-        selectionAnchor: 0,
-        selectionHead: 0,
-        foldRanges: [],
-        foldStateExplicit: false,
-        temporary: options.temporary
-      };
-
-      if (options.temporary) {
-        const existingTempIndex = this.openTabs.findIndex(t => t.temporary && !t.isDirty);
-        if (existingTempIndex >= 0) {
-          this.openTabs.splice(existingTempIndex, 1);
-        }
-      }
-
-      this.openTabs.push(newTab);
-      this.renderEditorTabs();
-      await this.activateEditorTab(path, true, {
-        preservePreviewSession: options.preservePreviewSession,
-        skipPreviewActivation: options.skipPreviewActivation,
-        focusEditor: options.focusEditor
-      });
-    } catch (e) {
-      console.error("Failed to load file:", e);
-      alert("Failed to load file: " + e);
-    }
+  private loadFile(path: string, options: EditorTabLoadOptions = {}): Promise<void> {
+    return this.editorTabLifecycleController.load(path, options);
   }
 
   private saveActiveFile(intent: SaveIntent = "manual"): Promise<void> {
@@ -3269,250 +2771,36 @@ export class TypsastraWorkspaceController {
   }
 
   private applyPreviewTargetToTab(tab: EditorTab, target: PreviewTarget): void {
-    const style = previewRefreshStyle(this.effectivePreviewRenderMode);
-    const document = target.rootPath
-      ? researchDocumentIdentity(this.workspaceRootPath ?? target.rootPath, target.mainPath, tab.path)
-      : null;
-    const identity = target.rootPath ? previewSessionIdentity(target.rootPath, style, document ?? undefined) : null;
-    tab.previewRootPath = target.rootPath;
-    tab.previewMainPath = target.mainPath;
-    tab.previewTaskId = identity?.taskId ?? null;
-    tab.previewSessionKey = identity?.key ?? null;
-    tab.previewImported = target.imported;
-    tab.previewStandalone = target.standalone;
-    tab.previewDisabled = target.disabled;
-    this.previewRootPath = tab.previewRootPath;
-    this.previewMainPath = tab.previewMainPath;
-    this.previewTaskId = tab.previewTaskId;
-    this.previewSessionKey = tab.previewSessionKey;
-    this.previewImported = tab.previewImported;
-    this.previewStandalone = tab.previewStandalone;
-    this.previewDisabled = tab.previewDisabled;
+    this.previewSessionController.applyTargetToTab(tab, target);
   }
 
   private capturePreviewSession(): PreviewSessionState {
-    return {
-      previewRootPath: this.previewRootPath,
-      previewMainPath: this.previewMainPath,
-      previewTaskId: this.previewTaskId,
-      previewSessionKey: this.previewSessionKey,
-      previewImported: this.previewImported,
-      previewStandalone: this.previewStandalone,
-      previewDisabled: this.previewDisabled
-    };
-  }
-
-  private captureCurrentMainSessionForImportedTarget(target: PreviewTarget): PreviewSessionState | null {
-    if (target.standalone) return null;
-    if (!target.imported || !target.mainPath || !this.previewRootPath || !this.previewSessionKey) {
-      return null;
-    }
-    const mainKey = filePathKey(target.mainPath);
-    const currentRootMatchesMain = filePathKey(this.previewRootPath) === mainKey;
-    const currentMainMatchesMain = this.previewMainPath
-      ? filePathKey(this.previewMainPath) === mainKey
-      : false;
-    if (!currentRootMatchesMain && !currentMainMatchesMain) return null;
-    // Reuse the already-presented main PDF, but retain ownership from the
-    // target being activated. Copying the main tab's `imported=false` flag to
-    // an included chapter or template makes subsequent on-save scheduling
-    // incorrectly treat that dependency as unrelated.
-    return {
-      ...this.capturePreviewSession(),
-      previewMainPath: target.mainPath,
-      previewImported: target.imported,
-      previewStandalone: target.standalone,
-      previewDisabled: target.disabled
-    };
+    return this.previewSessionController.capture();
   }
 
   private applyPreviewSessionToTab(tab: EditorTab, session: PreviewSessionState): void {
-    tab.previewRootPath = session.previewRootPath;
-    tab.previewMainPath = session.previewMainPath;
-    tab.previewTaskId = session.previewTaskId;
-    tab.previewSessionKey = session.previewSessionKey;
-    tab.previewImported = session.previewImported;
-    tab.previewStandalone = session.previewStandalone;
-    tab.previewDisabled = session.previewDisabled;
-    this.previewRootPath = session.previewRootPath;
-    this.previewMainPath = session.previewMainPath;
-    this.previewTaskId = session.previewTaskId;
-    this.previewSessionKey = session.previewSessionKey;
-    this.previewImported = session.previewImported;
-    this.previewStandalone = session.previewStandalone;
-    this.previewDisabled = session.previewDisabled;
+    this.previewSessionController.applySessionToTab(tab, session);
   }
 
-  private async rootRelativeTypstPath(path: string): Promise<string | null> {
-    if (!this.workspaceRootPath) return null;
-    const value = relativeFilePath(this.workspaceRootPath, path);
-    if (value === null) return null;
-    return `/${value.replace(/\\/g, "/")}`;
-  }
 
-  private async prepareTemplateAwarePreview(
+  private prepareTemplateAwarePreview(
     target: PreviewTarget,
     activePath: string,
-    activeContents: string
+    activeContents: string,
   ): Promise<PreviewTarget> {
-    if (
-      !this.workspaceRootPath
-      || !target.imported
-      || !target.standalone
-      || !target.mainPath
-      || !target.rootPath
-      || filePathKey(target.rootPath) !== filePathKey(activePath)
-    ) return target;
-
-    try {
-      const mainText = await this.workspaceText(target.mainPath);
-      const application = findLocalTemplateApplication(mainText);
-      if (!application) return target;
-      const templatePath = await join(await dirname(target.mainPath), application.importPath);
-      if (!await invoke<boolean>("workspace_path_exists", { path: templatePath })) return target;
-      const templateRootPath = await this.rootRelativeTypstPath(templatePath);
-      const chapterRootPath = await this.rootRelativeTypstPath(activePath);
-      if (!templateRootPath || !chapterRootPath) return target;
-
-      const identity = previewSessionIdentity(
-        activePath,
-        previewRefreshStyle(this.effectivePreviewRenderMode),
-        researchDocumentIdentity(this.workspaceRootPath, target.mainPath, activePath)
-      );
-      const previewPath = await join(
-        this.workspaceRootPath,
-        `.${fileNameFromPath(activePath)}.${identity.taskId}.typsastra-preview.typ`
-      );
-      const previewSource = templatePreviewSource(application, templateRootPath, chapterRootPath, activeContents);
-      const existingSource = await invoke<string>("read_workspace_file", { path: previewPath }).catch(() => null);
-      if (existingSource !== previewSource) {
-        await invoke("save_workspace_file", { path: previewPath, contents: previewSource });
-      }
-      return { ...target, rootPath: previewPath };
-    } catch (error) {
-      this.appendLspLog({
-        kind: "warning",
-        source: "preview",
-        message: `Using direct standalone preview because the main template could not be reused: ${String(error)}`
-      });
-      return target;
-    }
+    return this.previewSessionController.prepareTemplateAware(target, activePath, activeContents);
   }
 
-  private async openDocumentIfNeeded(uri: string, text: string, version: number): Promise<void> {
-    if (this.openedDocumentUris.has(uri)) return;
-    await this.lspClient.openTextDocument(uri, text, version);
-    this.openedDocumentUris.add(uri);
+  private openDocumentIfNeeded(uri: string, text: string, version: number): Promise<void> {
+    return this.lspDocumentController.openIfNeeded(uri, text, version);
   }
 
-  private async closeDocumentIfOpened(path: string): Promise<void> {
-    if (!this.lspClient) return;
-    const uri = filePathToUri(path);
-    if (!this.openedDocumentUris.delete(uri)) return;
-    try {
-      await this.lspClient.closeTextDocument(uri);
-    } catch (error) {
-      this.openedDocumentUris.add(uri);
-      this.appendDeveloperLog({
-        kind: "warning",
-        source: "lsp",
-        message: `Failed to close ${fileNameFromPath(path)} in Tinymist: ${String(error)}`
-      });
-    }
+  private updatePinnedMain(path: string | null, force = false): Promise<boolean> {
+    return this.lspDocumentController.updatePinnedMain(path, force);
   }
 
-  private async updatePinnedMain(path: string | null, force = false): Promise<boolean> {
-    if (!this.lspReady || !this.lspClient) return false;
-    const targetPath = path;
-    if (!force && filePathKey(this.pinnedLspMainPath ?? "") === filePathKey(targetPath ?? "")) return false;
-    try {
-      await this.lspClient.pinMain(targetPath);
-      this.pinnedLspMainPath = targetPath;
-      return true;
-    } catch (error) {
-      this.appendLspLog({
-        kind: "warning",
-        source: "lsp",
-        message: `Unable to set Tinymist main-file context: ${String(error)}`
-      });
-      return false;
-    }
-  }
-
-  private async recheckActiveDocumentAfterPin(text: string): Promise<void> {
-    if (!this.activeFilePath || !this.lspReady || !this.lspClient) return;
-  
-    this.clearDiagnostics();
-  
-    const activePath = this.activeFilePath;
-    const lspRes = await this.getLspUriAndContent(activePath, text);
-  
-    if (!lspRes) return;
-  
-    const { uri: lspUri, content: lspContent } = lspRes;
-  
-    const activeTab = this.getActiveTab();
-  
-    //
-    // After a Tinymist restart openedDocumentUris is cleared, so the
-    // document must be registered with didOpen again.
-    //
-    if (!this.openedDocumentUris.has(lspUri)) {
-      const openVersion = ++this.currentVersion;
-  
-      this.latestDocumentVersion = openVersion;
-  
-      if (activeTab && activeTab.path === activePath) {
-        activeTab.version = openVersion;
-        activeTab.latestVersion = openVersion;
-      }
-  
-      await this.lspClient.openTextDocument(
-        lspUri,
-        lspContent,
-        openVersion
-      );
-  
-      this.openedDocumentUris.add(lspUri);
-  
-      this.appendDeveloperLog({
-        kind: "info",
-        source: "lsp lifecycle",
-        message:
-          `Reopened Tinymist document after restart: `
-          + `${lspUri}; version=${openVersion}`
-      });
-  
-      // didOpen already contains the complete current document.
-      // Do not immediately send an identical didChange.
-      return;
-    }
-  
-    //
-    // Document was already open, so this really is a change.
-    //
-    const changeVersion = ++this.currentVersion;
-  
-    this.latestDocumentVersion = changeVersion;
-  
-    if (activeTab && activeTab.path === activePath) {
-      activeTab.version = changeVersion;
-      activeTab.latestVersion = changeVersion;
-    }
-  
-    await this.lspClient.notifyTextChange(
-      lspUri,
-      lspContent,
-      changeVersion
-    );
-  
-    this.appendDeveloperLog({
-      kind: "info",
-      source: "lsp lifecycle",
-      message:
-        `Resynchronized open Tinymist document: `
-        + `${lspUri}; version=${changeVersion}`
-    });
+  private recheckActiveDocumentAfterPin(text: string): Promise<void> {
+    return this.lspDocumentController.recheckActiveAfterPin(text);
   }
 
   private renderPdfPreview(contents: string, force = false): Promise<void> {
@@ -3882,10 +3170,33 @@ export class TypsastraWorkspaceController {
   }
 
   private recoverPreviewAfterAcceptedDiagnostics(diagnostics: readonly LspDiagnostic[]): void {
+    const errors = diagnostics.filter(diagnostic => diagnostic.severity === 1);
+    const canRenderActiveFile = activeFileCanRenderPreview(
+      this.activeFilePath,
+      this.pinnedMainFilePath,
+      this.previewImported,
+      this.previewDisabled,
+    );
+    if (errors.length > 0) {
+      if (canRenderActiveFile) {
+        this.previewFrame.setError(
+          "Preview Render Failed",
+          this.previewDiagnosticFailureMessage(errors),
+        );
+      }
+      return;
+    }
+
+    // Diagnostic overlays are provisional and may be removed as soon as the
+    // active revision is valid. Compiler failures are owned by the render
+    // pipeline and must remain visible until a later PDF presents successfully.
+    if (canRenderActiveFile && this.lastFailedPreviewContents === null) {
+      this.previewFrame.clearErrorOverlay();
+    }
+
     if (
       this.effectivePreviewRenderMode !== "on-type"
       || this.lastFailedPreviewContents === null
-      || diagnostics.some(diagnostic => diagnostic.severity === 1)
     ) return;
 
     const latestContents = this.editorInstance.state.doc.toString();
@@ -3907,6 +3218,19 @@ export class TypsastraWorkspaceController {
       message: `LSP accepted a corrected revision after preview failure; requeueing ${latestContents.length} UTF-16 code unit(s).`,
     });
     void this.renderPdfPreview(latestContents);
+  }
+
+  private previewDiagnosticFailureMessage(diagnostics: readonly LspDiagnostic[]): string {
+    const activeFileName = this.activeFilePath ? fileNameFromPath(this.activeFilePath) : "document";
+    const visible = diagnostics.slice(0, 8).map(diagnostic => {
+      const line = diagnostic.range.start.line + 1;
+      const column = (diagnostic.range.start.character ?? 0) + 1;
+      return `error: ${diagnostic.message}\n  └─ ${activeFileName}:${line}:${column}`;
+    });
+    if (diagnostics.length > visible.length) {
+      visible.push(`…and ${diagnostics.length - visible.length} more error(s).`);
+    }
+    return visible.join("\n\n");
   }
   private appendLspLog(entry: LspLogEntry) {
     this.logConsoleController.appendLog({
@@ -4115,182 +3439,10 @@ export class TypsastraWorkspaceController {
     });
   }
 
-  private async reloadOpenFilesFromDisk(refreshPreview = true): Promise<boolean> {
-    let changed = false;
-    for (const tab of [...this.openTabs]) {
-      const pathKey = filePathKey(tab.path);
-      const exists = await invoke<boolean>("workspace_path_exists", { path: tab.path });
-      if (!exists) {
-        if (tab.isDirty) {
-          this.reportExternalConflict(tab.path, "was removed outside Typsastra");
-        } else {
-          this.externalConflictPaths.delete(pathKey);
-          await this.closeEditorTab(tab.path, true);
-        }
-        changed = true;
-        continue;
-      }
-
-      // Unsupported files are represented by a lightweight editor placeholder
-      // and are never decoded or synchronized as text.
-      if (!this.isInternallySupportedPath(tab.path)) continue;
-      // Restored inactive tabs are descriptors only. Reading them here would
-      // defeat lazy restoration and can eagerly decode very large PDFs.
-      if (!tab.contentLoaded) {
-        tab.sizeBytes = undefined;
-        tab.lineCount = undefined;
-        continue;
-      }
-      if (fileExtension(tab.path) === "pdf") {
-        if (this.activeFilePath && filePathKey(tab.path) === filePathKey(this.activeFilePath)) {
-          void this.loadPdfPath(tab.path, tab.path);
-        }
-        continue;
-      }
-
-      let contents: string;
-      try {
-        contents = isBinaryImagePath(tab.path)
-          ? await invoke<string>("read_workspace_file_as_base64", { path: tab.path })
-          : normalizeEditorText(await invoke<string>("read_workspace_file", { path: tab.path }));
-      } catch (error) {
-        console.warn(`Unable to reload ${tab.path}:`, error);
-        continue;
-      }
-
-      if (contents === tab.savedContent) {
-        this.externalConflictPaths.delete(pathKey);
-        continue;
-      }
-      if (contents === tab.content) {
-        tab.savedContent = contents;
-        tab.isDirty = false;
-        this.externalConflictPaths.delete(pathKey);
-        this.renderEditorTabs();
-        changed = true;
-        continue;
-      }
-      if (tab.isDirty) {
-        this.reportExternalConflict(tab.path, "changed outside Typsastra");
-        changed = true;
-        continue;
-      }
-
-      this.externalConflictPaths.delete(pathKey);
-      await this.applyExternalFileContent(tab, contents, refreshPreview);
-      changed = true;
-    }
-    return changed;
+  private reloadOpenFilesFromDisk(refreshPreview = true): Promise<boolean> {
+    return this.externalFileReloadController.reloadOpenFiles(refreshPreview);
   }
 
-  private async applyExternalFileContent(tab: EditorTab, contents: string, refreshPreview = true): Promise<void> {
-    const isActive = this.activeFilePath !== null && filePathKey(tab.path) === filePathKey(this.activeFilePath);
-    tab.content = contents;
-    tab.savedContent = contents;
-    tab.contentLoaded = true;
-    tab.isDirty = false;
-    tab.undoHistory = undefined;
-
-    if (!isActive) {
-      this.renderEditorTabs();
-      return;
-    }
-
-    if (isBinaryImagePath(tab.path)) {
-      const img = document.getElementById("image-viewer-img") as HTMLImageElement;
-      if (img) img.src = contents;
-      this.renderEditorTabs();
-      return;
-    }
-
-    if (fileExtension(tab.path) === "pdf") {
-      if (refreshPreview) {
-        void this.loadPdfPath(tab.path, tab.path);
-      }
-      this.renderEditorTabs();
-      return;
-    }
-
-    const selection = this.editorInstance.state.selection.main;
-    this.isLoadingFile = true;
-    try {
-      // Keep external reloads atomic from the user's perspective as well: the
-      // matching Unicode font policy must precede the replacement text.
-      const editorFontEffect = this.editorFontManager.prepareDocument(contents);
-      this.editorInstance.setState(createTabEditorState({
-        doc: contents,
-        anchor: Math.min(selection.anchor, contents.length),
-        head: Math.min(selection.head, contents.length),
-        extensions: this.editorExtensions,
-      }));
-      this.editorInstance.dispatch({
-        effects: [
-          ...this.currentEditorSettingsEffects(),
-          ...(editorFontEffect ? [editorFontEffect] : []),
-          languageCompartment.reconfigure(this.editorLanguageForPath(tab.path)),
-          completionCompartment.reconfigure(this.editorCompletionForPath(tab.path)),
-        ]
-      });
-    } finally {
-      this.isLoadingFile = false;
-    }
-
-    this.renderEditorTabs();
-    if (tab.path.toLowerCase().endsWith(".typ")) {
-      void this.documentOutlineController.update(
-        tab.path, 
-        contents, 
-        this.workspaceRootPath || "", 
-        async (p) => {
-          try {
-            return await invoke<string>("read_workspace_file", { path: p });
-          } catch {
-            return null;
-          }
-        }
-      );
-      this.documentOutlineController.setCursorPosition(this.editorInstance.state.selection.main.head, this.activeFilePath);
-    } else {
-      this.documentOutlineController.clear();
-    }
-    if (this.activeMode === "WYSIWYM") this.mapMarkupToWysiwym(contents);
-
-    const version = ++this.currentVersion;
-    this.latestDocumentVersion = version;
-    tab.version = version;
-    tab.latestVersion = version;
-    let lspUpdated = false;
-    if (this.lspReady && this.lspClient) {
-      const lspRes = await this.getLspUriAndContent(tab.path, contents);
-      if (lspRes) {
-        const { uri: lspUri, content: lspContent } = lspRes;
-        await this.openDocumentIfNeeded(lspUri, lspContent, version);
-        await this.lspClient.notifyTextChange(lspUri, lspContent, version);
-        await this.lspClient.notifyTextSave(lspUri, lspContent);
-        lspUpdated = true;
-      }
-    }
-    if (
-      refreshPreview
-      && participatesInPreviewCompilation(tab.path, this.pinnedMainFilePath, tab.previewImported)
-      && tab.path.toLowerCase().endsWith(".typ")
-      && !tab.previewDisabled
-    ) {
-      if (this.effectivePreviewRenderMode === "on-save") {
-        void this.renderPdfPreview(contents);
-      } else {
-        this.schedulePdfPreview(contents);
-      }
-    }
-    this.setLspStatus({
-      kind: lspUpdated || !isTypstDocumentPath(tab.path) ? "preview-ready" : "sync-pending",
-      message: lspUpdated
-        ? "Reloaded external file change"
-        : isTypstDocumentPath(tab.path)
-          ? "Reloaded external file; preview update queued"
-          : "Reloaded external file"
-    });
-  }
 
   private noMainFileMessage(): string {
     return this.previewContentController.noMainFileMessage();
@@ -4329,18 +3481,6 @@ export class TypsastraWorkspaceController {
 
   private refreshActivePreviewRoot(forceRender = false): Promise<void> {
     return this.previewContentController.refreshActivePreviewRoot(forceRender);
-  }
-
-  private reportExternalConflict(path: string, reason: string): void {
-    const pathKey = filePathKey(path);
-    if (this.externalConflictPaths.has(pathKey)) return;
-    this.externalConflictPaths.add(pathKey);
-    this.appendLspLog({
-      kind: "warning",
-      source: "workspace",
-      message: `${fileNameFromPath(path)} ${reason}; unsaved editor content was preserved.`
-    });
-    this.setLspStatus({ kind: "error", message: "External change conflicts with unsaved edits" });
   }
 
   private reportWorkspaceWatchError(error: unknown): void {
@@ -4389,62 +3529,8 @@ export class TypsastraWorkspaceController {
     return this.pinnedMainFilePath !== null && filePathKey(this.pinnedMainFilePath) === filePathKey(path);
   }
 
-  private async preparePinnedMainTypography(path: string): Promise<DocumentTypography | null | false> {
-    try {
-      let source = await this.workspaceText(path);
-      let config = this.typographyController.fromText(source);
-      if (config) {
-        const unsupportedInternalScale = await this.typographyController.unsupportedInternalScaleError(config);
-        if (unsupportedInternalScale) {
-          this.appendLspLog({
-            kind: "error",
-            source: "typography",
-            message: unsupportedInternalScale.message,
-          });
-          await message(unsupportedInternalScale.message, {
-            title: "Unsupported Built-in Font Scale",
-            kind: "error",
-          });
-          config = this.typographyController.resetUnsupportedInternalScales(config, unsupportedInternalScale.fonts);
-          const edit = parseTypographyBlock(source)
-            ? typographyEdit(source, config)
-            : documentScriptsEdit(source, config.fonts);
-          source = this.applyEdit(source, edit);
-          await this.writeWorkspaceText(path, source);
-        }
-      }
-      if (!this.workspaceRootPath) return await this.typographyController.effective(path, source) ?? config;
-      const typography = config ?? { baseSizePt: 11, fonts: [] };
-      const status = await this.typographyController.scaledFontSetStatus(typography);
-      if (!status.updateRequired) return await this.typographyController.effective(path, source) ?? config;
-
-      const scaledFonts = config?.fonts.filter(font => Math.abs(font.scale - 1) > 0.0001) ?? [];
-      if (scaledFonts.length > 0 && status.generationRequired) {
-        const outsideFineRange = this.typographyController.scaleRangeWarning(typography) !== null;
-        const variantWarning = this.typographyController.variantLimitWarning(status);
-        const accepted = await confirm(
-          `${fileNameFromPath(path)} contains a document typography directive that requires local font scaling:\n\n${scaledFonts.map(font => `${font.family}: ${font.scale}×`).join("\n")}\n\nTypsastra will generate the fonts in its private global cache before setting this file as main. No font data will be written into the project. Font scaling is intended for fine optical adjustment${outsideFineRange ? "; one or more values also exceed the recommended ±10% range, where accurate representation is not guaranteed and varies between fonts" : ""}.${variantWarning ? `\n\n${variantWarning}` : "\n\nPrepare the fonts and continue?"}`,
-          {
-            title: "Prepare Document Fonts?",
-            kind: "warning",
-            okLabel: "Prepare and Continue",
-            cancelLabel: "Cancel"
-          }
-        );
-        if (!accepted) return false;
-      }
-
-      await this.typographyController.prepareMainFileFonts(typography);
-      return await this.typographyController.effective(path, source) ?? config;
-    } catch (error) {
-      this.appendLspLog({
-        kind: "error",
-        source: "typography",
-        message: `Could not prepare typography for ${fileNameFromPath(path)}: ${String(error)}`
-      });
-      await message(String(error), { title: "Unable to Prepare Document Fonts", kind: "error" });
-      return false;
-    }
+  private preparePinnedMainTypography(path: string): Promise<DocumentTypography | null | false> {
+    return this.pinnedMainTypographyController.prepare(path);
   }
 
   private async setPinnedMainFile(path: string | null): Promise<void> {
@@ -4626,7 +3712,7 @@ export class TypsastraWorkspaceController {
       toggleLogConsole: () => this.logConsoleController.toggle(),
       clearLogs: () => this.logConsoleController.clearLogs(),
       restartLsp: async () => {
-        this.tinymistPreviewRecoveryAttempts = 0;
+        this.tinymistPreviewRecoveryController.resetAttempts();
         this.logConsoleController.clearAllLogs();
         this.previewFrame.clear();
         try {

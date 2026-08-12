@@ -51,34 +51,55 @@ describe("Tinymist workspace lifecycle", () => {
     expect(source).toContain("await this.restoreActiveDocumentAfterTinymistRestart();");
   });
 
+  test("continues opening a replacement after late teardown cleanup fails", async () => {
+    const lifecycle = await Bun.file(
+      new URL("../src/workspace/workspaceLifecycleController.ts", import.meta.url),
+    ).text();
+
+    expect(lifecycle).toContain("const previousWorkspace = app.workspaceRootPath;");
+    expect(lifecycle).toContain("if (app.workspaceRootPath !== null) throw error;");
+    expect(lifecycle).toContain("continuing with ${selected}");
+    expect(lifecycle.indexOf("app.workspaceLoading = true;")).toBeGreaterThan(
+      lifecycle.indexOf("if (app.workspaceRootPath !== null) throw error;"),
+    );
+  });
+
   test("reloads template typography and synchronizes restored directives", async () => {
     const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
     const typographySource = await Bun.file(
       new URL("../src/typography/typographyController.ts", import.meta.url),
     ).text();
+    const presentationSource = await Bun.file(
+      new URL("../src/editor/editorTabPresentationController.ts", import.meta.url),
+    ).text();
     expect(typographySource).toContain("public async reloadTemplateContext");
     expect(typographySource).toContain('this.port.restartTinymistSession("Reloading template typography...")');
+    const presentation = presentationSource.indexOf("presentText(tab: EditorTab, path: string)");
+    const tabDispatch = presentationSource.indexOf("editor.dispatch({", presentation);
     const activation = source.indexOf("private async activateEditorTab");
-    const tabDispatch = source.indexOf("this.editorInstance.dispatch({", activation);
-    const typographySync = source.indexOf(
-      "this.editorToolbarController.synchronizeDocumentTypography(activeTypography)",
-      tabDispatch,
-    );
-    const activeTabCommit = source.indexOf("this.activeFilePath = path;", tabDispatch);
+    const presentText = source.indexOf("this.editorTabPresentationController.presentText(tab, path)", activation);
+    const activeTabCommit = source.indexOf("this.activeFilePath = path;", presentText);
     const typographyResolve = source.indexOf(
       "await this.typographyController.effective(path, tab.content)",
-      tabDispatch,
+      activeTabCommit,
     );
-    expect(tabDispatch).toBeGreaterThan(activation);
-    expect(activeTabCommit).toBeGreaterThan(tabDispatch);
+    const typographySync = source.indexOf(
+      "this.editorToolbarController.synchronizeDocumentTypography(activeTypography)",
+      typographyResolve,
+    );
+    expect(tabDispatch).toBeGreaterThan(presentation);
+    expect(presentText).toBeGreaterThan(activation);
+    expect(activeTabCommit).toBeGreaterThan(presentText);
     expect(activeTabCommit).toBeLessThan(typographyResolve);
-    expect(typographySync).toBeGreaterThan(tabDispatch);
+    expect(typographySync).toBeGreaterThan(typographyResolve);
   });
 
   test("keeps imported template ownership while reusing the main preview session", async () => {
-    const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
-    const capture = source.indexOf("private captureCurrentMainSessionForImportedTarget");
-    const nextMethod = source.indexOf("\n  private ", capture + 10);
+    const source = await Bun.file(
+      new URL("../src/preview/previewSessionController.ts", import.meta.url),
+    ).text();
+    const capture = source.indexOf("captureCurrentMainSessionForImportedTarget");
+    const nextMethod = source.indexOf("\n  applySessionToTab", capture + 10);
     const method = source.slice(capture, nextMethod);
     expect(method).toContain("previewImported: target.imported");
     expect(method).toContain("previewStandalone: target.standalone");
@@ -165,15 +186,18 @@ describe("Tinymist workspace lifecycle", () => {
       new Error("Tinymist stopped before the LSP request completed.")
     )).toBe(true);
     expect(isTinymistStoppedRequestError(new Error("Typst compilation failed."))).toBe(false);
+    const recoverySource = await Bun.file(
+      new URL("../src/preview/tinymistPreviewRecoveryController.ts", import.meta.url),
+    ).text();
     expect(source).toContain("private recoverTinymistPreviewAfterUnexpectedStop");
-    expect(source).toContain("this.tinymistPreviewRecoveryAttempts >= 1");
-    expect(source).toContain('restartTinymistSession("Recovering interrupted preview..."');
-    expect(source).toContain("await this.restoreActiveDocumentAfterTinymistRestart(false)");
-    expect(source).toContain("this.pdfPreviewRenderController.queueRecovery(contents)");
+    expect(recoverySource).toContain("this.attempts >= 1");
+    expect(recoverySource).toContain('this.dependencies.restartTinymistSession("Recovering interrupted preview...")');
+    expect(recoverySource).toContain("await this.dependencies.restoreActiveDocumentAfterRestart()");
+    expect(recoverySource).toContain("this.dependencies.queueRecovery(contents)");
     expect(renderSource).toContain("this.queuedContents ??= contents");
     expect(renderSource).toContain("this.queuedForced = true");
     expect(renderSource).toContain("isTinymistStoppedRequestError(error)");
-    expect(source).toContain("this.tinymistPreviewRecoveryAttempts = 0");
+    expect(source).toContain("this.tinymistPreviewRecoveryController.resetAttempts()");
     expect(source).toContain("this.sourceMapSessionController.reset()");
     expect(sourceMapSource).toContain("this.retryKey = null");
     expect(source).toContain("this.previewSyncController.clearWarmup()");
