@@ -24,12 +24,8 @@ type ExamplesWorkspace = {
 type WorkspaceToolchain = { tinymistVersion: string; typstVersion: string };
 type DeveloperLog = { kind: "log" | "info" | "warning" | "error"; source: string; message: string };
 
-/**
- * Explicit compatibility port between the root application orchestrator and
- * the extracted workspace lifecycle. The root owns the concrete services;
- * this controller only sees the operations and state required by its workflow.
- */
-export interface WorkspaceLifecycleDependencies {
+/** Mutable session state currently owned by the application composition root. */
+export interface WorkspaceLifecycleSessionState {
   previewScrollTop: number;
   previewScrollSaveTimer: number | null;
   pinnedMainFilePath: string | null;
@@ -64,6 +60,11 @@ export interface WorkspaceLifecycleDependencies {
   managedImageToolPathKeys: Set<string>;
   lspDocumentController: { resetSessionState(): void };
   externalConflictPaths: Set<string>;
+  activeMode: "CODE" | "WYSIWYM";
+}
+
+/** Long-lived services used to carry out workspace lifecycle transitions. */
+export interface WorkspaceLifecycleServices {
   previewFrame: {
     currentUrl: string | null;
     restoreWorkspaceScrollPosition(scrollTop: number): void;
@@ -122,6 +123,10 @@ export interface WorkspaceLifecycleDependencies {
   imagePreviewController: { clear(): void };
   documentOutlineController: { clear(): void };
   logConsoleController: { clearAllLogs(): void; setVisible(visible: boolean): void };
+}
+
+/** Application-level operations coordinated by workspace lifecycle transitions. */
+export interface WorkspaceLifecycleOperations {
   activateEditorTab(path: string, persist?: boolean, options?: { skipPreviewActivation?: boolean }): Promise<void>;
   loadFile(path: string, options?: { skipPreviewActivation?: boolean }): Promise<void>;
   renderEditorTabs(): void;
@@ -147,8 +152,16 @@ export interface WorkspaceLifecycleDependencies {
   currentEditorSettingsEffects(): readonly StateEffect<unknown>[];
   applyFoldRanges(ranges: EditorFoldRange[]): void;
   mapMarkupToWysiwym(markup: string): void;
-  activeMode: "CODE" | "WYSIWYM";
 }
+
+/**
+ * Compatibility boundary used while lifecycle state moves out of the root.
+ * Keeping the three concerns named prevents new dependencies from being added
+ * to an undifferentiated application-shaped interface.
+ */
+export type WorkspaceLifecycleDependencies = WorkspaceLifecycleSessionState
+  & WorkspaceLifecycleServices
+  & WorkspaceLifecycleOperations;
 
 /**
  * Owns the project lifecycle while the legacy root controller still supplies
