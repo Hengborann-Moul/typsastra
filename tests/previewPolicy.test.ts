@@ -47,22 +47,28 @@ describe("preview policy", () => {
 
   test("applies preview ownership to mutation, scheduling, rendering, and preparation", async () => {
     const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
-    const methodSource = (name: string) => {
-      const start = source.indexOf(`  private ${name}`);
-      expect(start).toBeGreaterThanOrEqual(0);
-      const end = source.indexOf("\n  private ", start + 10);
-      return source.slice(start, end < 0 ? source.length : end);
-    };
-    for (const method of [
-      "async renderPdfPreview",
-      "schedulePdfPreview",
-      "handleContentMutation"
-    ]) {
-      expect(methodSource(method)).toContain("activeFileCanRenderPreview(");
-    }
-    const preparation = methodSource("async prepareRenderProjectIfNeeded");
-    expect(preparation).toContain("this.pinnedMainFilePath");
-    expect(preparation).toContain("entryFile = this.mapToOriginalPath(this.pinnedMainFilePath)");
+    const renderSource = await Bun.file(
+      new URL("../src/preview/pdfPreviewRenderController.ts", import.meta.url),
+    ).text();
+    const preparationSource = await Bun.file(
+      new URL("../src/preview/pdfPreviewPreparationController.ts", import.meta.url),
+    ).text();
+    const mutationStart = source.indexOf("  private handleContentMutation");
+    const mutationEnd = source.indexOf("\n  private ", mutationStart + 10);
+    expect(source.slice(mutationStart, mutationEnd)).toContain("activeFileCanRenderPreview(");
+
+    const renderStart = renderSource.indexOf("  public async render(");
+    const renderEnd = renderSource.indexOf("\n  public ", renderStart + 10);
+    expect(renderSource.slice(renderStart, renderEnd)).toContain("activeFileCanRenderPreview(");
+    const scheduleStart = renderSource.indexOf("  public schedule(");
+    const scheduleEnd = renderSource.indexOf("\n  public ", scheduleStart + 10);
+    expect(renderSource.slice(scheduleStart, scheduleEnd)).toContain("activeFileCanRenderPreview(");
+
+    const preparationStart = preparationSource.indexOf("  public async prepareProjectIfNeeded(");
+    const preparationEnd = preparationSource.indexOf("\n  public ", preparationStart + 10);
+    const preparation = preparationSource.slice(preparationStart, preparationEnd);
+    expect(preparation).toContain("const pinnedMainFilePath = this.deps.getPinnedMainFilePath()");
+    expect(preparation).toContain("entryFile = this.deps.mapToOriginalPath(pinnedMainFilePath)");
     expect(preparation).not.toContain('renderMode !== "on-type"');
   });
   test("keeps standalone preview disabled for v1.0", () => {

@@ -88,13 +88,19 @@ describe("Tinymist workspace lifecycle", () => {
   test("uses one cached compiler root for on-save and on-type sessions", async () => {
     const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
     const normalizedSource = source.replace(/\r\n/g, "\n");
-    const preparation = source.indexOf("private async prepareRenderProjectIfNeeded");
-    const preparationEnd = source.indexOf("\n  private ", preparation + 10);
-    const method = source.slice(preparation, preparationEnd);
-    expect(method).toContain("this.pinnedMainFilePath");
-    expect(method).toContain("entryFile = this.mapToOriginalPath(this.pinnedMainFilePath)");
+    const preparationSource = await Bun.file(
+      new URL("../src/preview/pdfPreviewPreparationController.ts", import.meta.url),
+    ).text();
+    const contentSource = await Bun.file(
+      new URL("../src/preview/previewContentController.ts", import.meta.url),
+    ).text();
+    const preparation = preparationSource.indexOf("public async prepareProjectIfNeeded");
+    const preparationEnd = preparationSource.indexOf("\n  public ", preparation + 10);
+    const method = preparationSource.slice(preparation, preparationEnd);
+    expect(method).toContain("const pinnedMainFilePath = this.deps.getPinnedMainFilePath()");
+    expect(method).toContain("entryFile = this.deps.mapToOriginalPath(pinnedMainFilePath)");
     expect(method).not.toContain('renderMode !== "on-type"');
-    expect(source).toContain("await this.updatePinnedMain(previewLspMainPath(target))");
+    expect(contentSource).toContain("await this.deps.updatePinnedMain(previewLspMainPath(target))");
     expect(source).not.toContain("cachedPreviewCompilerPath");
     expect(normalizedSource).toContain("await this.prepareRenderProjectIfNeeded();\n        await this.restartTinymistSession");
   });
@@ -145,6 +151,9 @@ describe("Tinymist workspace lifecycle", () => {
   test("restarts and requeues a preview interrupted by an unexpected Tinymist stop", async () => {
     const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
     const clientSource = await Bun.file(new URL("../src/compiler/lsp.ts", import.meta.url)).text();
+    const renderSource = await Bun.file(
+      new URL("../src/preview/pdfPreviewRenderController.ts", import.meta.url),
+    ).text();
     const sourceMapSource = await Bun.file(
       new URL("../src/preview/sourceMapSessionController.ts", import.meta.url),
     ).text();
@@ -160,16 +169,18 @@ describe("Tinymist workspace lifecycle", () => {
     expect(source).toContain("this.tinymistPreviewRecoveryAttempts >= 1");
     expect(source).toContain('restartTinymistSession("Recovering interrupted preview..."');
     expect(source).toContain("await this.restoreActiveDocumentAfterTinymistRestart(false)");
-    expect(source).toContain("this.queuedPdfPreviewContents ??= contents");
-    expect(source).toContain("this.queuedPdfPreviewForced = true");
-    expect(source).toContain("isTinymistStoppedRequestError(error)");
+    expect(source).toContain("this.pdfPreviewRenderController.queueRecovery(contents)");
+    expect(renderSource).toContain("this.queuedContents ??= contents");
+    expect(renderSource).toContain("this.queuedForced = true");
+    expect(renderSource).toContain("isTinymistStoppedRequestError(error)");
     expect(source).toContain("this.tinymistPreviewRecoveryAttempts = 0");
     expect(source).toContain("this.sourceMapSessionController.reset()");
     expect(sourceMapSource).toContain("this.retryKey = null");
     expect(source).toContain("this.previewSyncController.clearWarmup()");
     expect(previewSyncSource).toContain("window.clearTimeout(this.warmupTimer)");
-    expect(source).toContain("this.pdfPreviewSourceMapRootPath = null");
-    expect(source).toContain("this.pdfPreviewSourceMapTaskId = null");
+    expect(source).toContain("this.pdfPreviewRenderController.resetSourceMapIdentity()");
+    expect(renderSource).toContain("this.sourceMapRootPathValue = null");
+    expect(renderSource).toContain("this.sourceMapTaskIdValue = null");
     expect(clientSource).toContain("private clearPreviewEndpoints(): void");
     expect(clientSource).toContain("this.latestPreviewDataPlaneUrl = \"\"");
   });

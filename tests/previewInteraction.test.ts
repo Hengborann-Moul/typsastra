@@ -134,17 +134,21 @@ describe("PDF page render ownership", () => {
 
 describe("direct PDF interaction policy", () => {
   test("does not route direct PDF clicks into Typst inverse sync", async () => {
-    const controller = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
-    const clickStart = controller.indexOf("private async handlePdfPreviewClick");
-    const clickEnd = controller.indexOf("private async ensurePdfSyncSocket", clickStart);
-    const clickSource = controller.slice(clickStart, clickEnd);
-    expect(clickSource).toContain("!isTypstDocumentPath(this.activeFilePath)");
+    const navigation = await Bun.file(
+      new URL("../src/preview/previewSourceNavigationController.ts", import.meta.url),
+    ).text();
+    const ui = await Bun.file(
+      new URL("../src/preview/previewUiController.ts", import.meta.url),
+    ).text();
+    const clickStart = navigation.indexOf("public async handlePdfPreviewClick");
+    const clickEnd = navigation.indexOf("\n  private ", clickStart + 10);
+    const clickSource = navigation.slice(clickStart, clickEnd);
+    expect(clickSource).toContain("!isTypstDocumentPath(activeFilePath)");
     expect(clickSource).toContain("Ignored source-sync click because the active preview is a direct PDF document.");
 
-    const statusStart = controller.indexOf("private reportPreviewInteractionStatus");
-    const statusEnd = controller.indexOf("private utf8ByteLength", statusStart);
-    const statusSource = controller.slice(statusStart, statusEnd);
-    expect(statusSource).toContain("!isTypstDocumentPath(this.activeFilePath)");
+    const statusStart = ui.indexOf("public reportInteractionStatus");
+    const statusSource = ui.slice(statusStart);
+    expect(statusSource).toContain("!isTypstDocumentPath(activeFilePath)");
     expect(statusSource).toContain("source synchronization is disabled for direct PDF documents");
   });
 });

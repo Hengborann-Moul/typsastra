@@ -11,19 +11,23 @@ describe("compiled PDF transport", () => {
   });
 
   test("loads compiled previews through raw binary IPC without retaining Base64", async () => {
-    const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
+    const source = await Bun.file(
+      new URL("../src/preview/pdfPreviewRenderController.ts", import.meta.url),
+    ).text();
     expect(source).toContain('invoke<ArrayBuffer | Uint8Array | number[]>("read_binary_file"');
     expect(source).not.toContain("lastPdfBase64");
     expect(source).not.toContain("exportBase64Chars");
   });
 
   test("registers generated preview PDFs before Tinymist writes them", async () => {
-    const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
+    const source = await Bun.file(
+      new URL("../src/preview/pdfPreviewRenderController.ts", import.meta.url),
+    ).text();
     const workspaceSource = await Bun.file(
       new URL("../src/workspace/externalWorkspaceController.ts", import.meta.url),
     ).text();
-    const registration = source.indexOf("this.managedPreviewPdfPathKeys.add(anticipatedPdfPathKey)");
-    const exportRequest = source.indexOf("await this.lspClient.exportPdfToFile(previewPath)");
+    const registration = source.indexOf("this.managedPdfPathKeysValue.add(anticipatedPdfPathKey)");
+    const exportRequest = source.indexOf("await this.deps.getLspClient()!.exportPdfToFile(previewPath)");
     expect(registration).toBeGreaterThan(-1);
     expect(exportRequest).toBeGreaterThan(registration);
     expect(source).toContain('const anticipatedPdfPath = `${cacheRoot}/preview/${previewPdfName}`');
@@ -31,7 +35,9 @@ describe("compiled PDF transport", () => {
   });
 
   test("shares the staged PDF generation with the undocked preview", async () => {
-    const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
+    const source = await Bun.file(
+      new URL("../src/preview/pdfPreviewRenderController.ts", import.meta.url),
+    ).text();
     const staging = source.indexOf('const stagedPdfPath = await invoke<string>("stage_pdf_preview_generation"');
     const update = source.indexOf('emit("pdf-update"', staging);
     const updateEnd = source.indexOf("satisfies PdfUpdatePayload", update);
@@ -71,23 +77,28 @@ describe("compiled PDF transport", () => {
 
   test("uses the private render mirror for on-save and on-type previews", async () => {
     const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
-    expect(source).toContain("Every live preview compiles from Typsastra's private render mirror.");
+    const preparationSource = await Bun.file(
+      new URL("../src/preview/pdfPreviewPreparationController.ts", import.meta.url),
+    ).text();
+    expect(preparationSource).toContain("Every live preview compiles from Typsastra's private render mirror.");
     expect(source).not.toContain('const shouldMirror = this.settingsController.value.preview.renderMode === "on-type"');
     expect(source).not.toContain("if (!shouldMirror || !this.workspaceRootPath)");
   });
 
   test("pins the exact prepared revision transiently while exporting in every render mode", async () => {
-    const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
+    const source = await Bun.file(
+      new URL("../src/preview/pdfPreviewRenderController.ts", import.meta.url),
+    ).text();
     const diagnosticsSource = await Bun.file(
       new URL("../src/diagnostics/diagnosticsController.ts", import.meta.url)
     ).text();
-    const renderStart = source.indexOf("private async renderPdfPreview");
+    const renderStart = source.indexOf("public async render(");
     const preparedPaths = source.indexOf("const preparedPaths = [...new Set([", renderStart);
-    const legacyClose = source.indexOf("await this.closePreparedPreviewDocuments()", preparedPaths);
-    const invalidation = source.indexOf("await this.lspClient.notifyWorkspaceFilesChanged(", preparedPaths);
-    const transientOpen = source.indexOf("await this.openPreparedPreviewDocumentsForExport(preparedPaths)", invalidation);
-    const exportRequest = source.indexOf("await this.lspClient.exportPdfToFile(previewPath)", transientOpen);
-    const transientClose = source.indexOf("await this.closePreparedPreviewDocuments()", exportRequest);
+    const legacyClose = source.indexOf("await this.deps.preparation.closePreparedDocuments()", preparedPaths);
+    const invalidation = source.indexOf("await this.deps.getLspClient()!.notifyWorkspaceFilesChanged(", preparedPaths);
+    const transientOpen = source.indexOf("await this.deps.preparation.openPreparedDocumentsForExport(preparedPaths)", invalidation);
+    const exportRequest = source.indexOf("await this.deps.getLspClient()!.exportPdfToFile(previewPath)", transientOpen);
+    const transientClose = source.indexOf("await this.deps.preparation.closePreparedDocuments()", exportRequest);
     const invalidationPrefix = source.slice(preparedPaths, invalidation);
 
     expect(preparedPaths).toBeGreaterThan(renderStart);
@@ -97,26 +108,37 @@ describe("compiled PDF transport", () => {
     expect(exportRequest).toBeGreaterThan(transientOpen);
     expect(transientClose).toBeGreaterThan(exportRequest);
     expect(invalidationPrefix).not.toContain('renderMode === "on-type"');
+    const preparationSource = await Bun.file(
+      new URL("../src/preview/pdfPreviewPreparationController.ts", import.meta.url),
+    ).text();
     expect(source).toContain("...preparedPreview.changedPaths");
-    expect(source).toContain("changedPaths: result.changedFiles");
+    expect(preparationSource).toContain("changedPaths: result.changedFiles");
     expect(source).not.toContain("syncPreparedPreviewDocuments");
     expect(diagnosticsSource).toContain("if (this.port.isRenderCachePath(rawPath))");
     expect(source).toContain("Tinymist's watched-file invalidation can complete");
   });
 
   test("uses memory overlays on type and disk snapshots on save", async () => {
-    const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
+    const source = await Bun.file(
+      new URL("../src/preview/pdfPreviewRenderController.ts", import.meta.url),
+    ).text();
+    const preparationSource = await Bun.file(
+      new URL("../src/preview/pdfPreviewPreparationController.ts", import.meta.url),
+    ).text();
     expect(source).toContain(
-      'const useEditorOverlays = this.effectivePreviewRenderMode === "on-type" || force;'
+      'const useEditorOverlays = this.deps.getPreviewRenderMode() === "on-type" || force;'
     );
-    expect(source).toContain("const tabsToOverlay = useEditorOverlays");
-    expect(source).toMatch(
+    expect(preparationSource).toContain("const tabsToOverlay = useEditorOverlays");
+    expect(preparationSource).toMatch(
       /if\s*\(\s*useEditorOverlays\s*&&[\s\S]*?!overlaid\.has\(filePathKey\(originalActivePath\)\)/
     );
   });
 
   test("keeps editor diagnostics on original sources and recompiles explicit saves in either mode", async () => {
     const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
+    const contentSource = await Bun.file(
+      new URL("../src/preview/previewContentController.ts", import.meta.url),
+    ).text();
     const persistenceSource = await Bun.file(
       new URL("../src/editor/documentPersistenceController.ts", import.meta.url),
     ).text();
@@ -126,7 +148,7 @@ describe("compiled PDF transport", () => {
     const saveStart = persistenceSource.indexOf("private async performSaveActiveFile");
     const saveEnd = persistenceSource.indexOf("\n  private ", saveStart + 10);
     const saveMethod = persistenceSource.slice(saveStart, saveEnd);
-    expect(source).toContain("await this.updatePinnedMain(previewLspMainPath(target))");
+    expect(contentSource).toContain("await this.deps.updatePinnedMain(previewLspMainPath(target))");
     expect(source).not.toContain("cachedPreviewCompilerPath");
     expect(diagnosticsSource).toContain("if (this.port.isRenderCachePath(rawPath))");
     expect(saveMethod).toContain("void this.deps.renderPdfPreview(content)");
@@ -135,39 +157,42 @@ describe("compiled PDF transport", () => {
 
   test("recovers the latest editor snapshot after a failed on-type render", async () => {
     const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
+    const renderSource = await Bun.file(
+      new URL("../src/preview/pdfPreviewRenderController.ts", import.meta.url),
+    ).text();
     const diagnosticsSource = await Bun.file(
       new URL("../src/diagnostics/diagnosticsController.ts", import.meta.url)
     ).text();
     const failureSource = await Bun.file(
       new URL("../src/diagnostics/previewFailureController.ts", import.meta.url)
     ).text();
-    const renderStart = source.indexOf("private async renderPdfPreview");
-    const renderEnd = source.indexOf("\n  private ", renderStart + 10);
-    const renderMethod = source.slice(renderStart, renderEnd);
+    const renderStart = renderSource.indexOf("public async render(");
+    const renderEnd = renderSource.indexOf("\n  public ", renderStart + 10);
+    const renderMethod = renderSource.slice(renderStart, renderEnd);
     const diagnosticsStart = source.indexOf("private handleLspDiagnostics");
     const diagnosticsEnd = source.indexOf("\n  private ", diagnosticsStart + 10);
     const diagnosticsMethod = source.slice(diagnosticsStart, diagnosticsEnd);
 
-    expect(renderMethod).toContain("const latestContents = this.editorInstance.state.doc.toString()");
+    expect(renderMethod).toContain("const latestContents = this.deps.getEditorText()");
     expect(renderMethod).toContain("if (latestContents !== contents)");
     expect(renderMethod).toContain("queued !== contents || !renderSucceeded");
-    expect(renderMethod).toContain('this.previewFrame.setError("Preview Render Failed", failureMessage)');
-    expect(renderMethod).not.toContain("if (!this.previewFrame.currentUrl)");
-    expect(renderMethod).not.toContain('if (reportRenderStatus) {\n        this.setLspStatus({ kind: "preview-ready", message: "Preview ready" });');
-    expect(renderMethod).toContain('this.setLspStatus({ kind: "preview-ready", message: "Preview ready" });');
-    expect(renderMethod).toContain('this.logConsoleController.clearLogsBySource(["compiler", "package compatibility"]);');
-    expect(renderMethod).toContain('this.setLspStatus({ kind: "preview-error", message: "PDF compile failed" });');
+    expect(renderMethod).toContain('this.deps.previewFrame.setError("Preview Render Failed", failureMessage)');
+    expect(renderMethod).not.toContain("if (!this.deps.previewFrame.currentUrl)");
+    expect(renderMethod).not.toContain('if (reportRenderStatus) {\n        this.deps.setLspStatus({ kind: "preview-ready", message: "Preview ready" });');
+    expect(renderMethod).toContain('this.deps.setLspStatus({ kind: "preview-ready", message: "Preview ready" });');
+    expect(renderMethod).toContain('this.deps.logConsole.clearLogsBySource(["compiler", "package compatibility"]);');
+    expect(renderMethod).toContain('this.deps.setLspStatus({ kind: "preview-error", message: "PDF compile failed" });');
     expect(diagnosticsMethod).not.toContain('this.previewFrame.setError("Preview Render Failed"');
     expect(diagnosticsMethod).not.toContain("this.previewFrame.clearErrorOverlay()");
     expect(diagnosticsMethod).toContain("this.diagnosticsController.handleLspDiagnostics");
     expect(source).toContain("private recoverPreviewAfterAcceptedDiagnostics");
     expect(source).toContain("this.lastFailedPreviewContents === null");
     expect(source).toContain("LSP accepted a corrected revision after preview failure");
-    expect(source).toContain("parsePreviewCompilerFailure(error)");
-    expect(renderMethod).toContain("this.publishPreviewCompilerFailure(failure, packageHint)");
+    expect(renderSource).toContain("parsePreviewCompilerFailure(error)");
+    expect(renderMethod).toContain("this.deps.previewFailure.publish(failure, packageHint)");
     expect(failureSource).toContain("const failureComesFromRenderMirror = failure.location !== null");
     expect(failureSource).toContain("if (!failureComesFromRenderMirror)");
-    expect(source).toContain("this.previewFailureController.packageFailureHint");
+    expect(renderSource).toContain("this.deps.previewFailure.packageFailureHint");
     expect(failureSource).toContain("private async packageDependencyChain(");
     expect(failureSource).toMatch(
       /source:\s*"package compatibility",[\s\S]*?kind:\s*"error"|kind:\s*"error",[\s\S]*?source:\s*"package compatibility"/

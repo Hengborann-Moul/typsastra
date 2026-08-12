@@ -22,21 +22,24 @@ describe("UI responsiveness safeguards", () => {
   });
 
   test("keeps PDF presentation and source-map warm-up out of active pane drags", async () => {
-    const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
+    const appSource = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
+    const source = await Bun.file(
+      new URL("../src/preview/pdfPreviewRenderController.ts", import.meta.url),
+    ).text();
     const previewSyncSource = await Bun.file(
       new URL("../src/preview/previewSyncController.ts", import.meta.url),
     ).text();
     const exportComplete = source.indexOf("Tinymist PDF export complete.");
-    const resizeBoundary = source.indexOf("await this.workspaceResumeController.waitForHorizontalResizeEnd()", exportComplete);
+    const resizeBoundary = source.indexOf("await this.deps.workspaceResume.waitForHorizontalResizeEnd()", exportComplete);
     const presentation = source.indexOf("await this.loadPdfPath(", resizeBoundary);
     expect(exportComplete).toBeGreaterThan(-1);
     expect(resizeBoundary).toBeGreaterThan(exportComplete);
     expect(presentation).toBeGreaterThan(resizeBoundary);
-    expect(source).toContain("interactionBlocked: this.workspaceResumeController.interactionBlocked");
+    expect(appSource).toContain("interactionBlocked: this.workspaceResumeController.interactionBlocked");
     expect(previewSyncSource).toContain(
       "context.interactionBlocked || context.previewRunning || !ready",
     );
-    expect(source).toContain("this.schedulePdfSourceMapWarmup(generation)");
+    expect(source).toContain("this.deps.scheduleSourceMapWarmup(generation)");
   });
 
   test("recovers an interrupted pane drag and stale source-map socket after system resume", async () => {

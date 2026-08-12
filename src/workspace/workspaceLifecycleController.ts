@@ -52,20 +52,10 @@ export interface WorkspaceLifecycleDependencies {
   previewImported: boolean;
   previewStandalone: boolean;
   previewDisabled: boolean;
-  pdfPreviewSourceMapRootPath: string | null;
-  pdfPreviewSourceMapTaskId: string | null;
-  pdfPreviewTimer: number | null;
-  pdfPreviewGeneration: number;
-  queuedPdfPreviewContents: string | null;
-  queuedPdfPreviewForced: boolean;
   tinymistPreviewRecoveryAttempts: number;
   tinymistPreviewRecovery: Promise<boolean> | null;
   externalPreviewRefreshPending: boolean;
   lastPreviewRenderMode: PreviewRenderMode | undefined;
-  lastPdfPath: string;
-  lastPdfIdentity: string;
-  lastPdfSessionKey: string;
-  lastPdfSurface: "live" | "pdf";
   isLoadingFile: boolean;
   editorExtensions: Extension;
   editorInstance: EditorView;
@@ -73,7 +63,6 @@ export interface WorkspaceLifecycleDependencies {
   approvedLargePreviewRoots: Set<string>;
   inspectedPreviewRoots: Set<string>;
   pdfPreviewGeneratedFiles: Map<string, unknown>;
-  managedPreviewPdfPathKeys: Set<string>;
   managedImageToolPathKeys: Set<string>;
   openedDocumentUris: Set<string>;
   externalConflictPaths: Set<string>;
@@ -81,6 +70,13 @@ export interface WorkspaceLifecycleDependencies {
     currentUrl: string | null;
     restoreWorkspaceScrollPosition(scrollTop: number): void;
     clear(): void;
+  };
+  pdfPreviewRenderController: {
+    sourceMapTaskId: string | null;
+    resetForWorkspaceClose(): void;
+  };
+  pdfPreviewPreparationController: {
+    clearGeneratedFiles(): void;
   };
   layoutController: {
     setDockedInputWidthPct(width: number): void;
@@ -509,7 +505,7 @@ export class WorkspaceLifecycleController {
     app.workspaceController.stopWatching();
     const previewTaskIds = new Set([
       app.previewTaskId,
-      app.pdfPreviewSourceMapTaskId,
+      app.pdfPreviewRenderController.sourceMapTaskId,
       app.sourceMapSessionController.registeredTaskId,
     ].filter((taskId: string | null): taskId is string => Boolean(taskId)));
     if (app.lspClient) {
@@ -525,8 +521,8 @@ export class WorkspaceLifecycleController {
       });
     }
 
-    if (app.pdfPreviewTimer !== null) window.clearTimeout(app.pdfPreviewTimer);
-    app.pdfPreviewTimer = null;
+    app.pdfPreviewRenderController.resetForWorkspaceClose();
+    app.pdfPreviewPreparationController.clearGeneratedFiles();
     app.typographyController.resetRuntime();
     app.approvedLargePreviewRoots.clear();
     app.inspectedPreviewRoots.clear();
@@ -535,12 +531,9 @@ export class WorkspaceLifecycleController {
     app.previewScrollTop = 0;
     if (app.previewScrollSaveTimer !== null) window.clearTimeout(app.previewScrollSaveTimer);
     app.previewScrollSaveTimer = null;
-    app.pdfPreviewGeneration += 1;
     app.previewSyncController.cancelManual();
     app.tinymistPreviewRecoveryAttempts = 0;
     app.tinymistPreviewRecovery = null;
-    app.queuedPdfPreviewContents = null;
-    app.queuedPdfPreviewForced = false;
 
     app.workspaceRootPath = null;
     app.sidebarController.reset();
@@ -565,17 +558,9 @@ export class WorkspaceLifecycleController {
     app.previewImported = false;
     app.previewStandalone = true;
     app.previewDisabled = false;
-    app.pdfPreviewSourceMapRootPath = null;
-    app.pdfPreviewSourceMapTaskId = null;
-    app.pdfPreviewGeneratedFiles.clear();
-    app.managedPreviewPdfPathKeys.clear();
     app.managedImageToolPathKeys.clear();
     app.sourceMapSessionController.reset();
     app.externalPreviewRefreshPending = false;
-    app.lastPdfPath = "";
-    app.lastPdfIdentity = "";
-    app.lastPdfSessionKey = "";
-    app.lastPdfSurface = "live";
     app.imagePreviewController.clear();
     app.updatePreviewActionsToolbar(null);
     app.openedDocumentUris.clear();

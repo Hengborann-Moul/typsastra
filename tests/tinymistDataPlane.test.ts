@@ -50,12 +50,14 @@ describe("Tinymist preview data plane", () => {
   });
 
   test("loads the prepared source identity before the first cache-backed forward sync", async () => {
-    const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
-    const targetStart = source.indexOf("  private async forwardSyncTarget");
-    const targetEnd = source.indexOf("\n  private ", targetStart + 10);
+    const source = await Bun.file(
+      new URL("../src/preview/previewSourceNavigationController.ts", import.meta.url),
+    ).text();
+    const targetStart = source.indexOf("  public async forwardSyncTarget");
+    const targetEnd = source.indexOf("\n  public ", targetStart + 10);
     const target = source.slice(targetStart, targetEnd);
-    expect(target).toContain("this.isRenderCachePath(this.pdfPreviewSourceMapRootPath");
-    expect(target).toContain("await this.pdfGeneratedPreviewText");
+    expect(target).toContain("this.deps.isRenderCachePath(this.deps.getSourceMapRootPath()");
+    expect(target).toContain("await this.deps.pdfGeneratedPreviewText");
     expect(target).toContain("Loaded prepared source identity before forward sync");
   });
 });

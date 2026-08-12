@@ -4,6 +4,9 @@ import { join } from "node:path";
 
 const root = join(import.meta.dir, "..");
 const controller = readFileSync(join(root, "src", "appController.ts"), "utf8");
+const pdfRenderController = readFileSync(join(root, "src", "preview", "pdfPreviewRenderController.ts"), "utf8");
+const pdfPreparationController = readFileSync(join(root, "src", "preview", "pdfPreviewPreparationController.ts"), "utf8");
+const sourceNavigationController = readFileSync(join(root, "src", "preview", "previewSourceNavigationController.ts"), "utf8");
 const appEventBindings = readFileSync(join(root, "src", "ui", "appEventBindings.ts"), "utf8");
 const draftController = readFileSync(
   join(root, "src", "preview", "draftPreviewController.ts"),
@@ -26,7 +29,7 @@ describe("Draft Preview", () => {
     expect(html).toContain('class="preview-content-mode-track"');
     expect(html).toContain('class="preview-content-mode-thumb"');
     expect(controller).toContain("previewContentMode: this.draftPreviewController.mode");
-    expect(controller).toContain('previewContentMode: "normal"');
+    expect(pdfPreparationController).toContain('previewContentMode: "normal"');
     expect(controller).toContain('this.draftPreviewController.mode === "draft" ? "normal" : "draft"');
     expect(styles).toMatch(/\.preview-content-mode-toggle\s*\{[^}]*width:\s*108px;[^}]*min-width:\s*108px;/s);
     expect(styles).toMatch(
@@ -64,8 +67,8 @@ describe("Draft Preview", () => {
   });
 
   test("commits the requested mode and image manifest only after PDF presentation", () => {
-    const presentation = controller.indexOf("await this.loadPdfPath(");
-    const modeCommit = controller.indexOf("await this.draftPreviewController.presentGeneration({", presentation);
+    const presentation = pdfRenderController.indexOf("await this.loadPdfPath(");
+    const modeCommit = pdfRenderController.indexOf("await this.deps.draftPreview.presentGeneration({", presentation);
     expect(presentation).toBeGreaterThan(-1);
     expect(modeCommit).toBeGreaterThan(presentation);
     expect(draftController).toContain("this.presentedModeValue = input.mode");
@@ -78,7 +81,7 @@ describe("Draft Preview", () => {
     expect(previewFrame).toContain("URL.revokeObjectURL");
     expect(previewFrame).toContain('name: "preview.draft-hover"');
     expect(previewFrame).toContain("this.onPreviewClick({ draftImageId: annotationTarget.id })");
-    expect(controller).toContain("await this.navigateToDraftPreviewImage(point.draftImageId)");
+    expect(sourceNavigationController).toContain("await this.navigateToDraftPreviewImage(point.draftImageId)");
     expect(previewFrame).not.toContain('if (this.annotationTargets.get(annotationLink)?.kind === "draft-image")');
     expect(plan).toContain("including its fixed-size path label");
   });
@@ -179,8 +182,8 @@ describe("Draft Preview", () => {
 
     expect(mirror).toContain("collect_reachable_typst_files");
     expect(mirror).toContain("draft_reachable_files");
-    expect(controller).toContain("result.draftReachableFiles");
-    expect(controller).toContain("draftReachableFileKeys.has");
+    expect(pdfPreparationController).toContain("result.draftReachableFiles");
+    expect(pdfPreparationController).toContain("draftReachableFileKeys.has");
     expect(draftController).toContain("documentRootPath: this.thumbnailDocumentRootPath");
     expect(thumbnails).toContain("thumbnail_document_namespace");
     expect(thumbnails).toContain("thumbnail_root.join(cache_namespace)");
@@ -205,15 +208,15 @@ describe("Draft Preview", () => {
   });
 
   test("reports persisted Draft preparation reuse separately from same-generation overlays", () => {
-    expect(controller).toContain("projectManifestCacheHits");
-    expect(controller).toContain("overlayManifestCacheHits");
-    expect(controller).toContain("overlayPreparations");
-    expect(controller).toContain("result.draftCacheHits");
-    expect(controller).toContain("generated.draftCacheHit");
-    expect(controller).toContain("backendTypMs");
-    expect(controller).toContain("backendAssetMs");
-    expect(controller).toContain("projectPreparationMs");
-    expect(controller).toContain("overlayPreparationMs");
+    expect(pdfRenderController).toContain("projectManifestCacheHits");
+    expect(pdfRenderController).toContain("overlayManifestCacheHits");
+    expect(pdfRenderController).toContain("overlayPreparations");
+    expect(pdfPreparationController).toContain("result.draftCacheHits");
+    expect(pdfPreparationController).toContain("generated.draftCacheHit");
+    expect(pdfRenderController).toContain("backendTypMs");
+    expect(pdfRenderController).toContain("backendAssetMs");
+    expect(pdfRenderController).toContain("projectPreparationMs");
+    expect(pdfRenderController).toContain("overlayPreparationMs");
   });
 
   test("keeps cached hover previews compact in storage and on screen", () => {
