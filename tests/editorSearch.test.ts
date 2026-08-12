@@ -115,6 +115,29 @@ describe("editor search navigation", () => {
     expect(css).toContain(".cm-panel.cm-search .cm-search-match-count");
   });
 
+  test("uses compact accessible app icons for search actions and toggles", async () => {
+    const source = await Bun.file(new URL("../src/editor/search.ts", import.meta.url)).text();
+    const css = await Bun.file(new URL("../src/style.css", import.meta.url)).text();
+
+    expect(source).toContain('createAppIcon(icon, { size: 16 })');
+    expect(source).toContain('iconButton("next", "Next match", "arrowDown"');
+    expect(source).toContain('iconToggle(this.caseField, "Match case", "caseSensitive")');
+    expect(source).toContain('iconToggle(this.diacriticsField, "Match diacritics", "languages")');
+    expect(source).toContain('field.setAttribute("aria-label", label)');
+    expect(css).toContain(".cm-panel.cm-search .cm-search-icon-toggle:has(input:checked)");
+    expect(css).toContain("width: 100% !important");
+    expect(css).toContain("height: calc(var(--editor-line-height-px, 23.8px) + 10px) !important");
+    expect(source).toContain("editorCaretInput(this.searchField)");
+    expect(source).toContain("editorCaretInput(this.replaceField)");
+    expect(css).toContain(".cm-panel.cm-search .cm-search-editor-caret");
+    expect(css).toContain("border-left: 2px solid var(--editor-cursor-color, #3db489)");
+    expect(css).toContain("height: var(--editor-line-height-px, 23.8px)");
+    expect(css).toContain("grid-template-columns:");
+    expect(css).toContain("minmax(120px, 1fr)");
+    expect(css).toContain("grid-column: 1");
+    expect(source).not.toContain('right: 20px');
+  });
+
   test("centers search navigation results when document boundaries allow it", async () => {
     const source = await Bun.file(new URL("../src/editor/extensions.ts", import.meta.url)).text();
 
