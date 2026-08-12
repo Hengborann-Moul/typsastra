@@ -1,9 +1,8 @@
 import { listen } from "@tauri-apps/api/event";
-import { confirm, message, open, save } from "@tauri-apps/plugin-dialog";
+import { confirm, message } from "@tauri-apps/plugin-dialog";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { getVersion } from "@tauri-apps/api/app";
 import { dirname, join } from "@tauri-apps/api/path";
 import { EditorState, type Extension, type Text } from "@codemirror/state";
 import { EditorView, highlightActiveLine, highlightActiveLineGutter, lineNumbers } from "@codemirror/view";
@@ -63,10 +62,9 @@ import {
 } from "./diagnostics/previewFailureController";
 import { EditorFontManager } from "./editor/fontManager";
 import { TabStripController } from "./editor/tabStripController";
-import { createAppIcon, updateMaximizeIcon } from "./ui/icons";
-import { installModalFocusTrap } from "./ui/modalFocus";
+import { EditorSessionController } from "./editor/editorSessionController";
+import { EditorTabViewController } from "./editor/editorTabViewController";
 import { AppDialogController } from "./ui/appDialog";
-import { isAltGraphKeyboardEvent } from "./ui/keyboardModifiers";
 import {
   TYPSASTRA_GREEN,
   TYPSASTRA_GREEN_RIPPLE_FILL,
@@ -74,27 +72,31 @@ import {
 } from "./ui/brandColors";
 import { LayoutController } from "./layout/layoutController";
 import type { WorkspaceMetadata } from "./workspace/workspaceStateStore";
-import { RecentProjectsController, recentProjectShortcutIndex } from "./workspace/recentProjectsController";
+import { RecentProjectsController } from "./workspace/recentProjectsController";
 import {
   type WorkspaceChange
 } from "./workspace/workspaceWatcher";
 import { WorkspaceController } from "./workspace/workspaceController";
-import { WorkspaceLifecycleController } from "./workspace/workspaceLifecycleController";
+import {
+  WorkspaceLifecycleController,
+  type WorkspaceLifecycleDependencies,
+} from "./workspace/workspaceLifecycleController";
 import { ProjectImportController } from "./workspace/projectImportController";
 import { ExternalWorkspaceController } from "./workspace/externalWorkspaceController";
 import {
-  formatFileSize,
   largeFileOpeningNotice,
   largeMainPreviewOpeningNotice,
   type LargeFileOpeningNotice,
 } from "./workspace/largeFileOpening";
-import { installWelcomeKeyboardNavigation } from "./workspace/welcomeNavigation";
 import { PerformanceController } from "./performance/performanceController";
 import { EditorToolbarController } from "./editor/toolbarController";
 import { ContextMenuController } from "./components/contextMenuController";
 import { ToolchainController, type ToolchainStatus } from "./toolchain/toolchainController";
 import { DocumentOutlineController, type DocumentHeading } from "./outline/documentOutline";
 import { WindowStateController } from "./window/windowStateController";
+import { bindAppEvents } from "./ui/appEventBindings";
+import { ReleaseSummaryController } from "./ui/releaseSummaryController";
+import { ProjectExportController } from "./export/projectExportController";
 import {
   parseTypographyBlock,
   parseDocumentScripts,
@@ -110,15 +112,17 @@ import {
 import { DocumentLanguageService } from "./editor/languageScopes";
 import type { ImportedTypsastraProject } from "./projectArchive";
 import { AppUpdateController } from "./appUpdateController";
-import { releaseSummaryForVersion, shouldShowReleaseSummary } from "./releaseNotes";
 import { WebviewStorageController } from "./webviewStorageController";
 import { SystemResumeMonitor } from "./platform/systemResume";
+import { WorkspaceResumeController } from "./platform/workspaceResumeController";
 import { setImageOptimizationWarningsEffect } from "./editor/imageWarnings";
 import {
   captureEditorUndoHistory,
   createTabEditorState,
-  type EditorUndoHistory,
 } from "./editor/tabHistory";
+import type { EditorTab, PreviewSessionState } from "./editor/editorTab";
+import { DocumentPersistenceController, type SaveIntent } from "./editor/documentPersistenceController";
+import { EditorFileGuardController } from "./editor/editorFileGuardController";
 
 import {
   ensureTypographyTemplateApplication,
@@ -134,7 +138,6 @@ type EditorMode = "CODE" | "WYSIWYM";
 const DEFAULT_INPUT_WIDTH_PCT = 50;
 const DEFAULT_PREVIEW_WIDTH_PCT = 100 - DEFAULT_INPUT_WIDTH_PCT;
 const DEFAULT_EXPLORER_WIDTH_PX = 250;
-const RELEASE_SUMMARY_SEEN_KEY_PREFIX = "typsastra:release-summary-seen";
 const PDF_TRANSPORT_MODE = (
   import.meta as ImportMeta & { env?: Record<string, string | boolean | undefined> }
 ).env?.VITE_PDF_TRANSPORT === "full"
@@ -151,41 +154,6 @@ function isPreviewOnlyWindow(): boolean {
   return new URLSearchParams(window.location.search).get("mode") === "preview";
 }
 
-
-type EditorTab = {
-  path: string;
-  content: string;
-  savedContent: string;
-  contentLoaded: boolean;
-  isDirty: boolean;
-  previewRootPath: string | null;
-  previewMainPath: string | null;
-  previewTaskId: string | null;
-  previewSessionKey: string | null;
-  previewImported: boolean;
-  previewStandalone: boolean;
-  previewDisabled: boolean;
-  version: number;
-  latestVersion: number;
-  selectionAnchor: number;
-  selectionHead: number;
-  scrollTop?: number;
-  scrollLeft?: number;
-  scrollSnapshot?: ReturnType<EditorView["scrollSnapshot"]>;
-  foldRanges: EditorFoldRange[] | null;
-  foldStateExplicit: boolean;
-  sizeBytes?: number;
-  lineCount?: number;
-  temporary?: boolean;
-  undoHistory?: EditorUndoHistory;
-};
-
-type SaveIntent = "manual" | "automatic";
-
-type PreviewSessionState = Pick<
-  EditorTab,
-  "previewRootPath" | "previewMainPath" | "previewTaskId" | "previewSessionKey" | "previewImported" | "previewStandalone" | "previewDisabled"
->;
 
 type PdfUpdatePayload = {
   path: string;
@@ -279,9 +247,31 @@ function ensureEditorCaretRippleStyle(): void {
 }
 
 export class TypsastraWorkspaceController {
+  /**
+   * Temporary compatibility adapter while lifecycle-owned state is moved out
+   * of the root controller. Consumers compile against the explicit port rather
+   * than receiving the root as `object` and recovering it through `any`.
+   */
+  private createWorkspaceLifecycleDependencies(): WorkspaceLifecycleDependencies {
+    const root = this;
+    return new Proxy({} as WorkspaceLifecycleDependencies, {
+      get(_target, property) {
+        const value: unknown = Reflect.get(root, property, root);
+        return typeof value === "function" ? value.bind(root) : value;
+      },
+      set(_target, property, value) {
+        return Reflect.set(root, property, value, root);
+      },
+    });
+  }
+
   private readonly startupStart = performance.now();
   private activeMode: EditorMode = "CODE";
-  private activeFilePath: string | null = null;
+  private readonly editorSessionController = new EditorSessionController();
+  private get activeFilePath(): string | null { return this.editorSessionController.activeFilePath; }
+  private set activeFilePath(path: string | null) { this.editorSessionController.activeFilePath = path; }
+  private get openTabs(): EditorTab[] { return this.editorSessionController.tabs; }
+  private set openTabs(tabs: EditorTab[]) { this.editorSessionController.replaceTabs(tabs); }
   private previewRootPath: string | null = null;
   private previewMainPath: string | null = null;
   private previewTaskId: string | null = null;
@@ -295,15 +285,12 @@ export class TypsastraWorkspaceController {
   private workspaceRootPath: string | null = null;
   private workspaceMetadata: WorkspaceMetadata | null = null;
   private workspaceLoading = false;
-  private systemResumeRecoveryActive = false;
   private workspaceServicesDeferredForLargeFile = false;
   private readonly approvedLargePreviewRoots = new Set<string>();
   private readonly inspectedPreviewRoots = new Set<string>();
   private blockedLargePreviewRoot: string | null = null;
-  private guardrailAlignmentObserver: ResizeObserver | null = null;
   private previewScrollTop = 0;
   private previewScrollSaveTimer: number | null = null;
-  private wordWrapDeferredForResize = false;
   private recommendedWorkspaceToolchain: { tinymistVersion: string; typstVersion: string } | null = null;
   private selectedWorkspaceToolchain: { tinymistVersion: string; typstVersion: string } | null = null;
   private currentVersion = 1;
@@ -312,7 +299,6 @@ export class TypsastraWorkspaceController {
   private forwardSyncDebounceMs = 120;
   private latestDocumentVersion = 1;
   private diagnosticWaitStartedAt: number | null = null;
-  private openTabs: EditorTab[] = [];
   private readonly detectedPlainTextPaths = new Set<string>();
   private readonly classifiedUnknownPaths = new Set<string>();
   private documentOutlineUpdateTimer: number | null = null;
@@ -321,15 +307,10 @@ export class TypsastraWorkspaceController {
   private lastKhmerRenderPrepState: boolean | undefined = undefined;
   private lastPreviewRenderMode: PreviewRefreshStyle | undefined = undefined;
   private projectImportQueue: Promise<void> = Promise.resolve();
-  private saveInProgress: Promise<void> | null = null;
-  private saveInProgressIntent: SaveIntent | null = null;
-  private autoSaveTimer: number | null = null;
   private pdfPreviewGeneration = 0;
   private pdfLoadRequestGeneration = 0;
   private readonly blockedLargePdfPaths = new Set<string>();
   private previewPageStatus: PreviewPageStatus = { currentPage: 0, pageCount: 0 };
-  private horizontalPaneResizeActive = false;
-  private readonly horizontalPaneResizeWaiters = new Set<() => void>();
   private pdfPreviewSourceMapRootPath: string | null = null;
   private pdfPreviewSourceMapTaskId: string | null = null;
   private pdfPreviewGeneratedFiles = new Map<string, { generatedPath: string; preparedText: string }>();
@@ -339,7 +320,6 @@ export class TypsastraWorkspaceController {
   private pdfPreviewRunning = false;
   private queuedPdfPreviewContents: string | null = null;
   private queuedPdfPreviewForced = false;
-  private exportInProgress = false;
   private lastPdfPath = "";
   private lastPdfIdentity = "";
   private lastPdfSessionKey = "";
@@ -349,7 +329,6 @@ export class TypsastraWorkspaceController {
   private lastPreviewRecoveryRequestedContents: string | null = null;
   private tinymistPreviewRecoveryAttempts = 0;
   private tinymistPreviewRecovery: Promise<boolean> | null = null;
-  private saveMemoryDiagnosticGeneration = 0;
   private readonly externalConflictPaths = new Set<string>();
   private externalPreviewRefreshPending = false;
   private readonly managedPreviewPdfPathKeys = new Set<string>();
@@ -469,6 +448,52 @@ export class TypsastraWorkspaceController {
 
   private codePane = document.getElementById("code-editor-pane")!;
   private editorTabBar = document.getElementById("editor-tab-bar")!;
+  private readonly editorTabViewController = new EditorTabViewController(this.editorTabBar, {
+    tabs: () => this.openTabs,
+    activeFilePath: () => this.activeFilePath,
+    pinnedMainFilePath: () => this.pinnedMainFilePath,
+    sortPinnedMainFirst: () => this.editorSessionController.sortPinnedMainFirst(this.pinnedMainFilePath),
+    activateTab: path => this.activateEditorTab(path),
+    closeTab: path => this.closeEditorTab(path),
+    promoteTab: tab => this.promoteToPermanent(tab),
+    reportActivationFailure: (path, error) => {
+      console.error("Failed to load restored tab:", path, error);
+      void message(`Could not open ${fileNameFromPath(path)}: ${String(error)}`, {
+        title: "Unable to Open File",
+        kind: "error"
+      });
+    },
+  });
+  private readonly editorFileGuardController = new EditorFileGuardController({
+    previewFrame: () => this.previewFrame,
+    onPdfBlocked: path => {
+      this.blockedLargePdfPaths.add(filePathKey(path));
+      this.pdfLoadRequestGeneration += 1;
+      this.invalidatePreviewWork(`waiting for confirmation to open ${path}`);
+    },
+    onPdfUnblocked: path => this.blockedLargePdfPaths.delete(filePathKey(path)),
+    onPdfReblocked: path => { this.blockedLargePdfPaths.add(filePathKey(path)); },
+    onTypstPreviewBlocked: rootPath => {
+      this.workspaceServicesDeferredForLargeFile = true;
+      this.blockedLargePreviewRoot = rootPath;
+    },
+    approveLargePreview: (tab, notice) => this.approveLargePreviewForTab(tab, notice),
+    activateConfirmedTab: path => this.activateEditorTab(path, false, { largeFileConfirmed: true }),
+    onGuardedTabSelected: path => {
+      this.activeFilePath = path;
+      this.activateSpellcheckDocument(null);
+      this.documentOutlineController.clear();
+      this.clearDiagnostics();
+      this.clearPendingLspSync();
+      this.previewSyncController.clearForward();
+      this.editorToolbarController.setDisabled(true);
+      this.updatePreviewActionsToolbar(path);
+      this.updateManualForwardSyncAction();
+      this.updateWorkspaceViewportVisibility();
+      this.renderEditorTabs();
+      void this.saveWorkspaceState();
+    },
+  });
   private readonly tabStripController = new TabStripController(
     this.editorTabBar,
     document.getElementById("editor-tabs-previous") as HTMLButtonElement,
@@ -575,7 +600,7 @@ export class TypsastraWorkspaceController {
       externalRefreshPending: this.externalPreviewRefreshPending,
       previewRunning: this.pdfPreviewRunning,
       previewDisabled: this.previewDisabled,
-      interactionBlocked: this.horizontalPaneResizeActive,
+      interactionBlocked: this.workspaceResumeController.interactionBlocked,
     }),
     isForwardPositionEligible: (path, cursor) => !(
       this.activeFilePath
@@ -639,8 +664,8 @@ export class TypsastraWorkspaceController {
     () => this.saveWorkspaceState(),
     () => this.logConsoleController.setVisible(false),
     message => this.appendDeveloperLog({ kind: "info", source: "preview layout", message }),
-    () => this.beginHorizontalPaneResize(),
-    () => this.endHorizontalPaneResize()
+    () => this.workspaceResumeController.beginHorizontalResize(),
+    () => this.workspaceResumeController.endHorizontalResize()
   );
   private readonly workspaceController = new WorkspaceController({
     dockPreview: () => this.layoutController.dockPreview(),
@@ -678,7 +703,9 @@ export class TypsastraWorkspaceController {
       message: `Failed to save workspace state: ${String(error)}`,
     }),
   });
-  private readonly workspaceLifecycleController = new WorkspaceLifecycleController(this);
+  private readonly workspaceLifecycleController = new WorkspaceLifecycleController(
+    this.createWorkspaceLifecycleDependencies(),
+  );
   private readonly imagePreviewController = new ImagePreviewController({
     setMessage: html => this.previewFrame.setMessage(html),
     setError: (title, detail) => this.previewFrame.setError(title, detail),
@@ -905,6 +932,7 @@ export class TypsastraWorkspaceController {
     heading => void this.navigateToOutlineHeading(heading)
   );
   private readonly appDialogController = new AppDialogController();
+  private readonly releaseSummaryController = new ReleaseSummaryController();
   private readonly draftPreviewController = new DraftPreviewController(
     this.appDialogController,
     {
@@ -935,16 +963,118 @@ export class TypsastraWorkspaceController {
     () => this.openTabs.some(tab => tab.isDirty),
     this.appDialogController
   );
+  private readonly projectExportController = new ProjectExportController({
+    activeFilePath: () => this.activeFilePath,
+    activeContents: () => this.editorInstance.state.doc.toString(),
+    previewStandalone: () => this.previewStandalone,
+    previewRootPath: () => this.previewRootPath,
+    previewMainPath: () => this.previewMainPath,
+    workspaceRootPath: () => this.workspaceRootPath,
+    cacheRootPath: () => this.getCacheRootPath(),
+    mapToOriginalPath: path => this.mapToOriginalPath(path),
+    openTabs: () => this.openTabs,
+    khmerRenderPreparationEnabled: () => this.settingsController.value.preview.khmerRenderPreparation,
+    setLspStatus: status => this.setLspStatus(status),
+  });
+  private readonly documentPersistenceController = new DocumentPersistenceController({
+    activeFilePath: () => this.activeFilePath,
+    activeMode: () => this.activeMode,
+    workspaceRootPath: () => this.workspaceRootPath,
+    openTabs: () => this.openTabs,
+    isInternallySupportedPath: path => this.isInternallySupportedPath(path),
+    flushEditorContentMutation: () => this.flushEditorContentMutation(),
+    formatOnSave: () => this.settingsController.value.editor.formatOnSave,
+    autoSaveSettings: () => ({
+      enabled: this.settingsController.value.editor.autoSave,
+      intervalSeconds: this.settingsController.value.editor.autoSaveIntervalSeconds,
+    }),
+    formatActiveDocument: options => this.formatActiveDocument(options),
+    removeTrailingSpaces: () => this.removeTrailingSpaces(),
+    editorText: () => this.editorInstance.state.doc.toString(),
+    wysiwymMarkup: () => this.mapWysiwymToMarkup(),
+    isPinnedMainFile: path => this.isPinnedMainFile(path),
+    refreshWorkspaceExplorer: async workspaceRootPath => {
+      await this.explorer.loadWorkspace(workspaceRootPath);
+    },
+    loadFile: path => this.loadFile(path),
+    setPinnedMainFile: path => this.setPinnedMainFile(path),
+    lspReady: () => this.lspReady && Boolean(this.lspClient),
+    flushPendingLspSync: () => this.flushPendingLspSync(),
+    notifyLspSave: async (path, content) => {
+      const lspRes = await this.getLspUriAndContent(path, content);
+      if (!lspRes) return;
+      await this.lspClient.notifyTextSave(lspRes.uri, lspRes.content);
+    },
+    logMemoryDiagnostics: reason => this.performanceController.logMemoryDiagnostics(reason),
+    clearExternalConflict: path => this.externalConflictPaths.delete(filePathKey(path)),
+    renderEditorTabs: () => this.renderEditorTabs(),
+    shouldRenderPreviewAfterManualSave: path => (
+      participatesInPreviewCompilation(path, this.pinnedMainFilePath, this.previewImported)
+      && !this.previewDisabled
+    ),
+    renderPdfPreview: content => this.renderPdfPreview(content),
+    setLspStatus: status => this.setLspStatus(status),
+    log: (kind, source, message) => this.appendDeveloperLog({ kind, source, message }),
+  });
   private readonly webviewStorageController = new WebviewStorageController(() =>
     this.pdfPreviewRunning
     || this.typographyController.fontUpdateInProgress
-    || this.exportInProgress
+    || this.projectExportController.isBusy
     || this.settingsController.isLanguageProviderOperationInProgress
     || this.toolchainController.isBusy
     || this.appUpdateController.isInstalling
   );
+  private readonly workspaceResumeController = new WorkspaceResumeController({
+    canDeferWordWrap: () => Boolean(this.editorInstance) && this.settingsController.value.editor.wordWrap,
+    disableWordWrap: () => {
+      this.editorInstance.dispatch({ effects: wrapCompartment.reconfigure([]) });
+    },
+    restoreWordWrap: () => {
+      this.editorInstance.dispatch({
+        effects: wrapCompartment.reconfigure(
+          this.settingsController.value.editor.wordWrap ? EditorView.lineWrapping : []
+        )
+      });
+      this.editorController.refreshLayout("resize completed");
+    },
+    suspendPreviewResize: () => this.previewFrame.suspendResizeLayout(),
+    resumePreviewResize: () => this.previewFrame.resumeResizeLayout(),
+    recoverInterruptedResize: () => this.layoutController.recoverInterruptedResize(),
+    hasActiveWorkspaceDocument: () => Boolean(this.workspaceRootPath && this.activeFilePath),
+    cancelManualForwardSync: () => this.cancelManualForwardSync(),
+    resetSourceMap: () => this.sourceMapSessionController.reset(),
+    restoreEditorFonts: async () => {
+      await this.editorFontManager.ready();
+      if (this.editorInstance) this.editorFontManager.updateDocument(this.editorInstance.state.doc.toString());
+    },
+    rehydratePreviewAndSidebar: () => {
+      this.previewFrame.syncTheme();
+      if (this.workspaceRootPath) this.sidebarController.applyVisibility();
+      this.layoutController.reconcileDockedPaneWidths();
+    },
+    remeasureWorkspace: reason => {
+      this.layoutController.reconcileDockedPaneWidths();
+      this.editorInstance?.requestMeasure();
+      this.editorController.updateCaretMarker();
+      this.editorController.updateDiagnosticMarkers();
+      this.previewFrame.syncTheme();
+      this.appendDeveloperLog({
+        kind: "log",
+        source: "editor layout",
+        message: `Rehydrated workspace layout after ${reason}.`
+      });
+    },
+    canWarmSourceMap: () => Boolean(
+      this.lspReady
+      && this.previewFrame.currentUrl
+      && this.pdfPreviewGeneration > 0
+      && !this.pdfPreviewRunning
+    ),
+    warmSourceMap: () => this.schedulePdfSourceMapWarmup(this.pdfPreviewGeneration),
+    log: (kind, source, message) => this.appendDeveloperLog({ kind, source, message }),
+  });
   private readonly systemResumeMonitor = new SystemResumeMonitor(suspendedMs => {
-    void this.recoverAfterSystemResume(suspendedMs);
+    void this.workspaceResumeController.recoverAfterSystemResume(suspendedMs);
   });
   private readonly windowStateController = new WindowStateController(getCurrentWindow());
   private lspStatus = document.getElementById("lsp-status")!;
@@ -1037,7 +1167,7 @@ export class TypsastraWorkspaceController {
     }
 
     this.toolchainController.setStatus(toolchain ?? { typstVersion: null, typstSource: null, tinymistVersion: null, tinymistSource: null, lspAvailable: false, message: "" });
-    await this.showReleaseSummaryIfNeeded();
+    await this.releaseSummaryController.showIfNeeded();
     await this.performanceController.timeStartup("initialize Tinymist LSP", () => this.initLsp(Boolean(toolchain?.lspAvailable)));
     await this.drainPendingProjectImports();
     this.performanceController.recordStartupTiming("frontend startup", "frontend bootstrap including LSP", this.startupStart);
@@ -1633,70 +1763,8 @@ export class TypsastraWorkspaceController {
     );
   }
 
-  private sortPinnedMainTabFirst() {
-    if (!this.pinnedMainFilePath) return;
-    const index = this.openTabs.findIndex(tab => filePathKey(tab.path) === filePathKey(this.pinnedMainFilePath!));
-    if (index > 0) {
-      const [pinnedTab] = this.openTabs.splice(index, 1);
-      pinnedTab.temporary = false; // Pinned is permanent
-      this.openTabs.unshift(pinnedTab);
-    }
-  }
-
-  private renderEditorTabs() {
-    this.sortPinnedMainTabFirst();
-    this.editorTabBar.innerHTML = "";
-
-    for (const tab of this.openTabs) {
-      const isPinnedMain = this.pinnedMainFilePath && filePathKey(tab.path) === filePathKey(this.pinnedMainFilePath);
-      const tabButton = document.createElement("button");
-      tabButton.className = `editor-tab${tab.path === this.activeFilePath ? " active" : ""}${tab.isDirty ? " dirty" : ""}${tab.temporary ? " temporary" : ""}${isPinnedMain ? " pinned-main-tab" : ""}`;
-      tabButton.type = "button";
-      tabButton.role = "tab";
-      tabButton.title = tab.path;
-      tabButton.setAttribute("aria-selected", String(tab.path === this.activeFilePath));
-      tabButton.dataset.path = tab.path;
-
-      const title = document.createElement("span");
-      title.className = "editor-tab-title";
-      title.textContent = fileNameFromPath(tab.path);
-      tabButton.appendChild(title);
-
-      const dirtyDot = document.createElement("span");
-      dirtyDot.className = "editor-tab-dirty";
-      dirtyDot.setAttribute("aria-hidden", "true");
-      tabButton.appendChild(dirtyDot);
-
-      if (!isPinnedMain) {
-        const closeButton = document.createElement("span");
-        closeButton.className = "editor-tab-close";
-        closeButton.appendChild(createAppIcon("x", { size: 13 }));
-        closeButton.title = "Close";
-        closeButton.setAttribute("aria-label", `Close ${fileNameFromPath(tab.path)}`);
-        tabButton.appendChild(closeButton);
-
-        closeButton.addEventListener("click", (event) => {
-          event.stopPropagation();
-          void this.closeEditorTab(tab.path);
-        });
-      }
-
-      tabButton.addEventListener("click", () => {
-        void this.activateEditorTab(tab.path).catch(error => {
-          console.error("Failed to load restored tab:", tab.path, error);
-          void message(`Could not open ${fileNameFromPath(tab.path)}: ${String(error)}`, {
-            title: "Unable to Open File",
-            kind: "error"
-          });
-        });
-      });
-
-      tabButton.addEventListener("dblclick", () => {
-        void this.promoteToPermanent(tab);
-      });
-
-      this.editorTabBar.appendChild(tabButton);
-    }
+  private renderEditorTabs(): void {
+    this.editorTabViewController.render();
   }
 
   private async promoteToPermanent(tab: EditorTab) {
@@ -1707,9 +1775,7 @@ export class TypsastraWorkspaceController {
   }
 
   private getActiveTab(): EditorTab | null {
-    if (!this.activeFilePath) return null;
-    const activeKey = filePathKey(this.activeFilePath);
-    return this.openTabs.find((tab) => filePathKey(tab.path) === activeKey) ?? null;
+    return this.editorSessionController.activeTab;
   }
 
   private persistActiveTabState() {
@@ -1986,7 +2052,7 @@ export class TypsastraWorkspaceController {
         this.explorer.setActiveFile(this.activeFilePath);
         this.activateSpellcheckDocument(this.activeFilePath);
       }
-      this.sortPinnedMainTabFirst();
+      this.editorSessionController.sortPinnedMainFirst(this.pinnedMainFilePath);
       this.renderEditorTabs();
       await this.saveWorkspaceState();
 
@@ -2219,62 +2285,6 @@ export class TypsastraWorkspaceController {
       );
     }
     return false;
-  }
-
-  private async showReleaseSummaryIfNeeded(): Promise<void> {
-    const version = await getVersion().catch(() => null);
-    if (!version) return;
-    const seenKey = `${RELEASE_SUMMARY_SEEN_KEY_PREFIX}:${version}`;
-    let lastSeenVersion: string | null = null;
-    try {
-      lastSeenVersion = window.localStorage.getItem(seenKey) === "1" ? version : null;
-    } catch {
-      // A restricted WebView storage policy should not prevent application startup.
-    }
-    if (!shouldShowReleaseSummary(version, lastSeenVersion)) return;
-    const summary = releaseSummaryForVersion(version);
-    const overlay = document.getElementById("release-summary-overlay");
-    const title = document.getElementById("release-summary-title");
-    const subtitle = document.getElementById("release-summary-subtitle");
-    const highlights = document.getElementById("release-summary-highlights");
-    const closeButton = document.getElementById("release-summary-close") as HTMLButtonElement | null;
-    const doneButton = document.getElementById("release-summary-done") as HTMLButtonElement | null;
-    const detailsButton = document.getElementById("release-summary-details") as HTMLButtonElement | null;
-    if (!summary || !overlay || !title || !subtitle || !highlights || !closeButton || !doneButton || !detailsButton) return;
-
-    title.textContent = `What's new in Typsastra ${summary.version}`;
-    subtitle.textContent = summary.title;
-    highlights.replaceChildren(...summary.highlights.map(highlight => {
-      const item = document.createElement("li");
-      item.textContent = highlight;
-      return item;
-    }));
-    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const close = () => {
-      overlay.classList.add("hidden");
-      document.removeEventListener("keydown", onKeydown);
-      previouslyFocused?.focus();
-    };
-    const onKeydown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !overlay.classList.contains("hidden")) close();
-    };
-    closeButton.onclick = close;
-    doneButton.onclick = close;
-    detailsButton.onclick = () => {
-      void openUrl(summary.detailsUrl);
-      close();
-    };
-    overlay.onmousedown = event => {
-      if (event.target === overlay) close();
-    };
-    document.addEventListener("keydown", onKeydown);
-    overlay.classList.remove("hidden");
-    try {
-      window.localStorage.setItem(seenKey, "1");
-    } catch {
-      // The summary may repeat when persistent WebView storage is unavailable.
-    }
-    doneButton.focus();
   }
 
   private async loadEditorTabContent(tab: EditorTab): Promise<void> {
@@ -2975,316 +2985,16 @@ export class TypsastraWorkspaceController {
     }
   }
 
-  private async saveActiveFile(intent: SaveIntent = "manual") {
-    if (this.saveInProgress) {
-      const inProgressIntent = this.saveInProgressIntent;
-      await this.saveInProgress;
-      if (intent === "manual" && inProgressIntent === "automatic") {
-        await this.saveActiveFile("manual");
-      }
-      return;
-    }
-    this.flushEditorContentMutation();
-    const operation = this.performSaveActiveFile(intent);
-    this.saveInProgress = operation;
-    this.saveInProgressIntent = intent;
-    try {
-      await operation;
-    } finally {
-      if (this.saveInProgress === operation) {
-        this.saveInProgress = null;
-        this.saveInProgressIntent = null;
-      }
-    }
+  private saveActiveFile(intent: SaveIntent = "manual"): Promise<void> {
+    return this.documentPersistenceController.saveActiveFile(intent);
   }
 
   private configureAutoSave(enabled: boolean, intervalSeconds: number): void {
-    if (this.autoSaveTimer !== null) window.clearTimeout(this.autoSaveTimer);
-    this.autoSaveTimer = null;
-    if (!enabled) return;
-    this.autoSaveTimer = window.setTimeout(() => {
-      this.autoSaveTimer = null;
-      void this.runAutoSaveCycle().finally(() => {
-        const { autoSave, autoSaveIntervalSeconds } = this.settingsController.value.editor;
-        this.configureAutoSave(autoSave, autoSaveIntervalSeconds);
-      });
-    }, intervalSeconds * 1000);
+    this.documentPersistenceController.configureAutoSave(enabled, intervalSeconds);
   }
 
-  private async runAutoSaveCycle(): Promise<void> {
-    if (this.saveInProgress || !this.workspaceRootPath) return;
-    this.flushEditorContentMutation();
-    const dirtyTabs = this.openTabs.filter(tab =>
-      tab.contentLoaded
-      && tab.isDirty
-      && this.isInternallySupportedPath(tab.path)
-      && !isBinaryImagePath(tab.path)
-      && fileExtension(tab.path) !== "pdf"
-    );
-    if (dirtyTabs.length === 0) return;
-
-    const operation = this.performAutoSave(dirtyTabs);
-    this.saveInProgress = operation;
-    this.saveInProgressIntent = "automatic";
-    try {
-      await operation;
-    } finally {
-      if (this.saveInProgress === operation) {
-        this.saveInProgress = null;
-        this.saveInProgressIntent = null;
-      }
-    }
-  }
-
-  private async performAutoSave(tabs: EditorTab[]): Promise<void> {
-    let savedCount = 0;
-    try {
-      for (const tab of tabs) {
-        const content = tab.content;
-        await invoke("save_workspace_file", { path: tab.path, contents: content });
-        if (tab.content !== content) continue;
-        tab.savedContent = content;
-        tab.isDirty = false;
-        this.externalConflictPaths.delete(filePathKey(tab.path));
-        savedCount += 1;
-      }
-    } catch (error) {
-      const message = `Auto-save failed: ${String(error)}`;
-      console.error(message);
-      this.setLspStatus({ kind: "error", message });
-    } finally {
-      if (savedCount > 0) {
-        this.renderEditorTabs();
-        this.appendDeveloperLog({
-          kind: "info",
-          source: "workspace",
-          message: `Auto-saved ${savedCount} file${savedCount === 1 ? "" : "s"} without requesting preview compilation.`
-        });
-      }
-    }
-  }
-
-  private async saveActiveFileAs(): Promise<void> {
-    if (!this.activeFilePath || !this.isInternallySupportedPath(this.activeFilePath) || isBinaryImagePath(this.activeFilePath) || fileExtension(this.activeFilePath) === "pdf") {
-      return;
-    }
-
-    const sourceWasPinnedMain = this.isPinnedMainFile(this.activeFilePath);
-    const extension = fileExtension(this.activeFilePath);
-    const savePath = await save({
-      defaultPath: this.activeFilePath,
-      filters: extension ? [{ name: `${extension.toUpperCase()} File`, extensions: [extension] }] : undefined
-    });
-    if (typeof savePath !== "string") return;
-    if (filePathKey(savePath) === filePathKey(this.activeFilePath)) {
-      await this.saveActiveFile();
-      return;
-    }
-
-    try {
-      if (this.activeMode === "CODE" && this.settingsController.value.editor.formatOnSave) {
-        await this.formatActiveDocument({ silent: true });
-        this.removeTrailingSpaces();
-      }
-      const content = this.activeMode === "WYSIWYM"
-        ? this.mapWysiwymToMarkup()
-        : this.editorInstance.state.doc.toString();
-      await invoke("save_workspace_file", { path: savePath, contents: content });
-      if (this.workspaceRootPath) await this.explorer.loadWorkspace(this.workspaceRootPath);
-      await this.loadFile(savePath);
-      if (sourceWasPinnedMain && isTypstDocumentPath(savePath)) {
-        await this.setPinnedMainFile(savePath);
-      }
-      this.setLspStatus({ kind: "preview-ready", message: "File saved as a new document" });
-    } catch (error) {
-      const failure = `Save As failed: ${String(error)}`;
-      console.error(failure);
-      this.setLspStatus({ kind: "error", message: failure });
-      alert(failure);
-    }
-  }
-
-  private deferWordWrapForResize(): void {
-    const editor = this.editorInstance;
-    if (!editor || !this.settingsController.value.editor.wordWrap || this.wordWrapDeferredForResize) return;
-    this.wordWrapDeferredForResize = true;
-    editor.dispatch({ effects: wrapCompartment.reconfigure([]) });
-  }
-
-  private beginHorizontalPaneResize(): void {
-    this.horizontalPaneResizeActive = true;
-    this.previewFrame.suspendResizeLayout();
-    this.deferWordWrapForResize();
-  }
-
-  private endHorizontalPaneResize(): void {
-    this.horizontalPaneResizeActive = false;
-    for (const resolve of this.horizontalPaneResizeWaiters) resolve();
-    this.horizontalPaneResizeWaiters.clear();
-    this.restoreWordWrapAfterResize();
-    this.previewFrame.resumeResizeLayout();
-  }
-
-  private async recoverAfterSystemResume(suspendedMs: number): Promise<void> {
-    if (this.systemResumeRecoveryActive) {
-      this.appendDeveloperLog({
-        kind: "log",
-        source: "workspace",
-        message: "Ignored a duplicate system-resume recovery while the workspace was already being restored."
-      });
-      return;
-    }
-    this.systemResumeRecoveryActive = true;
-    const showRecoveryCover = !!this.workspaceRootPath && !!this.activeFilePath;
-    if (showRecoveryCover) document.body.classList.add("typsastra-resume-recovering");
-
-    const interruptedResize = this.layoutController.recoverInterruptedResize();
-    if (this.horizontalPaneResizeActive) this.endHorizontalPaneResize();
-
-    this.cancelManualForwardSync();
-    this.sourceMapSessionController.reset();
-
-    try {
-      // WebView2 can discard font and layout resources while Windows is
-      // suspended. Startup and workspace opening wait for these fonts before
-      // exposing the editor, so resume must restore the same invariant.
-      await this.editorFontManager.ready();
-      if (this.editorInstance) {
-        this.editorFontManager.updateDocument(this.editorInstance.state.doc.toString());
-      }
-
-      this.previewFrame.resumeResizeLayout();
-      this.previewFrame.syncTheme();
-      if (this.workspaceRootPath) this.sidebarController.applyVisibility();
-      this.layoutController.reconcileDockedPaneWidths();
-
-      // The first post-resume frame can still use the pre-suspend display
-      // metrics. Measure once after two paints, then again after WebView2 has
-      // delivered delayed monitor/DPI resize notifications.
-      await this.waitForResumeLayoutFrames();
-      this.remeasureWorkspaceAfterResume("system resume");
-      await new Promise<void>(resolve => window.setTimeout(resolve, 160));
-      await this.waitForResumeLayoutFrames();
-      this.remeasureWorkspaceAfterResume("system resume settling");
-
-      if (
-        this.lspReady
-        && this.previewFrame.currentUrl
-        && this.pdfPreviewGeneration > 0
-        && !this.pdfPreviewRunning
-      ) {
-        this.schedulePdfSourceMapWarmup(this.pdfPreviewGeneration);
-      }
-      this.appendDeveloperLog({
-        kind: "info",
-        source: "workspace",
-        message: `Recovered after system resume (${Math.round(suspendedMs / 1000)}s suspended); interruptedResize=${interruptedResize}.`
-      });
-    } catch (error) {
-      this.appendDeveloperLog({
-        kind: "error",
-        source: "workspace",
-        message: `System-resume workspace recovery failed: ${String(error)}`
-      });
-    } finally {
-      document.body.classList.remove("typsastra-resume-recovering");
-      this.systemResumeRecoveryActive = false;
-    }
-  }
-
-  private waitForResumeLayoutFrames(): Promise<void> {
-    return new Promise(resolve => {
-      requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
-    });
-  }
-
-  private remeasureWorkspaceAfterResume(reason: string): void {
-    this.layoutController.reconcileDockedPaneWidths();
-    this.editorInstance?.requestMeasure();
-    this.editorController.updateCaretMarker();
-    this.editorController.updateDiagnosticMarkers();
-    this.previewFrame.syncTheme();
-    this.appendDeveloperLog({
-      kind: "log",
-      source: "editor layout",
-      message: `Rehydrated workspace layout after ${reason}.`
-    });
-  }
-
-  private waitForHorizontalPaneResizeEnd(): Promise<void> {
-    if (!this.horizontalPaneResizeActive) return Promise.resolve();
-    return new Promise(resolve => this.horizontalPaneResizeWaiters.add(resolve));
-  }
-
-  private restoreWordWrapAfterResize(): void {
-    if (!this.wordWrapDeferredForResize) return;
-    this.wordWrapDeferredForResize = false;
-    const editor = this.editorInstance;
-    if (!editor) return;
-    editor.dispatch({
-      effects: wrapCompartment.reconfigure(
-        this.settingsController.value.editor.wordWrap ? EditorView.lineWrapping : []
-      )
-    });
-    this.editorController.refreshLayout("resize completed");
-  }
-
-  private async performSaveActiveFile(intent: SaveIntent): Promise<void> {
-    if (!this.activeFilePath || !this.isInternallySupportedPath(this.activeFilePath) || isBinaryImagePath(this.activeFilePath) || fileExtension(this.activeFilePath) === "pdf") {
-      return;
-    }
-
-    try {
-      const saveDiagnosticId = ++this.saveMemoryDiagnosticGeneration;
-      await this.performanceController.logMemoryDiagnostics(`save ${saveDiagnosticId}: before write`);
-      if (intent === "manual" && this.activeMode === "CODE" && this.settingsController.value.editor.formatOnSave) {
-        await this.formatActiveDocument({ silent: true });
-        this.removeTrailingSpaces();
-      }
-
-      const content = this.activeMode === "WYSIWYM"
-        ? this.mapWysiwymToMarkup()
-        : this.editorInstance.state.doc.toString();
-
-      await invoke("save_workspace_file", {
-        path: this.activeFilePath,
-        contents: content
-      });
-      await this.performanceController.logMemoryDiagnostics(`save ${saveDiagnosticId}: after workspace write`);
-
-      if (intent === "manual" && this.lspReady && this.lspClient) {
-        await this.flushPendingLspSync();
-        const lspRes = await this.getLspUriAndContent(this.activeFilePath, content);
-        if (lspRes) {
-          const { uri: lspUri, content: lspContent } = lspRes;
-          await this.lspClient.notifyTextSave(lspUri, lspContent);
-        }
-      }
-      await this.performanceController.logMemoryDiagnostics(`save ${saveDiagnosticId}: after LSP save notification`);
-
-      const activeTab = this.getActiveTab();
-      if (activeTab) {
-        activeTab.content = content;
-        activeTab.savedContent = content;
-        activeTab.isDirty = false;
-        this.externalConflictPaths.delete(filePathKey(activeTab.path));
-        this.renderEditorTabs();
-      }
-      this.setLspStatus({ kind: "preview-ready", message: "File saved" });
-      if (
-        intent === "manual"
-        && participatesInPreviewCompilation(this.activeFilePath, this.pinnedMainFilePath, this.previewImported)
-        && !this.previewDisabled
-      ) {
-        void this.renderPdfPreview(content);
-      }
-
-    } catch (error) {
-      const message = `Save failed: ${String(error)}`;
-      console.error(message);
-      this.setLspStatus({ kind: "error", message });
-      alert(message);
-    }
+  private saveActiveFileAs(): Promise<void> {
+    return this.documentPersistenceController.saveActiveFileAs();
   }
 
   private async formatActiveDocument(options: { silent?: boolean } = {}): Promise<boolean> {
@@ -3965,7 +3675,7 @@ export class TypsastraWorkspaceController {
       // Do not install a new PDF, query process memory, allocate canvases, or
       // start the hidden source-map preview behind the resize placeholder.
       // One completed generation resumes after pointer release.
-      await this.waitForHorizontalPaneResizeEnd();
+      await this.workspaceResumeController.waitForHorizontalResizeEnd();
       this.ensurePreviewPreparationCurrent(preparationRevision);
       await this.performanceController.logMemoryDiagnostics(
         `render ${generation}: after Tinymist export`,
@@ -5643,232 +5353,19 @@ export class TypsastraWorkspaceController {
   }
 
   private renderNonTextEditorPlaceholder(path: string, unsupported: boolean): void {
-    const info = document.getElementById("image-viewer-info");
-    if (!info) return;
-
-    const placeholder = document.createElement("div");
-    placeholder.className = "preview-disabled-placeholder editor-file-placeholder";
-
-    const isPdf = fileExtension(path) === "pdf";
-
-    const icon = document.createElement("div");
-    icon.className = "preview-disabled-icon";
-    icon.textContent = isPdf ? "\u{1F4C4}" : (unsupported ? "\u{1F4C4}" : "\u{1F4BE}");
-
-    const title = document.createElement("div");
-    title.className = "preview-disabled-title";
-    title.textContent = isPdf ? "PDF Document" : (unsupported ? "Unsupported File" : "Binary File");
-
-    const fileName = document.createElement("div");
-    fileName.className = "editor-file-placeholder-name";
-    fileName.textContent = fileNameFromPath(path);
-
-    const description = document.createElement("div");
-    description.className = "preview-disabled-msg";
-    description.textContent = isPdf
-      ? "This document is displayed in the live preview pane."
-      : unsupported
-        ? "This file format cannot be displayed in Typsastra."
-        : "Cannot load raw binary in the text editor.";
-
-    placeholder.append(icon, title, fileName, description);
-    if (unsupported || isPdf) {
-      const openButton = document.createElement("button");
-      openButton.type = "button";
-      openButton.className = "editor-file-placeholder-action";
-      openButton.textContent = "Open Externally";
-      openButton.addEventListener("click", () => {
-        void this.openFileExternally(path, openButton);
-      });
-      placeholder.appendChild(openButton);
-    }
-    info.replaceChildren(placeholder);
+    this.editorFileGuardController.renderNonTextPlaceholder(path, unsupported);
   }
 
   private showLargeFileConfirmation(tab: EditorTab, notice: LargeFileOpeningNotice): void {
-    const path = tab.path;
-    const codeRenderPane = document.getElementById("code-render-pane");
-    const imageViewerPane = document.getElementById("image-viewer-pane");
-    const imageViewerImg = document.getElementById("image-viewer-img") as HTMLImageElement | null;
-    const info = document.getElementById("image-viewer-info");
-
-    codeRenderPane?.classList.add("hidden");
-    imageViewerPane?.classList.remove("hidden");
-    if (imageViewerImg) imageViewerImg.style.display = "none";
-    document.getElementById("wysiwym-editor-pane")?.classList.add("hidden");
-
-    if (notice.kind === "pdf") {
-      // A guarded PDF owns the preview pane as soon as its tab is selected.
-      // Leaving the previous compiler preview mounted makes it appear that the
-      // unopened PDF is already visible and allows an in-flight Typst render
-      // to repaint the stale document behind the confirmation.
-      this.blockedLargePdfPaths.add(filePathKey(path));
-      this.pdfLoadRequestGeneration += 1;
-      this.invalidatePreviewWork(`waiting for confirmation to open ${path}`);
-    } else if (isTypstDocumentPath(path)) {
-      this.workspaceServicesDeferredForLargeFile = true;
-      this.blockedLargePreviewRoot = notice.previewRootPath ?? path;
-      this.previewFrame.setMessage(
-        `<div class="preview-disabled-placeholder guardrail-paired-placeholder guardrail-preview-placeholder">` +
-        `<div class="guardrail-placeholder-content">` +
-        `<div class="preview-disabled-title">Preview Not Started</div>` +
-        `<div class="preview-disabled-msg">The compiler preview will start after you confirm opening the large Typst file.</div>` +
-        `</div></div>`
-      );
-    } else {
-      this.previewFrame.setMessage(
-        `<div class="preview-disabled-placeholder">` +
-        `<div class="preview-disabled-title">Preview Unavailable</div>` +
-        `<div class="preview-disabled-msg">Live preview is not supported for this text file.</div>` +
-        `</div>`
-      );
-    }
-
-    if (info) {
-      const placeholder = document.createElement("div");
-      placeholder.className = "preview-disabled-placeholder editor-file-placeholder guardrail-paired-placeholder";
-      const content = document.createElement("div");
-      content.className = "guardrail-placeholder-content";
-
-      const icon = document.createElement("div");
-      icon.className = "preview-disabled-icon";
-      icon.textContent = "📄";
-
-      const title = document.createElement("div");
-      title.className = "preview-disabled-title";
-      title.textContent = notice.kind === "pdf"
-        ? "Large PDF Document"
-        : isTypstDocumentPath(path)
-          ? "Large Typst Document"
-          : "Large Text File";
-
-      const fileName = document.createElement("div");
-      fileName.className = "editor-file-placeholder-name";
-      fileName.textContent = fileNameFromPath(path);
-
-      const description = document.createElement("div");
-      description.className = "preview-disabled-msg";
-      const work = notice.kind === "pdf"
-        ? "Confirm in the preview pane before Typsastra decodes and renders it."
-        : notice.kind === "main-preview"
-          ? `This file belongs to a large preview rooted at ${fileNameFromPath(notice.previewRootPath ?? "the configured main file")}. Opening it will initialize the editor and start that compiler preview.`
-          : isTypstDocumentPath(path)
-            ? "Opening it will initialize the editor and start its compiler preview."
-          : "Opening it will initialize the editor, folding, outline, and language tools.";
-      const scale = notice.lineCount !== undefined
-        ? `${notice.lineCount.toLocaleString()} lines, ${formatFileSize(notice.sizeBytes)}`
-        : formatFileSize(notice.sizeBytes);
-      description.textContent = notice.kind === "main-preview"
-        ? `The effective preview contains ${scale}. ${work}`
-        : `This file is ${scale}. ${work}`;
-
-      const openConfirmedFile = async () => {
-        if (notice.kind === "pdf") {
-          this.blockedLargePdfPaths.delete(filePathKey(path));
-        } else if (isTypstDocumentPath(path)) {
-          await this.approveLargePreviewForTab(tab, notice);
-        }
-        try {
-          await this.activateEditorTab(path, false, { largeFileConfirmed: true });
-        } catch (error) {
-          if (notice.kind === "pdf") {
-            this.blockedLargePdfPaths.add(filePathKey(path));
-          }
-          throw error;
-        }
-      };
-
-      content.append(icon, title, fileName, description);
-      if (notice.kind === "pdf") {
-        this.previewFrame.setConfirmationMessage({
-          title: "Large PDF Preview Not Started",
-          message: `${fileNameFromPath(path)} is ${formatFileSize(notice.sizeBytes)}. Opening it will decode the PDF and begin rendering visible pages.`,
-          confirmLabel: "Open Large PDF",
-          pairedGuardrail: true,
-          onConfirm: openConfirmedFile
-        });
-      } else {
-        const confirmButton = document.createElement("button");
-        confirmButton.type = "button";
-        confirmButton.className = "editor-file-placeholder-action";
-        const confirmLabel = isTypstDocumentPath(path) ? "Open and Compile Preview" : "Open Large File";
-        confirmButton.textContent = confirmLabel;
-        confirmButton.addEventListener("click", () => {
-          confirmButton.disabled = true;
-          confirmButton.textContent = "Opening…";
-          void openConfirmedFile().catch(error => {
-            console.error("Failed to open large file:", error);
-            confirmButton.disabled = false;
-            confirmButton.textContent = confirmLabel;
-            void message(`Could not open ${fileNameFromPath(path)}: ${String(error)}`, {
-              title: "Unable to Open File",
-              kind: "error"
-            });
-          });
-        });
-        content.append(confirmButton);
-      }
-      placeholder.append(content);
-      info.replaceChildren(placeholder);
-    }
-    this.observeGuardrailAlignment();
-
-    this.activeFilePath = path;
-    this.activateSpellcheckDocument(null);
-    this.documentOutlineController.clear();
-    this.clearDiagnostics();
-    this.clearPendingLspSync();
-    this.previewSyncController.clearForward();
-    this.editorToolbarController.setDisabled(true);
-    this.updatePreviewActionsToolbar(path);
-    this.updateManualForwardSyncAction();
-    this.updateWorkspaceViewportVisibility();
-    this.renderEditorTabs();
-    void this.saveWorkspaceState();
-  }
-
-  private observeGuardrailAlignment(): void {
-    this.guardrailAlignmentObserver?.disconnect();
-    const editorHost = document.getElementById("image-viewer-pane");
-    const previewHost = document.getElementById("preview-render-pane");
-    const previewContent = previewHost?.querySelector<HTMLElement>(
-      ".guardrail-preview-placeholder .guardrail-placeholder-content"
-    );
-    if (!editorHost || !previewHost || !previewContent) return;
-
-    const align = () => {
-      const editorRect = editorHost.getBoundingClientRect();
-      const previewRect = previewHost.getBoundingClientRect();
-      const editorCenter = editorRect.top + editorRect.height / 2;
-      const previewCenter = previewRect.top + previewRect.height / 2;
-      previewContent.style.setProperty("--guardrail-center-offset", `${editorCenter - previewCenter}px`);
-    };
-    align();
-    this.guardrailAlignmentObserver = new ResizeObserver(align);
-    this.guardrailAlignmentObserver.observe(editorHost);
-    this.guardrailAlignmentObserver.observe(previewHost);
-    const editorToolbar = document.getElementById("editor-visual-toolbar");
-    if (editorToolbar) this.guardrailAlignmentObserver.observe(editorToolbar);
+    this.editorFileGuardController.showLargeFileConfirmation(tab, notice);
   }
 
   private clearGuardrailAlignment(): void {
-    this.guardrailAlignmentObserver?.disconnect();
-    this.guardrailAlignmentObserver = null;
+    this.editorFileGuardController.clearAlignment();
   }
 
-  private async openFileExternally(path: string, button?: HTMLButtonElement): Promise<void> {
-    if (button) button.disabled = true;
-    try {
-      await invoke("open_file_externally", { path });
-    } catch (error) {
-      console.error("Failed to open file externally:", error);
-      await message(`The file could not be opened externally.\n\n${String(error)}`, {
-        title: "Open External File Failed",
-        kind: "error"
-      });
-    } finally {
-      if (button?.isConnected) button.disabled = false;
-    }
+  private openFileExternally(path: string, button?: HTMLButtonElement): Promise<void> {
+    return this.editorFileGuardController.openFileExternally(path, button);
   }
 
   private renderImageToolPreview(source: string | null, imagePath?: string): void {
@@ -6169,7 +5666,7 @@ export class TypsastraWorkspaceController {
       } else {
         await this.loadFile(path, { temporary: false });
       }
-      this.sortPinnedMainTabFirst();
+      this.editorSessionController.sortPinnedMainFirst(this.pinnedMainFilePath);
       this.renderEditorTabs();
       if (this.workspaceRootPath) {
         await this.explorer.loadWorkspace(this.workspaceRootPath);
@@ -6204,7 +5701,7 @@ export class TypsastraWorkspaceController {
     
     if (path && previewApproved) {
       await this.loadFile(path, { temporary: false });
-      this.sortPinnedMainTabFirst();
+      this.editorSessionController.sortPinnedMainFirst(this.pinnedMainFilePath);
     } else if (!mainChanged) {
       await this.updatePinnedMain(null);
     }
@@ -6234,711 +5731,108 @@ export class TypsastraWorkspaceController {
   }
 
 
-  private bindGlobalEvents() {
-    installModalFocusTrap();
-    window.addEventListener("typsastra-open-image-tool", event => {
-      const imagePath = (event as CustomEvent<{ imagePath?: string }>).detail?.imagePath;
-      if (imagePath) void this.navigateToImageTool(imagePath);
-    });
-    import("@tauri-apps/api/event").then(({ listen, emit }) => {
-      listen("preview-window-ready", () => {
-        if (this.lastPdfPath) {
-          emit("pdf-update", {
-            path: this.lastPdfPath,
-            identity: this.lastPdfIdentity || this.pdfPreviewSourceMapRootPath || this.previewRootPath || "preview",
-            sessionKey: this.lastPdfSessionKey || this.previewSessionKey || this.lastPdfIdentity || "preview",
-            surface: this.lastPdfSurface,
-            contentMode: this.draftPreviewController.presentedMode,
-            draftAssets: this.draftPreviewController.presentedMode === "draft"
-              ? [...this.draftPreviewController.assets.values()]
-              : [],
-            draftAssetRootPath: this.draftPreviewController.presentedMode === "draft"
-              ? this.draftPreviewController.assetRootPath ?? undefined
-              : undefined,
-            draftThumbnailGeneration: this.draftPreviewController.presentedMode === "draft"
-              ? this.draftPreviewController.thumbnailGeneration
-              : undefined
-          } satisfies PdfUpdatePayload);
+  private bindGlobalEvents(): void {
+    bindAppEvents({
+      previewWindowUpdate: () => {
+        if (!this.lastPdfPath) return null;
+        return {
+          path: this.lastPdfPath,
+          identity: this.lastPdfIdentity || this.pdfPreviewSourceMapRootPath || this.previewRootPath || "preview",
+          sessionKey: this.lastPdfSessionKey || this.previewSessionKey || this.lastPdfIdentity || "preview",
+          surface: this.lastPdfSurface,
+          contentMode: this.draftPreviewController.presentedMode,
+          draftAssets: this.draftPreviewController.presentedMode === "draft"
+            ? [...this.draftPreviewController.assets.values()]
+            : [],
+          draftAssetRootPath: this.draftPreviewController.presentedMode === "draft"
+            ? this.draftPreviewController.assetRootPath ?? undefined
+            : undefined,
+          draftThumbnailGeneration: this.draftPreviewController.presentedMode === "draft"
+            ? this.draftPreviewController.thumbnailGeneration
+            : undefined,
+        };
+      },
+      changePreviewContentMode: mode => this.draftPreviewController.changeMode(mode),
+      previewContentMode: () => this.draftPreviewController.mode,
+      openLastPreviewExternally: () => this.lastPdfPath ? this.openFileExternally(this.lastPdfPath) : undefined,
+      handlePdfPreviewClick: point => this.handlePdfPreviewClick(point),
+      drainPendingProjectImports: () => this.drainPendingProjectImports(),
+      navigateToImageTool: imagePath => this.navigateToImageTool(imagePath),
+      beforeUnload: () => {
+        this.systemResumeMonitor.stop();
+        if (this.sourceMapSessionController.registeredTaskId && this.lspClient) {
+          void this.lspClient.stopPreview(this.sourceMapSessionController.registeredTaskId).catch(() => {});
         }
-      });
-      listen<PreviewContentMode>("preview-content-mode-request", event => {
-        void this.draftPreviewController.changeMode(event.payload);
-      });
-      listen<UndockedPreviewAction>("preview-window-action", event => {
-        if (event.payload === "export-pdf") {
-          document.getElementById("action-export-pdf")?.click();
-        } else if (event.payload === "open-external" && this.lastPdfPath) {
-          void this.openFileExternally(this.lastPdfPath);
-        }
-      });
-      listen<PreviewClickPoint>("pdf-click", (event) => {
-        const point = event.payload;
-        void this.handlePdfPreviewClick(point);
-      });
-    }).catch(err => console.error("Error setting up Tauri preview event listeners", err));
-
-    void listen("typsastra-project-open-requested", () => {
-      void this.drainPendingProjectImports();
-    });
-
-    window.addEventListener("beforeunload", () => {
-      this.systemResumeMonitor.stop();
-      if (this.sourceMapSessionController.registeredTaskId && this.lspClient) {
-        void this.lspClient.stopPreview(this.sourceMapSessionController.registeredTaskId).catch(() => {});
-      }
-      this.workspaceController.stopWatching();
-      this.saveWorkspaceState();
-      this.settingsController.flush();
-    });
-
-    document.addEventListener("keydown", (e) => {
-      // Windows exposes AltGr as Ctrl+Alt. Let the WebView and CodeMirror
-      // receive the event as text input before evaluating application or
-      // browser-shortcut suppression rules.
-      if (isAltGraphKeyboardEvent(e)) return;
-
-      const isMac = navigator.userAgent.toLowerCase().includes("mac");
-      const cmdOrCtrl = isMac ? e.metaKey : e.ctrlKey;
-      const keyCode = e.code;
-
-      if (e.key === "Escape" && document.activeElement?.closest(".cm-editor")) {
-        this.spellcheckController.dismissActiveTyping();
-      }
-      
-      // Ctrl+F12 to open devtools in dev build
-      if (cmdOrCtrl && keyCode === "F12" && import.meta.env.DEV) {
-        e.preventDefault();
-        void invoke("open_devtools");
-      }
-
-      if (e.altKey && !cmdOrCtrl && !e.shiftKey && keyCode === "Enter") {
-        e.preventDefault();
-        this.revealCursorInPreviewManually();
-        return;
-      }
-      
-      // Block common function keys (except F3 which we handle conditionally)
-      if (["F5", "F6", "F7", "F11"].includes(keyCode)) {
-        e.preventDefault();
-      }
-      
-      // Block specific browser shortcuts (that we don't map below)
-      if (cmdOrCtrl && ["KeyR", "KeyP", "KeyJ", "KeyU", "KeyD"].includes(keyCode)) {
-        e.preventDefault();
-      }
-      
-      // Block browser's Find/Replace shortcuts only if not in an input/textarea/editor
-      if (keyCode === "F3" || (cmdOrCtrl && ["KeyF", "KeyG", "KeyH"].includes(keyCode))) {
-         const active = document.activeElement;
-         if (!active || (!active.classList.contains("cm-content") && active.tagName !== "INPUT" && active.tagName !== "TEXTAREA" && !active.closest('.cm-panel'))) {
-             e.preventDefault();
-         }
-      }
-      
-      if (cmdOrCtrl && e.shiftKey && ["KeyI", "KeyC", "KeyF", "KeyJ", "KeyR"].includes(keyCode)) {
-        e.preventDefault();
-      }
-
-      if (cmdOrCtrl && e.shiftKey && !e.altKey && keyCode === "KeyF") {
-        e.preventDefault();
-        void this.formatActiveDocument();
-        return;
-      }
-
-      if (cmdOrCtrl && e.shiftKey && !e.altKey && keyCode === "KeyS") {
-        e.preventDefault();
-        void this.saveActiveFileAs();
-        return;
-      }
-
-      const recentProjectIndex = recentProjectShortcutIndex(e);
-      const welcomeScreen = document.getElementById("welcome-screen");
-      if (
-        recentProjectIndex !== null
-        && welcomeScreen
-        && !welcomeScreen.classList.contains("hidden")
-        && this.recentProjectsController.openAt(recentProjectIndex)
-      ) {
-        e.preventDefault();
-        return;
-      }
-      
-      // App Keymappings
-      if (cmdOrCtrl && !e.shiftKey && !e.altKey) {
-        switch (keyCode) {
-          case "KeyS":
-            e.preventDefault();
-            void this.saveActiveFile();
-            break;
-          case "KeyO":
-            e.preventDefault();
-            document.getElementById("action-open-folder")?.click();
-            break;
-          case "KeyN":
-            e.preventDefault();
-            document.getElementById("action-new-file")?.click();
-            break;
-          case "KeyB":
-            e.preventDefault();
-            document.getElementById("action-toggle-sidebar")?.click();
-            break;
-          case "KeyE":
-            e.preventDefault();
-            document.getElementById("action-export-pdf")?.click();
-            break;
-          case "KeyQ":
-            e.preventDefault();
-            document.getElementById("action-exit")?.click();
-            break;
-          case "Backquote":
-            e.preventDefault();
-            document.getElementById("action-toggle-logs")?.click();
-            break;
-        }
-      }
-
-      if (e.altKey && !cmdOrCtrl && !e.shiftKey) {
-        if (keyCode === "KeyZ") {
-          e.preventDefault();
-          document.getElementById("action-toggle-word-wrap")?.click();
-        }
-      }
-    });
-
-    // TODO: Re-enable native WYSIWYM layout events when the implementation is ready.
-    // listen("menu-toggle-layout", () => this.switchViewLayoutMode());
-    listen("menu-toggle-log-console", () => this.logConsoleController.toggle());
-    listen("menu-open-folder", async () => {
-      const selected = await open({ directory: true, multiple: false });
-      if (typeof selected === "string") {
-        await this.openWorkspace(selected);
-      }
-    });
-
-    document.getElementById("preview-zoom-out-btn")?.addEventListener("click", () => {
-      this.zoomOut();
-    });
-
-    document.getElementById("preview-zoom-in-btn")?.addEventListener("click", () => {
-      this.zoomIn();
-    });
-
-    document.getElementById("preview-zoom-fit-btn")?.addEventListener("click", () => {
-      this.zoomToFit();
-    });
-
-    document.getElementById("preview-recompile-btn")?.addEventListener("click", () => {
-      this.recompilePreviewManually();
-    });
-
-    document.getElementById("preview-image-warning-btn")?.addEventListener("click", () => {
-      void this.draftPreviewController.showImageHeavyDetails();
-    });
-    document.getElementById("preview-content-mode-toggle")?.addEventListener("click", () => {
-      void this.draftPreviewController.changeMode(
-        this.draftPreviewController.mode === "draft" ? "normal" : "draft"
-      );
-    });
-
-    const previewForwardSyncButton = document.getElementById("preview-forward-sync-btn");
-    previewForwardSyncButton?.addEventListener("pointerdown", event => {
-      if (event.button === 0 && this.editorInstance.hasFocus) event.preventDefault();
-    });
-    previewForwardSyncButton?.addEventListener("click", () => {
-      this.revealCursorInPreviewManually();
-    });
-
-    this.initializePreviewPageControls();
-    this.updatePreviewZoomLabel();
-    this.updateManualForwardSyncAction();
-
-    document.getElementById("action-open-folder")?.addEventListener("click", async () => {
-      const selected = await open({ directory: true, multiple: false });
-      if (typeof selected === "string") {
-        await this.openWorkspace(selected);
-      }
-    });
-
-    document.getElementById("action-import-project")?.addEventListener("click", async () => {
-      await this.importTypsastraProject();
-    });
-    
-    document.getElementById("action-restart-workspace")?.addEventListener("click", () => {
-      void this.restartWorkspace();
-    });
-
-    document.getElementById("action-close-project")?.addEventListener("click", () => {
-      void this.closeProject();
-    });
-
-    document.getElementById("action-new-file")?.addEventListener("click", async () => {
-      if (!this.workspaceRootPath) {
-        alert("Please open a project first.");
-        return;
-      }
-      const savePath = await save({
-        defaultPath: this.workspaceRootPath,
-        filters: [{ name: "Typst Document", extensions: ["typ"] }]
-      });
-      if (typeof savePath === "string") {
-        await invoke("save_workspace_file", { path: savePath, contents: "= New Document\n" });
-        this.explorer.loadWorkspace(this.workspaceRootPath);
-        this.loadFile(savePath);
-      }
-    });
-
-    document.getElementById("action-save-file")?.addEventListener("click", async () => {
-      await this.saveActiveFile();
-    });
-
-    document.getElementById("action-save-file-as")?.addEventListener("click", async () => {
-      await this.saveActiveFileAs();
-    });
-
-    document.getElementById("action-export-pdf")?.addEventListener("click", async () => {
-      if (this.activeFilePath) {
-        const content = this.editorInstance.state.doc.toString();
-        this.exportInProgress = true;
+        this.workspaceController.stopWatching();
+        void this.saveWorkspaceState();
+        this.settingsController.flush();
+      },
+      dismissSpellcheckTyping: () => this.spellcheckController.dismissActiveTyping(),
+      revealCursorInPreview: () => this.revealCursorInPreviewManually(),
+      formatActiveDocument: () => this.formatActiveDocument(),
+      saveActiveFileAs: () => this.saveActiveFileAs(),
+      saveActiveFile: () => this.saveActiveFile(),
+      openRecentProject: index => this.recentProjectsController.openAt(index),
+      openWorkspace: path => this.openWorkspace(path),
+      importProject: () => this.importTypsastraProject(),
+      restartWorkspace: () => this.restartWorkspace(),
+      closeProject: () => this.closeProject(),
+      workspaceRootPath: () => this.workspaceRootPath,
+      onNewFileCreated: async path => {
+        if (this.workspaceRootPath) await this.explorer.loadWorkspace(this.workspaceRootPath);
+        await this.loadFile(path);
+      },
+      zoomOut: () => this.zoomOut(),
+      zoomIn: () => this.zoomIn(),
+      zoomToFit: () => this.zoomToFit(),
+      recompilePreview: () => this.recompilePreviewManually(),
+      showImageHeavyDetails: () => this.draftPreviewController.showImageHeavyDetails(),
+      editorHasFocus: () => this.editorInstance.hasFocus,
+      initializePreviewPageControls: () => this.initializePreviewPageControls(),
+      updatePreviewZoomLabel: () => this.updatePreviewZoomLabel(),
+      updateManualForwardSyncAction: () => this.updateManualForwardSyncAction(),
+      exportPdf: () => this.projectExportController.exportPdf(),
+      exportProject: () => this.projectExportController.exportProjectArchive(),
+      exportSourceZip: () => this.projectExportController.exportSourceZip(),
+      undo: () => { undo({ state: this.editorInstance.state, dispatch: this.editorInstance.dispatch }); },
+      redo: () => { redo({ state: this.editorInstance.state, dispatch: this.editorInstance.dispatch }); },
+      foldCurrentFile: () => this.foldCurrentFile(),
+      unfoldCurrentFile: () => this.unfoldCurrentFile(),
+      toggleSidebar: () => this.sidebarController.toggle(),
+      setSidebarTool: tool => this.sidebarController.setTool(tool),
+      restoreDefaultLayout: () => this.restoreDefaultLayout(),
+      toggleLogConsole: () => this.logConsoleController.toggle(),
+      clearLogs: () => this.logConsoleController.clearLogs(),
+      restartLsp: async () => {
+        this.tinymistPreviewRecoveryAttempts = 0;
+        this.logConsoleController.clearAllLogs();
+        this.previewFrame.clear();
         try {
-          const rootPath = this.previewStandalone
-            ? (this.previewRootPath ?? this.activeFilePath)
-            : (this.previewMainPath ?? this.previewRootPath ?? this.activeFilePath);
-          
-          if (!rootPath) throw new Error("No export root path available");
-
-          const defaultPdfPath = (this.previewStandalone
-            ? this.activeFilePath
-            : (this.previewMainPath ?? this.activeFilePath)).replace(/\.typ$/i, ".pdf");
-          const exportPdfPath = await save({
-            title: "Export PDF",
-            defaultPath: defaultPdfPath,
-            filters: [{ name: "PDF Document", extensions: ["pdf"] }]
-          });
-          if (!exportPdfPath) {
-            this.setLspStatus({ kind: "preview-ready", message: "PDF export cancelled" });
-            return;
-          }
-
-          this.setLspStatus({ kind: "running", message: "Exporting PDF..." });
-          let targetFilePath = rootPath;
-          let targetContent = "";
-          if (filePathKey(targetFilePath) === filePathKey(this.activeFilePath)) {
-            targetContent = content;
-          } else {
-            targetContent = await invoke<string>("read_workspace_file", { path: targetFilePath }).catch(() => "");
-          }
-
-          const cacheRoot = this.getCacheRootPath();
-          if (cacheRoot && this.workspaceRootPath) {
-            const originalRootPath = this.mapToOriginalPath(rootPath);
-            const originalActivePath = this.mapToOriginalPath(this.activeFilePath);
-            
-            const options = {
-              enableKhmerZws: this.settingsController.value.preview.khmerRenderPreparation,
-              projectRoot: this.workspaceRootPath,
-              entryFile: originalRootPath,
-              cacheRoot,
-              generateSourceMap: false,
-              // User-facing export must never compile Draft Preview placeholders.
-              previewContentMode: "normal"
-            };
-
-            const result = await invoke<{ generatedEntryFile: string }>("prepare_render_project", { options });
-            
-            const tabsToOverlay = this.openTabs
-              .filter(tab => tab.contentLoaded)
-              .filter(tab => tab.path.toLowerCase().endsWith(".typ"))
-              .filter(tab => this.workspaceRootPath && relativeFilePath(this.workspaceRootPath, this.mapToOriginalPath(tab.path)) !== null);
-            
-            for (const tab of tabsToOverlay) {
-              const originalTabPath = this.mapToOriginalPath(tab.path);
-              const sourceCode = filePathKey(originalTabPath) === filePathKey(originalActivePath)
-                ? content
-                : tab.content;
-              
-              await invoke("prepare_render_file", {
-                options,
-                filePath: originalTabPath,
-                sourceCode
-              });
-            }
-
-            targetFilePath = result.generatedEntryFile;
-            targetContent = await invoke<string>("read_workspace_file", { path: targetFilePath }).catch(() => "");
-          }
-
-          const pdfPath = await invoke<string>("compile_typst_document", {
-            sourceCode: targetContent,
-            filePath: targetFilePath
-          });
-          
-          await invoke("copy_workspace_file", { source: pdfPath, dest: exportPdfPath });
-          await invoke("move_to_trash", { path: pdfPath });
-          
-          this.setLspStatus({ kind: "preview-ready", message: `Exported to ${exportPdfPath}` });
+          await this.restartTinymistSession("Restarting LSP...");
         } catch (error) {
-          this.setLspStatus({ kind: "error", message: `Export failed: ${error}` });
-        } finally {
-          this.exportInProgress = false;
-        }
-      }
-    });
-
-    document.getElementById("action-export-project")?.addEventListener("click", async () => {
-      if (!this.workspaceRootPath) {
-        alert("Please open a project first.");
-        return;
-      }
-      if (this.openTabs.some(tab => tab.isDirty)) {
-        await message("Save all modified files before exporting so the archive matches the editor.", {
-          title: "Unsaved Files",
-          kind: "warning"
-        });
-        return;
-      }
-
-      const mainFilePath = this.previewMainPath ?? (
-        this.activeFilePath?.toLowerCase().endsWith(".typ") ? this.activeFilePath : null
-      );
-      if (!mainFilePath) {
-        await message("Set or open the project's main Typst file before exporting a version-bound project.", {
-          title: "Main File Required",
-          kind: "warning"
-        });
-        return;
-      }
-
-      this.exportInProgress = true;
-      try {
-        const folderName = this.workspaceRootPath.split(/[/\\]/).pop() || "workspace";
-        const selected = await save({
-          filters: [{
-            name: "Typsastra Project",
-            extensions: ["typsastra"]
-          }],
-          defaultPath: `${folderName}.typsastra`
-        });
-
-        if (selected) {
-          this.setLspStatus({ kind: "running", message: "Exporting Typsastra project..." });
-          await invoke("export_typsastra_project", {
-            workspacePath: this.workspaceRootPath,
-            archivePath: selected,
-            mainFilePath
-          });
-          this.setLspStatus({
-            kind: "preview-ready",
-            message: `Typsastra project exported to ${selected}. Font files were not included.`
-          });
-        }
-      } catch (error) {
-        this.setLspStatus({ kind: "error", message: `Project export failed: ${error}` });
-        await message(String(error), { title: "Typsastra Project Export Failed", kind: "error" });
-      } finally {
-        this.exportInProgress = false;
-      }
-    });
-
-    document.getElementById("action-export-source-zip")?.addEventListener("click", async () => {
-      if (!this.workspaceRootPath) {
-        alert("Please open a project first.");
-        return;
-      }
-      if (this.openTabs.some(tab => tab.isDirty)) {
-        await message("Save all modified files before exporting so the ZIP matches the editor.", {
-          title: "Unsaved Files",
-          kind: "warning"
-        });
-        return;
-      }
-
-      this.exportInProgress = true;
-      try {
-        const folderName = this.workspaceRootPath.split(/[/\\]/).pop() || "workspace";
-        const selected = await save({
-          filters: [{ name: "ZIP Archive", extensions: ["zip"] }],
-          defaultPath: `${folderName}.zip`
-        });
-        if (selected) {
-          this.setLspStatus({ kind: "running", message: "Exporting source ZIP..." });
-          await invoke("export_source_zip", {
-            workspacePath: this.workspaceRootPath,
-            zipPath: selected
-          });
-          this.setLspStatus({
-            kind: "preview-ready",
-            message: `Source ZIP exported to ${selected}. Font files were not included.`
-          });
-        }
-      } catch (error) {
-        this.setLspStatus({ kind: "error", message: `Source ZIP export failed: ${error}` });
-        await message(String(error), { title: "Source ZIP Export Failed", kind: "error" });
-      } finally {
-        this.exportInProgress = false;
-      }
-    });
-
-    document.getElementById("action-exit")?.addEventListener("click", () => {
-      getCurrentWindow().close();
-    });
-
-    document.getElementById("action-undo")?.addEventListener("click", () => {
-      undo({ state: this.editorInstance.state, dispatch: this.editorInstance.dispatch });
-    });
-
-    document.getElementById("action-redo")?.addEventListener("click", () => {
-      redo({ state: this.editorInstance.state, dispatch: this.editorInstance.dispatch });
-    });
-
-    document.getElementById("action-format-document")?.addEventListener("click", () => {
-      void this.formatActiveDocument();
-    });
-
-    document.getElementById("action-fold-file")?.addEventListener("click", () => {
-      this.foldCurrentFile();
-    });
-
-    document.getElementById("action-unfold-file")?.addEventListener("click", () => {
-      this.unfoldCurrentFile();
-    });
-
-    document.getElementById("action-toggle-word-wrap")?.addEventListener("click", () => {
-      document.getElementById("word-wrap-toggle")?.click();
-    });
-
-    document.getElementById("action-toggle-sidebar")?.addEventListener("click", () => {
-      this.sidebarController.toggle();
-    });
-
-    document.getElementById("sidebar-toggle-button")?.addEventListener("click", () => {
-      this.sidebarController.toggle();
-    });
-
-    document.getElementById("sidebar-explorer-button")?.addEventListener("click", () => {
-      this.sidebarController.setTool("explorer");
-    });
-
-    document.getElementById("sidebar-images-button")?.addEventListener("click", () => {
-      this.sidebarController.setTool("images");
-    });
-
-    document.getElementById("action-restore-default-layout")?.addEventListener("click", () => {
-      this.restoreDefaultLayout();
-    });
-
-    document.getElementById("action-clear-logs")?.addEventListener("click", () => {
-      this.logConsoleController.clearLogs();
-    });
-
-    document.getElementById("action-restart-lsp")?.addEventListener("click", async () => {
-      this.tinymistPreviewRecoveryAttempts = 0;
-      this.logConsoleController.clearAllLogs();
-      this.previewFrame.clear();
-      try {
-        await this.restartTinymistSession("Restarting LSP...");
-      } catch (error) {
-        this.lspReady = false;
-        this.setLspStatus({ kind: "error", message: `LSP restart failed: ${String(error)}` });
-        return;
-      }
-      // Re-register the existing in-memory document with Tinymist without
-      // replacing CodeMirror's EditorState. The editor parser, selection,
-      // viewport, and undo history are independent of the LSP lifecycle.
-      await this.restoreActiveDocumentAfterTinymistRestart();
-    });
-
-    document.getElementById("action-docs-typsastra")?.addEventListener("click", () => {
-      openUrl("https://github.com/sovichea/typsastra");
-    });
-
-    document.getElementById("action-docs-typst")?.addEventListener("click", () => {
-      openUrl("https://typst.app/docs");
-    });
-
-    const aboutOverlay = document.getElementById("about-overlay");
-    const aboutClose = document.getElementById("about-close") as HTMLButtonElement | null;
-    const aboutAction = document.getElementById("action-about-typsastra") as HTMLElement | null;
-    const closeAbout = () => {
-      if (aboutOverlay?.classList.contains("hidden")) return;
-      aboutOverlay?.classList.add("hidden");
-      aboutAction?.focus();
-    };
-    aboutAction?.addEventListener("click", async () => {
-      const version = document.getElementById("about-version");
-      if (version) version.textContent = await getVersion().catch(() => "Unavailable");
-      aboutOverlay?.classList.remove("hidden");
-      aboutClose?.focus();
-    });
-    aboutClose?.addEventListener("click", closeAbout);
-    document.getElementById("about-done")?.addEventListener("click", closeAbout);
-    document.getElementById("about-project-page")?.addEventListener("click", () => {
-      openUrl("https://github.com/Sovichea/typsastra");
-    });
-    aboutOverlay?.addEventListener("click", event => {
-      if (event.target === aboutOverlay) closeAbout();
-    });
-    document.addEventListener("keydown", event => {
-      if (event.key === "Escape" && !aboutOverlay?.classList.contains("hidden")) closeAbout();
-    });
-
-    // TODO: Re-enable the WYSIWYM layout menu action when the implementation is ready.
-    // document.getElementById("action-toggle-layout")?.addEventListener("click", () => this.switchViewLayoutMode());
-    document.getElementById("action-toggle-logs")?.addEventListener("click", () => this.logConsoleController.toggle());
-
-    // Welcome Screen Actions
-    const welcomeScreen = document.getElementById("welcome-screen");
-    if (welcomeScreen) installWelcomeKeyboardNavigation(welcomeScreen);
-    document.getElementById("welcome-open-project")?.addEventListener("click", () => {
-      document.getElementById("action-open-folder")?.click();
-    });
-    document.getElementById("welcome-import-project")?.addEventListener("click", () => {
-      document.getElementById("action-import-project")?.click();
-    });
-    document.getElementById("welcome-open-examples")?.addEventListener("click", () => {
-      void this.openExamplesWorkspace();
-    });
-
-    // Menu Bar Dropdown logic
-    const dropdownContainers = document.querySelectorAll("#app-menus .dropdown-container");
-    dropdownContainers.forEach(container => {
-      container.addEventListener("click", (e) => {
-        const target = e.target as HTMLElement;
-        
-        // If the user clicked a dropdown action item, close all menus and do not toggle open
-        if (target.closest(".dropdown-item")) {
-          dropdownContainers.forEach(c => c.classList.remove("active"));
+          this.lspReady = false;
+          this.setLspStatus({ kind: "error", message: `LSP restart failed: ${String(error)}` });
           return;
         }
-
-        const isActive = container.classList.contains("active");
-        // Close all dropdowns
-        dropdownContainers.forEach(c => c.classList.remove("active"));
-        if (!isActive) {
-          container.classList.add("active");
-        }
-        e.stopPropagation();
-      });
-
-      container.addEventListener("mouseenter", () => {
-        // If any dropdown is already active, open this one on hover
-        const isAnyActive = Array.from(dropdownContainers).some(c => c.classList.contains("active"));
-        if (isAnyActive && !container.classList.contains("active")) {
-          dropdownContainers.forEach(c => c.classList.remove("active"));
-          container.classList.add("active");
-        }
-      });
-    });
-
-    // Close on outside click
-    document.addEventListener("click", () => {
-      dropdownContainers.forEach(c => c.classList.remove("active"));
-    });
-
-    const appWindow = getCurrentWindow();
-    document.getElementById("titlebar-minimize")?.addEventListener("click", () => appWindow.minimize());
-    document.getElementById("titlebar-maximize")?.addEventListener("click", () => appWindow.toggleMaximize());
-
-    void appWindow.onResized(async () => {
-      const maximized = await appWindow.isMaximized();
-      updateMaximizeIcon(maximized);
-    });
-    void this.windowStateController.start().catch(error => {
-      console.warn("Failed to monitor the main window state:", error);
-    });
-    void appWindow.isMaximized().then(maximized => updateMaximizeIcon(maximized));
-    document.getElementById("titlebar-close")?.addEventListener("click", () => appWindow.close());
-
-    let closeRequestInProgress = false;
-    void appWindow.onCloseRequested(async (event) => {
-      event.preventDefault();
-      if (closeRequestInProgress) return;
-      closeRequestInProgress = true;
-      const hasUnsaved = this.openTabs.some(tab => tab.isDirty);
-      let proceed = true;
-      if (hasUnsaved) {
-        proceed = await confirm(
-          "You have unsaved changes. Are you sure you want to close Typsastra?",
-          {
-            title: "Unsaved Changes",
-            kind: "warning",
-            okLabel: "Close Without Saving",
-            cancelLabel: "Cancel"
-          }
-        );
-      }
-      if (proceed) proceed = await this.appUpdateController.prepareForClose();
-      if (proceed) {
-        await this.windowStateController.persistNow();
-        try {
-          const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
-          const previewWin = await WebviewWindow.getByLabel("preview");
-          if (previewWin) {
-            await previewWin.close();
-          }
-        } catch (e) {
-          console.error("Failed to close preview window on exit:", e);
-        }
-        void appWindow.destroy();
-        return;
-      }
-      closeRequestInProgress = false;
-    });
-
-    this.wysiwymContainer.addEventListener("input", () => {
-      if (this.activeMode === "WYSIWYM") {
-        const generatedMarkup = this.mapWysiwymToMarkup();
-        this.handleContentMutation(generatedMarkup);
-      }
-    });
-
-    this.wysiwymContainer.addEventListener("click", async (ev) => {
-      const e = ev as MouseEvent;
-      if (e.ctrlKey) {
-        const target = e.target as HTMLElement;
-        const linkSpan = target.closest(".wysiwym-link");
-        if (linkSpan) {
-          const url = linkSpan.getAttribute("data-url");
-          if (url && (url.startsWith("http://") || url.startsWith("https://"))) {
-            const trust = window.confirm(`Do you want to open this external link in your browser?\n\n${url}`);
-            if (trust) {
-              try {
-                await openUrl(url);
-              } catch (err) {
-                console.error("Failed to open URL", err);
-              }
-            }
-          }
-        }
-      }
-    });
-
-    this.previewPane.addEventListener("click", (e) => {
-      const target = e.target as Element;
-      // Typst compiler often outputs 'data-source' or 'data-typst-source' containing line mapping
-      const srcElement = target.closest("[data-source], [data-typst-source]");
-      if (srcElement) {
-        const source = srcElement.getAttribute("data-source") || srcElement.getAttribute("data-typst-source");
-        if (source) {
-          const parts = source.split(":");
-          if (parts.length >= 3) {
-            try {
-              const line = parseInt(parts[parts.length - 2], 10);
-              const column = parseInt(parts[parts.length - 1], 10);
-              const cursor = this.editorPositionFromSourceLocation(line, column);
-              if (this.activeMode === "WYSIWYM") {
-                this.switchViewLayoutMode(); // auto switch to code mode to show the line
-              }
-              this.previewSyncController.suppressOnce();
-              this.editorInstance.dispatch({
-                selection: { anchor: cursor },
-                scrollIntoView: true
-              });
-              this.editorInstance.focus();
-              void this.previewSyncController.renderAtCursor(cursor);
-            } catch (err) { console.warn("Failed to inverse sync:", err); }
-          }
-        }
-      }
+        await this.restoreActiveDocumentAfterTinymistRestart();
+      },
+      openExamplesWorkspace: () => this.openExamplesWorkspace(),
+      startWindowStateMonitor: () => this.windowStateController.start(),
+      hasUnsavedChanges: () => this.openTabs.some(tab => tab.isDirty),
+      prepareForClose: () => this.appUpdateController.prepareForClose(),
+      persistWindowState: () => this.windowStateController.persistNow(),
+      wysiwymContainer: this.wysiwymContainer,
+      isWysiwymMode: () => this.activeMode === "WYSIWYM",
+      handleWysiwymInput: () => this.handleContentMutation(this.mapWysiwymToMarkup()),
+      previewPane: this.previewPane,
+      handlePreviewSourceLocation: (line, column) => {
+        const cursor = this.editorPositionFromSourceLocation(line, column);
+        if (this.activeMode === "WYSIWYM") this.switchViewLayoutMode();
+        this.previewSyncController.suppressOnce();
+        this.editorInstance.dispatch({ selection: { anchor: cursor }, scrollIntoView: true });
+        this.editorInstance.focus();
+        void this.previewSyncController.renderAtCursor(cursor);
+      },
     });
   }
 

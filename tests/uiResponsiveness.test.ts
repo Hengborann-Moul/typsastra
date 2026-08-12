@@ -27,12 +27,12 @@ describe("UI responsiveness safeguards", () => {
       new URL("../src/preview/previewSyncController.ts", import.meta.url),
     ).text();
     const exportComplete = source.indexOf("Tinymist PDF export complete.");
-    const resizeBoundary = source.indexOf("await this.waitForHorizontalPaneResizeEnd()", exportComplete);
+    const resizeBoundary = source.indexOf("await this.workspaceResumeController.waitForHorizontalResizeEnd()", exportComplete);
     const presentation = source.indexOf("await this.loadPdfPath(", resizeBoundary);
     expect(exportComplete).toBeGreaterThan(-1);
     expect(resizeBoundary).toBeGreaterThan(exportComplete);
     expect(presentation).toBeGreaterThan(resizeBoundary);
-    expect(source).toContain("interactionBlocked: this.horizontalPaneResizeActive");
+    expect(source).toContain("interactionBlocked: this.workspaceResumeController.interactionBlocked");
     expect(previewSyncSource).toContain(
       "context.interactionBlocked || context.previewRunning || !ready",
     );
@@ -41,14 +41,17 @@ describe("UI responsiveness safeguards", () => {
 
   test("recovers an interrupted pane drag and stale source-map socket after system resume", async () => {
     const appSource = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
+    const resumeSource = await Bun.file(
+      new URL("../src/platform/workspaceResumeController.ts", import.meta.url),
+    ).text();
     const layoutSource = await Bun.file(new URL("../src/layout/layoutController.ts", import.meta.url)).text();
-    expect(appSource).toContain("recoverAfterSystemResume");
-    expect(appSource).toContain("this.layoutController.recoverInterruptedResize()");
+    expect(appSource).toContain("this.workspaceResumeController.recoverAfterSystemResume(suspendedMs)");
+    expect(appSource).toContain("recoverInterruptedResize: () => this.layoutController.recoverInterruptedResize()");
     expect(appSource).toContain("await this.editorFontManager.ready()");
-    expect(appSource).toContain('this.remeasureWorkspaceAfterResume("system resume settling")');
-    expect(appSource).toContain('document.body.classList.add("typsastra-resume-recovering")');
-    expect(appSource).toContain('document.body.classList.remove("typsastra-resume-recovering")');
     expect(appSource).toContain("this.previewFrame.syncTheme()");
+    expect(resumeSource).toContain('this.deps.remeasureWorkspace("system resume settling")');
+    expect(resumeSource).toContain('document.body.classList.add("typsastra-resume-recovering")');
+    expect(resumeSource).toContain('document.body.classList.remove("typsastra-resume-recovering")');
     expect(layoutSource).toContain("recoverInterruptedResize");
     expect(layoutSource).toContain('document.body.classList.remove("typsastra-resizing")');
   });

@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 
 const source = readFileSync(new URL("../src/appUpdateController.ts", import.meta.url), "utf8");
 const app = readFileSync(new URL("../src/appController.ts", import.meta.url), "utf8");
+const eventBindings = readFileSync(new URL("../src/ui/appEventBindings.ts", import.meta.url), "utf8");
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 
@@ -16,7 +17,8 @@ describe("staged application updates", () => {
   });
 
   test("integrates the staged update with controlled application shutdown", () => {
-    expect(app).toContain("proceed = await this.appUpdateController.prepareForClose()");
+    expect(app).toContain("prepareForClose: () => this.appUpdateController.prepareForClose()");
+    expect(eventBindings).toContain("proceed = await actions.prepareForClose()");
     expect(html).toContain('id="app-dialog-action-start"');
     expect(html).toContain('id="app-dialog-action-middle"');
     expect(html).toContain('id="app-dialog-action-end"');

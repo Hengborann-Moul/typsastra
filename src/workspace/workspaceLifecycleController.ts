@@ -8,11 +8,153 @@ import { parseDocumentScripts } from "../editor/documentTypography";
 import type { ImportedTypsastraProject } from "../projectArchive";
 import type { ToolchainStatus } from "../toolchain/toolchainController";
 import { workspaceRestoreCandidates, type WorkspaceMetadata } from "./workspaceStateStore";
+import type { EditorTab } from "../editor/editorTab";
+import type { DocumentTypography } from "../editor/documentTypography";
+import type { PreviewRenderMode } from "../settings";
+import type { TerminologyEntry } from "../settings";
+import type { Extension, StateEffect } from "@codemirror/state";
+import type { EditorView } from "@codemirror/view";
+import type { LspStatus, TinymistLspClient } from "../compiler/lsp";
 
 type ExamplesWorkspace = {
   workspacePath: string;
   entryPath: string;
 };
+
+type WorkspaceToolchain = { tinymistVersion: string; typstVersion: string };
+type DeveloperLog = { kind: "log" | "info" | "warning" | "error"; source: string; message: string };
+
+/**
+ * Explicit compatibility port between the root application orchestrator and
+ * the extracted workspace lifecycle. The root owns the concrete services;
+ * this controller only sees the operations and state required by its workflow.
+ */
+export interface WorkspaceLifecycleDependencies {
+  previewScrollTop: number;
+  previewScrollSaveTimer: number | null;
+  pinnedMainFilePath: string | null;
+  pinnedLspMainPath: string | null;
+  mainDocumentScripts: DocumentTypography["fonts"];
+  workspaceRootPath: string | null;
+  workspaceMetadata: WorkspaceMetadata | null;
+  workspaceLoading: boolean;
+  workspaceServicesDeferredForLargeFile: boolean;
+  blockedLargePreviewRoot: string | null;
+  recommendedWorkspaceToolchain: WorkspaceToolchain | null;
+  selectedWorkspaceToolchain: WorkspaceToolchain | null;
+  activeFilePath: string | null;
+  openTabs: EditorTab[];
+  lspReady: boolean;
+  previewRootPath: string | null;
+  previewMainPath: string | null;
+  previewTaskId: string | null;
+  previewSessionKey: string | null;
+  previewImported: boolean;
+  previewStandalone: boolean;
+  previewDisabled: boolean;
+  pdfPreviewSourceMapRootPath: string | null;
+  pdfPreviewSourceMapTaskId: string | null;
+  pdfPreviewTimer: number | null;
+  pdfPreviewGeneration: number;
+  queuedPdfPreviewContents: string | null;
+  queuedPdfPreviewForced: boolean;
+  tinymistPreviewRecoveryAttempts: number;
+  tinymistPreviewRecovery: Promise<boolean> | null;
+  externalPreviewRefreshPending: boolean;
+  lastPreviewRenderMode: PreviewRenderMode | undefined;
+  lastPdfPath: string;
+  lastPdfIdentity: string;
+  lastPdfSessionKey: string;
+  lastPdfSurface: "live" | "pdf";
+  isLoadingFile: boolean;
+  editorExtensions: Extension;
+  editorInstance: EditorView;
+  lspClient: TinymistLspClient | null;
+  approvedLargePreviewRoots: Set<string>;
+  inspectedPreviewRoots: Set<string>;
+  pdfPreviewGeneratedFiles: Map<string, unknown>;
+  managedPreviewPdfPathKeys: Set<string>;
+  managedImageToolPathKeys: Set<string>;
+  openedDocumentUris: Set<string>;
+  externalConflictPaths: Set<string>;
+  previewFrame: {
+    currentUrl: string | null;
+    restoreWorkspaceScrollPosition(scrollTop: number): void;
+    clear(): void;
+  };
+  layoutController: {
+    setDockedInputWidthPct(width: number): void;
+  };
+  sidebarController: {
+    activeTool: string;
+    restore(state: { visible: boolean; activeTool: "explorer" | "images" }): void;
+    reset(): void;
+  };
+  workspaceController: {
+    absolutePath(root: string, path: string | null): Promise<string | null>;
+    loadMetadata(root: string): Promise<WorkspaceMetadata>;
+    startWatching(root: string): Promise<void>;
+    stopWatching(): void;
+  };
+  settingsController: {
+    value: {
+      preview: { renderMode: PreviewRenderMode };
+      editor: {
+        globalTerminology: TerminologyEntry[];
+        languageTerminology: Record<string, TerminologyEntry[]>;
+        scopedIgnoredWords: Record<string, TerminologyEntry[]>;
+      };
+    };
+    setWorkspacePreviewRenderMode(mode: PreviewRenderMode | null, changed?: (mode: PreviewRenderMode) => void): void;
+    setProjectTerminology(entries: TerminologyEntry[], changed: (entries: TerminologyEntry[]) => void): void;
+  };
+  draftPreviewController: { mode: unknown; setMode(mode: unknown, reason: string): void; reset(): void };
+  spellcheckController: { setTerminology(global: TerminologyEntry[], project: TerminologyEntry[], language: Record<string, TerminologyEntry[]>, ignored: Record<string, TerminologyEntry[]>): void };
+  explorer: {
+    loadWorkspace(root: string, expanded?: string[]): Promise<void>;
+    revealPath(path: string): Promise<void>;
+    setActiveFile(path: string | null): void;
+    clearWorkspace(): void;
+  };
+  imageToolsController: { setWorkspace(root: string | null, main: string | null): Promise<void>; show(): void };
+  recentProjectsController: { add(path: string): void };
+  editorFontManager: { ready(): Promise<void>; updateDocument(text: string): void };
+  editorController: { updateCaretMarker(): void };
+  editorToolbarController: { synchronizeDocumentTypography(config: DocumentTypography): void; setDisabled(disabled: boolean): void };
+  toolchainController: { setStatus(status: ToolchainStatus): void };
+  typographyController: { resetRuntime(): void };
+  previewSyncController: { cancelManual(): void; clearForward(): void };
+  sourceMapSessionController: { registeredTaskId: string | null; reset(): void };
+  imagePreviewController: { clear(): void };
+  documentOutlineController: { clear(): void };
+  logConsoleController: { clearAllLogs(): void; setVisible(visible: boolean): void };
+  activateEditorTab(path: string, persist?: boolean, options?: { skipPreviewActivation?: boolean }): Promise<void>;
+  loadFile(path: string, options?: { skipPreviewActivation?: boolean }): Promise<void>;
+  renderEditorTabs(): void;
+  getActiveTab(): EditorTab | null;
+  saveWorkspaceState(): Promise<void>;
+  setPreviewRenderMode(mode: PreviewRenderMode): Promise<void>;
+  ensureLargePreviewApproved(path: string): Promise<boolean>;
+  preparePinnedMainTypography(path: string): Promise<DocumentTypography | null | false>;
+  prepareRenderProjectIfNeeded(): Promise<void>;
+  restartTinymistSession(message: string): Promise<void>;
+  stopTinymistSession(message: string): Promise<void>;
+  restoreActiveDocumentAfterTinymistRestart(): Promise<void>;
+  setPinnedMainFile(path: string | null): Promise<void>;
+  closeEditorTab(path: string, skipDirtyCheck?: boolean): Promise<void>;
+  updateWorkspaceViewportVisibility(): void;
+  appendDeveloperLog(entry: DeveloperLog): void;
+  appendLspLog(entry: DeveloperLog): void;
+  setLspStatus(status: LspStatus): void;
+  updatePreviewActionsToolbar(path: string | null): void;
+  clearPendingLspSync(): void;
+  clearDiagnostics(): void;
+  activateSpellcheckDocument(path: string | null): void;
+  currentEditorSettingsEffects(): readonly StateEffect<unknown>[];
+  applyFoldRanges(ranges: EditorFoldRange[]): void;
+  mapMarkupToWysiwym(markup: string): void;
+  activeMode: "CODE" | "WYSIWYM";
+}
 
 /**
  * Owns the project lifecycle while the legacy root controller still supplies
@@ -20,11 +162,7 @@ type ExamplesWorkspace = {
  * the root shed complete workflows without duplicating their state.
  */
 export class WorkspaceLifecycleController {
-  constructor(private readonly host: object) {}
-
-  private get app(): any {
-    return this.host;
-  }
+  constructor(private readonly app: WorkspaceLifecycleDependencies) {}
 
   async restore(workspacePath: string, metadata: WorkspaceMetadata): Promise<void> {
     const app = this.app;
@@ -65,7 +203,7 @@ export class WorkspaceLifecycleController {
       })));
       for (const { tabInfo, path } of restoredTabs) {
         if (!path) continue;
-        if (app.openTabs.some((tab: any) => filePathKey(tab.path) === filePathKey(path))) continue;
+        if (app.openTabs.some(tab => filePathKey(tab.path) === filePathKey(path))) continue;
         app.openTabs.push({
           path,
           content: "",
@@ -105,10 +243,10 @@ export class WorkspaceLifecycleController {
 
       const activeFilePath = await app.workspaceController.absolutePath(workspacePath, state.activeFile);
       const preferredTab = activeFilePath
-        ? app.openTabs.find((tab: any) => filePathKey(tab.path) === filePathKey(activeFilePath))
+        ? app.openTabs.find(tab => filePathKey(tab.path) === filePathKey(activeFilePath))
         : null;
       const activationCandidates = preferredTab
-        ? [preferredTab, ...app.openTabs.filter((tab: any) => tab !== preferredTab)]
+        ? [preferredTab, ...app.openTabs.filter(tab => tab !== preferredTab)]
         : [...app.openTabs];
       for (const tab of activationCandidates) {
         try {
@@ -116,14 +254,14 @@ export class WorkspaceLifecycleController {
           break;
         } catch (error) {
           console.warn("Failed to restore tab:", tab.path, error);
-          app.openTabs = app.openTabs.filter((candidate: any) => candidate !== tab);
+          app.openTabs = app.openTabs.filter(candidate => candidate !== tab);
           app.renderEditorTabs();
         }
       }
       if (!app.activeFilePath) {
         for (const candidate of workspaceRestoreCandidates(metadata)) {
           const path = await app.workspaceController.absolutePath(workspacePath, candidate);
-          if (!path || app.openTabs.some((tab: any) => filePathKey(tab.path) === filePathKey(path))) continue;
+          if (!path || app.openTabs.some(tab => filePathKey(tab.path) === filePathKey(path))) continue;
           if (!await invoke<boolean>("workspace_path_exists", { path })) continue;
           await app.loadFile(path, { skipPreviewActivation: true });
           if (app.activeFilePath) break;
@@ -155,7 +293,7 @@ export class WorkspaceLifecycleController {
       app.workspaceMetadata.workspace.previewRenderMode ??= app.settingsController.value.preview.renderMode;
       app.settingsController.setWorkspacePreviewRenderMode(
         app.workspaceMetadata.workspace.previewRenderMode,
-        (mode: any) => void app.setPreviewRenderMode(mode),
+        mode => void app.setPreviewRenderMode(mode),
       );
       app.lastPreviewRenderMode = app.workspaceMetadata.workspace.previewRenderMode;
       app.draftPreviewController.setMode(app.workspaceMetadata.workspace.previewContentMode, "normal");
@@ -167,7 +305,7 @@ export class WorkspaceLifecycleController {
       );
       app.settingsController.setProjectTerminology(
         app.workspaceMetadata.project.terminology,
-        (entries: string[]) => {
+        (entries: TerminologyEntry[]) => {
           if (!app.workspaceMetadata) return;
           app.workspaceMetadata.project.terminology = entries;
           app.spellcheckController.setTerminology(
@@ -328,7 +466,7 @@ export class WorkspaceLifecycleController {
 
   async closeOtherTabs(pathToKeep: string): Promise<void> {
     const app = this.app;
-    const tabsToClose = app.openTabs.filter((tab: any) => tab.path !== pathToKeep);
+    const tabsToClose = app.openTabs.filter(tab => tab.path !== pathToKeep);
     for (const tab of tabsToClose) await app.closeEditorTab(tab.path, false);
   }
 
@@ -359,7 +497,7 @@ export class WorkspaceLifecycleController {
   async close(options: { confirmUnsaved?: boolean } = {}): Promise<boolean> {
     const app = this.app;
     const confirmUnsaved = options.confirmUnsaved ?? true;
-    if (confirmUnsaved && app.openTabs.some((tab: any) => tab.isDirty)) {
+    if (confirmUnsaved && app.openTabs.some(tab => tab.isDirty)) {
       const shouldClose = await confirm(
         "Close this project with unsaved changes? The editor state will be kept for session recovery, but the files are not saved to disk.",
         { title: "Unsaved Changes", kind: "warning" },

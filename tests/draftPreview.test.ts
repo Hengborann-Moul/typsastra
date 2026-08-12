@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 const root = join(import.meta.dir, "..");
 const controller = readFileSync(join(root, "src", "appController.ts"), "utf8");
+const appEventBindings = readFileSync(join(root, "src", "ui", "appEventBindings.ts"), "utf8");
 const draftController = readFileSync(
   join(root, "src", "preview", "draftPreviewController.ts"),
   "utf8"
@@ -142,8 +143,8 @@ describe("Draft Preview", () => {
     expect(previewBootstrap).toContain("this.draftPreviewController.updateControl(true)");
     expect(draftController).toContain("this.updateControl(false)");
     expect(previewBootstrap).not.toContain("contentModeToggle.disabled = true");
-    expect(controller).toContain(
-      'listen<PreviewContentMode>("preview-content-mode-request"'
+    expect(appEventBindings).toContain(
+      'listenEvent<PreviewContentMode>("preview-content-mode-request"'
     );
   });
 
@@ -155,7 +156,9 @@ describe("Draft Preview", () => {
     expect(controller).toContain('data-preview-action="export-pdf"');
     expect(controller).toContain('data-preview-action="open-external"');
     expect(controller).toContain('data-preview-action="dock"');
-    expect(controller).toContain('listen<UndockedPreviewAction>("preview-window-action"');
+    expect(appEventBindings).toContain(
+      'listenEvent<"export-pdf" | "open-external">("preview-window-action"'
+    );
   });
 
   test("starts one fixed native thumbnail queue after Draft presentation", () => {

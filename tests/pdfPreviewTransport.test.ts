@@ -117,16 +117,19 @@ describe("compiled PDF transport", () => {
 
   test("keeps editor diagnostics on original sources and recompiles explicit saves in either mode", async () => {
     const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
+    const persistenceSource = await Bun.file(
+      new URL("../src/editor/documentPersistenceController.ts", import.meta.url),
+    ).text();
     const diagnosticsSource = await Bun.file(
       new URL("../src/diagnostics/diagnosticsController.ts", import.meta.url)
     ).text();
-    const saveStart = source.indexOf("private async performSaveActiveFile");
-    const saveEnd = source.indexOf("\n  private ", saveStart + 10);
-    const saveMethod = source.slice(saveStart, saveEnd);
+    const saveStart = persistenceSource.indexOf("private async performSaveActiveFile");
+    const saveEnd = persistenceSource.indexOf("\n  private ", saveStart + 10);
+    const saveMethod = persistenceSource.slice(saveStart, saveEnd);
     expect(source).toContain("await this.updatePinnedMain(previewLspMainPath(target))");
     expect(source).not.toContain("cachedPreviewCompilerPath");
     expect(diagnosticsSource).toContain("if (this.port.isRenderCachePath(rawPath))");
-    expect(saveMethod).toContain("void this.renderPdfPreview(content)");
+    expect(saveMethod).toContain("void this.deps.renderPdfPreview(content)");
     expect(saveMethod).not.toContain('effectivePreviewRenderMode === "on-save"');
   });
 
@@ -223,7 +226,9 @@ describe("compiled PDF transport", () => {
   });
 
   test("uses a native Save dialog before writing a user-facing PDF", async () => {
-    const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
+    const source = await Bun.file(
+      new URL("../src/export/projectExportController.ts", import.meta.url),
+    ).text();
     const selector = source.indexOf('title: "Export PDF"');
     const workspaceCopy = source.indexOf('invoke("copy_workspace_file", { source: pdfPath, dest: exportPdfPath })');
     expect(selector).toBeGreaterThan(-1);

@@ -71,19 +71,22 @@ describe("large file opening notice", () => {
 
   test("keeps standalone PDF confirmation in the preview pane", async () => {
     const controller = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
-    const confirmationStart = controller.indexOf("private showLargeFileConfirmation");
-    const confirmationEnd = controller.indexOf("private async openFileExternally", confirmationStart);
-    const confirmationSource = controller.slice(confirmationStart, confirmationEnd);
+    const guard = await Bun.file(
+      new URL("../src/editor/editorFileGuardController.ts", import.meta.url),
+    ).text();
+    const confirmationStart = guard.indexOf("showLargeFileConfirmation");
+    const confirmationEnd = guard.indexOf("private observeAlignment", confirmationStart);
+    const confirmationSource = guard.slice(confirmationStart, confirmationEnd);
 
     expect(confirmationSource).toContain('if (notice.kind === "pdf")');
-    expect(confirmationSource).toContain("this.blockedLargePdfPaths.add(filePathKey(path))");
-    expect(confirmationSource).toContain("this.pdfLoadRequestGeneration += 1");
-    expect(confirmationSource).toContain("this.invalidatePreviewWork(");
-    expect(confirmationSource).toContain("this.previewFrame.setConfirmationMessage({");
+    expect(confirmationSource).toContain("this.deps.onPdfBlocked(path)");
+    expect(controller).toContain("this.blockedLargePdfPaths.add(filePathKey(path))");
+    expect(controller).toContain("this.pdfLoadRequestGeneration += 1");
+    expect(controller).toContain("this.invalidatePreviewWork(");
+    expect(confirmationSource).toContain("this.deps.previewFrame().setConfirmationMessage({");
     expect(confirmationSource).toContain("Large PDF Preview Not Started");
     expect(confirmationSource).toContain('confirmLabel: "Open Large PDF"');
-    expect(confirmationSource).toContain('if (notice.kind === "pdf")');
-    expect(confirmationSource).toContain("this.blockedLargePdfPaths.delete(filePathKey(path))");
+    expect(confirmationSource).toContain("this.deps.onPdfUnblocked(path)");
 
     const loadStart = controller.indexOf("private async loadPdfPath");
     const loadEnd = controller.indexOf("private async closePreparedPreviewDocuments", loadStart);
@@ -101,11 +104,15 @@ describe("large file opening notice", () => {
     expect(noticeSource).toContain("this.previewTargetForUnloadedTab(tab)");
     expect(noticeSource).toContain("this.largePreviewNoticeForRoot(target.rootPath)");
 
-    const confirmationStart = controller.indexOf("private showLargeFileConfirmation");
-    const confirmationEnd = controller.indexOf("private async openFileExternally", confirmationStart);
-    const confirmationSource = controller.slice(confirmationStart, confirmationEnd);
-    expect(confirmationSource).toContain("this.workspaceServicesDeferredForLargeFile = true");
-    expect(confirmationSource).toContain("await this.approveLargePreviewForTab(tab, notice)");
+    const guard = await Bun.file(
+      new URL("../src/editor/editorFileGuardController.ts", import.meta.url),
+    ).text();
+    const confirmationStart = guard.indexOf("showLargeFileConfirmation");
+    const confirmationEnd = guard.indexOf("private observeAlignment", confirmationStart);
+    const confirmationSource = guard.slice(confirmationStart, confirmationEnd);
+    expect(confirmationSource).toContain("this.deps.onTypstPreviewBlocked(notice.previewRootPath ?? path)");
+    expect(controller).toContain("this.workspaceServicesDeferredForLargeFile = true");
+    expect(confirmationSource).toContain("await this.deps.approveLargePreview(tab, notice)");
     expect(confirmationSource).toContain('"Large Typst Document"');
     expect(confirmationSource).not.toContain('"Large Main Document Preview"');
     expect(confirmationSource).toContain("Open and Compile Preview");

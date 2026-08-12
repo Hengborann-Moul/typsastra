@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 
 const controller = readFileSync(new URL("../src/appController.ts", import.meta.url), "utf8");
+const persistence = readFileSync(new URL("../src/editor/documentPersistenceController.ts", import.meta.url), "utf8");
 const settingsUi = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 
 describe("auto save", () => {
@@ -13,9 +14,9 @@ describe("auto save", () => {
   });
 
   test("automatic persistence does not notify Tinymist or render preview", () => {
-    const start = controller.indexOf("private async performAutoSave");
-    const end = controller.indexOf("private async saveActiveFileAs", start);
-    const method = controller.slice(start, end);
+    const start = persistence.indexOf("private async performAutoSave");
+    const end = persistence.indexOf("private async performSaveActiveFile", start);
+    const method = persistence.slice(start, end);
 
     expect(method).toContain('invoke("save_workspace_file"');
     expect(method).not.toContain("notifyTextSave");
@@ -23,13 +24,14 @@ describe("auto save", () => {
   });
 
   test("manual save renders even when auto-save already cleared the dirty state", () => {
-    const start = controller.indexOf("private async performSaveActiveFile");
-    const end = controller.indexOf("private async formatActiveDocument", start);
-    const method = controller.slice(start, end);
+    const start = persistence.indexOf("private async performSaveActiveFile");
+    const end = persistence.indexOf("private canPersistPath", start);
+    const method = persistence.slice(start, end);
 
     expect(method).toContain('intent === "manual"');
-    expect(method).toContain("participatesInPreviewCompilation");
-    expect(method).toContain("void this.renderPdfPreview(content)");
+    expect(method).toContain("shouldRenderPreviewAfterManualSave(activeFilePath)");
+    expect(controller).toContain("participatesInPreviewCompilation(path, this.pinnedMainFilePath, this.previewImported)");
+    expect(method).toContain("void this.deps.renderPdfPreview(content)");
     expect(method).not.toContain("savedChangedRevision &&");
   });
 });

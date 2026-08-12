@@ -111,28 +111,35 @@ describe("Tinymist workspace lifecycle", () => {
 
   test("clears logs at user-requested lifecycle boundaries", async () => {
     const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
+    const eventBindings = await Bun.file(
+      new URL("../src/ui/appEventBindings.ts", import.meta.url),
+    ).text();
     const lifecycle = await Bun.file(
       new URL("../src/workspace/workspaceLifecycleController.ts", import.meta.url),
     ).text();
     const closeProject = lifecycle.indexOf("async close(");
     const closeClear = lifecycle.indexOf("app.logConsoleController.clearAllLogs();", closeProject);
     const closeConsole = lifecycle.indexOf("app.logConsoleController.setVisible(false);", closeProject);
-    const manualRestart = source.indexOf('document.getElementById("action-restart-lsp")');
-    const restartClear = source.indexOf("this.logConsoleController.clearAllLogs();", manualRestart);
-    const restartCall = source.indexOf('restartTinymistSession("Restarting LSP..."', manualRestart);
+    const manualRestart = eventBindings.indexOf('document.getElementById("action-restart-lsp")');
+    const restartBinding = eventBindings.indexOf("actions.restartLsp()", manualRestart);
+    const restartStart = source.indexOf("restartLsp: async () => {");
+    const restartClear = source.indexOf("this.logConsoleController.clearAllLogs();", restartStart);
+    const restartCall = source.indexOf('restartTinymistSession("Restarting LSP..."', restartStart);
     const restartRestore = source.indexOf(
       "await this.restoreActiveDocumentAfterTinymistRestart();",
       restartCall
     );
-    const nextAction = source.indexOf('document.getElementById("action-docs-typsastra")', restartCall);
+    const restartEnd = source.indexOf("},", restartRestore);
     expect(closeClear).toBeGreaterThan(closeProject);
     expect(closeConsole).toBeGreaterThan(closeClear);
     expect(closeConsole).toBeGreaterThan(closeProject);
-    expect(restartClear).toBeGreaterThan(manualRestart);
+    expect(manualRestart).toBeGreaterThan(-1);
+    expect(restartBinding).toBeGreaterThan(manualRestart);
+    expect(restartClear).toBeGreaterThan(restartStart);
     expect(restartClear).toBeLessThan(restartCall);
     expect(restartRestore).toBeGreaterThan(restartCall);
-    expect(restartRestore).toBeLessThan(nextAction);
-    expect(source.slice(manualRestart, nextAction)).not.toContain("activateEditorTab");
+    expect(restartEnd).toBeGreaterThan(restartRestore);
+    expect(source.slice(restartStart, restartEnd)).not.toContain("activateEditorTab");
   });
 
   test("restarts and requeues a preview interrupted by an unexpected Tinymist stop", async () => {
