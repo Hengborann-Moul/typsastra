@@ -2792,8 +2792,7 @@
                                 />
                             </div>
                             <p class="settings-help">
-                                Only stable Tinymist releases are listed. Each
-                                release includes its compatible Typst compiler.
+                                Valid Tinymist installations found in the system PATH are listed before managed downloads. Each release includes its compatible Typst compiler.
                             </p>
                             <button
                                 id="settings-toolchain-refresh"
@@ -3233,6 +3232,11 @@ SOFTWARE.</pre>
                     id="toolchain-setup-actions"
                     style="display: flex; justify-content: center; gap: 12px"
                 >
+                    <button
+                        id="toolchain-system-btn"
+                        class="settings-secondary-button hidden"
+                        type="button"
+                    >Use system Tinymist</button>
                     <button
                         id="toolchain-download-btn"
                         class="settings-primary"

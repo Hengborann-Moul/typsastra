@@ -1542,6 +1542,7 @@ export class TypsastraWorkspaceController {
       const versionSelect = document.getElementById("toolchain-version-select") as HTMLSelectElement | null;
       const versionHint = document.getElementById("toolchain-version-hint");
       const downloadBtn = document.getElementById("toolchain-download-btn") as HTMLButtonElement | null;
+      const systemBtn = document.getElementById("toolchain-system-btn") as HTMLButtonElement | null;
       const exitBtn = document.getElementById("toolchain-exit-btn") as HTMLButtonElement | null;
       const progressContainer = document.getElementById("toolchain-progress-container");
       const progressLabel = document.getElementById("toolchain-progress-label");
@@ -1549,39 +1550,69 @@ export class TypsastraWorkspaceController {
       const actions = document.getElementById("toolchain-setup-actions");
       const versionPicker = document.getElementById("toolchain-version-picker");
 
-      if (!overlay || !versionSelect || !downloadBtn || !exitBtn || !progressContainer || !progressBar || !actions || !progressLabel || !versionHint || !versionPicker) {
+      if (!overlay || !versionSelect || !downloadBtn || !systemBtn || !exitBtn || !progressContainer || !progressBar || !actions || !progressLabel || !versionHint || !versionPicker) {
         resolve(null);
         return;
       }
 
       overlay.classList.remove("hidden");
 
-      // Fetch available releases and populate the select
+      type SystemToolchain = { path: string; tinymistVersion: string; typstVersion: string };
+      let systemToolchains: SystemToolchain[] = [];
+      systemBtn.classList.add("hidden");
+
+      // Discover local installations and managed releases together so the first-run
+      // selector presents every available source in one place.
       void (async () => {
-        try {
-          type TinymistRelease = { version: string; publishedAt: string | null };
-          const releases = await invoke<TinymistRelease[]>("list_tinymist_releases");
-          versionSelect.innerHTML = "";
-          const placeholder = document.createElement("option");
-          placeholder.value = "";
-          placeholder.textContent = "Select a version...";
-          versionSelect.appendChild(placeholder);
+        type TinymistRelease = { version: string; publishedAt: string | null };
+        const [systemResult, releaseResult] = await Promise.allSettled([
+          invoke<SystemToolchain[]>("list_system_tinymist_toolchains"),
+          invoke<TinymistRelease[]>("list_tinymist_releases")
+        ]);
+        systemToolchains = systemResult.status === "fulfilled" ? systemResult.value : [];
+        const releases = releaseResult.status === "fulfilled" ? releaseResult.value : [];
+        versionSelect.innerHTML = "";
+        const placeholder = document.createElement("option");
+        placeholder.value = "";
+        placeholder.textContent = "Select a toolchain...";
+        versionSelect.appendChild(placeholder);
+        if (systemToolchains.length > 0) {
+          const group = document.createElement("optgroup");
+          group.label = "System PATH";
+          systemToolchains.forEach((toolchain, index) => {
+            const option = document.createElement("option");
+            option.value = `system:${index}`;
+            option.textContent = `Tinymist ${toolchain.tinymistVersion} (Typst ${toolchain.typstVersion})`;
+            option.title = toolchain.path;
+            group.appendChild(option);
+          });
+          versionSelect.appendChild(group);
+        }
+        if (releases.length > 0) {
+          const group = document.createElement("optgroup");
+          group.label = "Managed downloads";
           for (const release of releases) {
             const opt = document.createElement("option");
-            opt.value = release.version;
+            opt.value = `managed:${release.version}`;
             opt.textContent = release.version;
-            versionSelect.appendChild(opt);
+            group.appendChild(opt);
           }
+          versionSelect.appendChild(group);
+        }
+        if (systemToolchains.length > 0) {
+          versionHint.textContent = `${systemToolchains.length} system installation${systemToolchains.length === 1 ? "" : "s"} detected. Managed downloads remain available below.`;
+        } else if (releases.length > 0) {
           versionHint.textContent = `${releases.length} stable releases available. The latest is ${releases[0]?.version ?? "unknown"}.`;
-        } catch {
+        } else {
           versionSelect.innerHTML = "<option value=\"\">Failed to load releases</option>";
-          versionHint.textContent = "Could not reach GitHub. Check your internet connection and try again.";
+          versionHint.textContent = "No system Tinymist was detected and GitHub could not be reached.";
         }
       })();
 
       versionSelect.addEventListener("change", () => {
         const hasVersion = Boolean(versionSelect.value);
         downloadBtn.disabled = !hasVersion;
+        downloadBtn.textContent = versionSelect.value.startsWith("system:") ? "Use Toolchain" : "Download";
         downloadBtn.style.opacity = hasVersion ? "1" : "0.55";
         downloadBtn.style.cursor = hasVersion ? "pointer" : "default";
       });
@@ -1591,10 +1622,27 @@ export class TypsastraWorkspaceController {
       });
 
       downloadBtn.addEventListener("click", () => {
-        const selectedVersion = versionSelect.value;
-        if (!selectedVersion) return;
+        const selection = versionSelect.value;
+        if (!selection) return;
 
         void (async () => {
+          if (selection.startsWith("system:")) {
+            const toolchain = systemToolchains[Number(selection.slice("system:".length))];
+            if (!toolchain) return;
+            downloadBtn.disabled = true;
+            try {
+              const status = await invoke<ToolchainStatus>("select_system_tinymist_toolchain", {
+                path: toolchain.path
+              });
+              overlay.classList.add("hidden");
+              resolve(status);
+            } catch (error) {
+              await message(String(error), { title: "Toolchain selection failed", kind: "error" });
+              downloadBtn.disabled = false;
+            }
+            return;
+          }
+          const selectedVersion = selection.slice("managed:".length);
           versionPicker.classList.add("hidden");
           actions.classList.add("hidden");
           progressContainer.classList.remove("hidden");

@@ -1,6 +1,7 @@
 use semver::Version;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
@@ -12,6 +13,8 @@ use std::os::windows::process::CommandExt;
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 const TINYMIST_RELEASES_URL: &str = "https://api.github.com/repos/Myriad-Dreamin/tinymist/releases";
 const TINYMIST_TAGS_URL: &str = "https://api.github.com/repos/Myriad-Dreamin/tinymist/tags";
+const TOOLCHAIN_DOWNLOAD_ATTEMPTS: usize = 3;
+const MAX_TOOLCHAIN_DOWNLOAD_BYTES: u64 = 512 * 1024 * 1024;
 
 #[derive(Deserialize)]
 struct GithubTag {
@@ -46,6 +49,14 @@ struct InstalledToolchain {
 }
 
 #[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SystemToolchainInfo {
+    pub path: String,
+    pub tinymist_version: String,
+    pub typst_version: String,
+}
+
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ProjectToolchainState {
     ExactActive,
@@ -73,6 +84,14 @@ pub struct ToolchainStatus {
 
 fn version_dir(data_dir: &Path, version: &str) -> PathBuf {
     data_dir.join("toolchain").join(version)
+}
+
+fn selected_system_path_file(data_dir: &Path) -> PathBuf {
+    data_dir.join("toolchain").join("active-system-path")
+}
+
+fn clear_selected_system_path(data_dir: &Path) {
+    let _ = std::fs::remove_file(selected_system_path_file(data_dir));
 }
 
 pub fn managed_executable_path(data_dir: &Path, version: &str, name: &str) -> PathBuf {
@@ -158,10 +177,6 @@ fn installed_toolchains(data_dir: &Path) -> Vec<InstalledToolchain> {
     installed
 }
 
-pub fn active_version(data_dir: &Path) -> Option<String> {
-    active_toolchain(data_dir).map(|toolchain| toolchain.directory)
-}
-
 pub fn project_toolchain_state(
     data_dir: &Path,
     required_tinymist: &str,
@@ -170,7 +185,15 @@ pub fn project_toolchain_state(
     let required_tinymist = Version::parse(required_tinymist).ok();
     let required_typst = Version::parse(required_typst).ok();
     let installed = installed_toolchains(data_dir);
-    let active = active_toolchain(data_dir);
+    let active = if selected_system_path_file(data_dir).is_file() {
+        selected_system_toolchain(data_dir).map(|toolchain| InstalledToolchain {
+            directory: toolchain.path.to_string_lossy().to_string(),
+            tinymist_version: toolchain.tinymist_version,
+            typst_version: toolchain.typst_version,
+        })
+    } else {
+        active_toolchain(data_dir)
+    };
     classify_project_toolchain(
         active.as_ref(),
         &installed,
@@ -230,6 +253,7 @@ pub fn select_project_toolchain(
             installed.tinymist_version
         )
     })?;
+    clear_selected_system_path(data_dir);
     Ok(status(data_dir))
 }
 
@@ -254,11 +278,207 @@ pub fn resolve_executable(data_dir: &Path, version: &str, name: &str) -> Option<
 }
 
 pub fn active_tinymist(data_dir: &Path) -> Option<PathBuf> {
-    let directory = active_version(data_dir)?;
+    if selected_system_path_file(data_dir).is_file() {
+        return selected_system_toolchain(data_dir).map(|toolchain| toolchain.path);
+    }
+    let directory = active_toolchain(data_dir)?.directory;
     resolve_executable(data_dir, &directory, "tinymist")
 }
 
+#[derive(Clone)]
+struct SystemToolchain {
+    path: PathBuf,
+    tinymist_version: Version,
+    typst_version: Version,
+}
+
+fn system_path_candidates() -> Vec<PathBuf> {
+    let executable_names: &[&str] = if cfg!(windows) {
+        &["tinymist.exe", "tinymist"]
+    } else {
+        &["tinymist"]
+    };
+    let mut candidates = Vec::new();
+    for directory in system_search_directories() {
+        for executable_name in executable_names {
+            let candidate = directory.join(executable_name);
+            if candidate.is_file() {
+                let canonical = std::fs::canonicalize(&candidate).unwrap_or(candidate);
+                if !candidates.iter().any(|existing| existing == &canonical) {
+                    candidates.push(canonical);
+                }
+            }
+        }
+    }
+    candidates
+}
+
+fn system_search_directories() -> Vec<PathBuf> {
+    let mut paths: Vec<PathBuf> = Vec::new();
+    if let Some(path) = std::env::var_os("PATH") {
+        paths.extend(std::env::split_paths(&path));
+    }
+    paths.extend(current_windows_path_directories());
+    let mut unique: Vec<PathBuf> = Vec::new();
+    for path in paths {
+        if !unique.iter().any(|existing| paths_equal(existing, &path)) {
+            unique.push(path);
+        }
+    }
+    unique
+}
+
+fn paths_equal(left: &Path, right: &Path) -> bool {
+    if cfg!(windows) {
+        left.to_string_lossy()
+            .eq_ignore_ascii_case(&right.to_string_lossy())
+    } else {
+        left == right
+    }
+}
+
+#[cfg(windows)]
+fn current_windows_path_directories() -> Vec<PathBuf> {
+    use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
+    use winreg::RegKey;
+
+    let user = RegKey::predef(HKEY_CURRENT_USER)
+        .open_subkey("Environment")
+        .ok()
+        .and_then(|key| key.get_value::<String, _>("Path").ok());
+    let machine = RegKey::predef(HKEY_LOCAL_MACHINE)
+        .open_subkey("SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment")
+        .ok()
+        .and_then(|key| key.get_value::<String, _>("Path").ok());
+    user.into_iter()
+        .chain(machine)
+        .flat_map(|path| path.split(';').map(str::to_string).collect::<Vec<_>>())
+        .map(|path| expand_windows_environment_variables(path.trim()))
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .collect()
+}
+
+#[cfg(windows)]
+fn expand_windows_environment_variables(value: &str) -> String {
+    let mut expanded = String::with_capacity(value.len());
+    let mut remaining = value;
+    while let Some(start) = remaining.find('%') {
+        expanded.push_str(&remaining[..start]);
+        let variable = &remaining[start + 1..];
+        let Some(end) = variable.find('%') else {
+            expanded.push_str(&remaining[start..]);
+            return expanded;
+        };
+        let name = &variable[..end];
+        if let Some(replacement) = std::env::var_os(name) {
+            expanded.push_str(&replacement.to_string_lossy());
+        } else {
+            expanded.push('%');
+            expanded.push_str(name);
+            expanded.push('%');
+        }
+        remaining = &variable[end + 1..];
+    }
+    expanded.push_str(remaining);
+    expanded
+}
+
+#[cfg(not(windows))]
+fn current_windows_path_directories() -> Vec<PathBuf> {
+    Vec::new()
+}
+
+fn inspect_system_toolchain(path: PathBuf) -> Option<SystemToolchain> {
+    let (tinymist_version, typst_version) = tinymist_metadata(&path)?;
+    Some(SystemToolchain {
+        path,
+        tinymist_version,
+        typst_version,
+    })
+}
+
+fn selected_system_toolchain(data_dir: &Path) -> Option<SystemToolchain> {
+    let path = std::fs::read_to_string(selected_system_path_file(data_dir)).ok()?;
+    inspect_system_toolchain(PathBuf::from(path.trim()))
+}
+
+pub fn system_toolchains() -> Vec<SystemToolchainInfo> {
+    system_path_candidates()
+        .into_iter()
+        .filter_map(inspect_system_toolchain)
+        .map(|toolchain| SystemToolchainInfo {
+            path: toolchain.path.to_string_lossy().to_string(),
+            tinymist_version: toolchain.tinymist_version.to_string(),
+            typst_version: toolchain.typst_version.to_string(),
+        })
+        .collect()
+}
+
+pub fn select_system_toolchain(
+    data_dir: &Path,
+    requested_path: &str,
+) -> Result<ToolchainStatus, String> {
+    let requested = std::fs::canonicalize(requested_path)
+        .map_err(|error| format!("Tinymist is no longer available at {requested_path}: {error}"))?;
+    let discovered = system_path_candidates();
+    if !discovered.iter().any(|candidate| candidate == &requested) {
+        return Err(
+            "The selected Tinymist executable is not available through the system PATH."
+                .to_string(),
+        );
+    }
+    let toolchain = inspect_system_toolchain(requested.clone()).ok_or_else(|| {
+        "The selected executable did not report valid Tinymist and embedded Typst versions."
+            .to_string()
+    })?;
+    let toolchain_dir = data_dir.join("toolchain");
+    std::fs::create_dir_all(&toolchain_dir)
+        .map_err(|error| format!("Failed to create toolchain directory: {error}"))?;
+    std::fs::write(
+        selected_system_path_file(data_dir),
+        requested.to_string_lossy().as_bytes(),
+    )
+    .map_err(|error| format!("Failed to select system Tinymist: {error}"))?;
+    let status = status(data_dir);
+    if status.tinymist_version != Some(toolchain.tinymist_version.to_string()) {
+        return Err("System Tinymist selection could not be verified.".to_string());
+    }
+    Ok(status)
+}
+
 pub fn status(data_dir: &Path) -> ToolchainStatus {
+    if let Some(toolchain) = selected_system_toolchain(data_dir) {
+        return ToolchainStatus {
+            typst_version: Some(toolchain.typst_version.to_string()),
+            typst_source: Some(format!(
+                "Embedded in Tinymist {}",
+                toolchain.tinymist_version
+            )),
+            tinymist_version: Some(toolchain.tinymist_version.to_string()),
+            tinymist_source: Some(format!("System PATH · {}", toolchain.path.display())),
+            lsp_available: true,
+            message: format!(
+                "System Tinymist {} with embedded Typst {} is ready.",
+                toolchain.tinymist_version, toolchain.typst_version
+            ),
+        };
+    }
+    if selected_system_path_file(data_dir).is_file() {
+        let selected_path =
+            std::fs::read_to_string(selected_system_path_file(data_dir)).unwrap_or_default();
+        let selected_path = selected_path.trim();
+        return ToolchainStatus {
+            typst_version: None,
+            typst_source: None,
+            tinymist_version: None,
+            tinymist_source: (!selected_path.is_empty())
+                .then(|| format!("System PATH - {selected_path}")),
+            lsp_available: false,
+            message: "The selected system Tinymist is no longer available or does not report valid version information. Select another toolchain in Settings."
+                .to_string(),
+        };
+    }
     let Some(toolchain) = active_toolchain(data_dir) else {
         return ToolchainStatus {
             typst_version: None,
@@ -425,18 +645,88 @@ fn platform_asset_name() -> Result<String, String> {
     }
 }
 
-async fn download(asset: &GithubAsset) -> Result<Vec<u8>, String> {
-    github_asset_client()?
+async fn download_to_temporary_file(
+    asset: &GithubAsset,
+    directory: &Path,
+) -> Result<tempfile::NamedTempFile, String> {
+    let client = github_asset_client()?;
+    let mut last_error = None;
+
+    for attempt in 1..=TOOLCHAIN_DOWNLOAD_ATTEMPTS {
+        match download_once(&client, asset, directory).await {
+            Ok(download) => return Ok(download),
+            Err(error) => {
+                last_error = Some(error);
+                if attempt < TOOLCHAIN_DOWNLOAD_ATTEMPTS {
+                    tokio::time::sleep(Duration::from_millis(500 * attempt as u64)).await;
+                }
+            }
+        }
+    }
+
+    Err(format!(
+        "Failed to download {} after {} attempts: {}. Check the internet connection, VPN/proxy, firewall, or antivirus HTTPS scanning, then retry.",
+        asset.name,
+        TOOLCHAIN_DOWNLOAD_ATTEMPTS,
+        last_error.unwrap_or_else(|| "unknown download error".to_string())
+    ))
+}
+
+async fn download_once(
+    client: &reqwest::Client,
+    asset: &GithubAsset,
+    directory: &Path,
+) -> Result<tempfile::NamedTempFile, String> {
+    let mut response = client
         .get(&asset.browser_download_url)
         .send()
         .await
-        .map_err(|error| format!("Failed to download {}: {}", asset.name, error))?
+        .map_err(|error| format!("request failed: {error}"))?
         .error_for_status()
-        .map_err(|error| format!("Download failed for {}: {}", asset.name, error))?
-        .bytes()
+        .map_err(|error| format!("server returned an error: {error}"))?;
+    let expected_length = response.content_length();
+    if expected_length.is_some_and(|length| length > MAX_TOOLCHAIN_DOWNLOAD_BYTES) {
+        return Err(format!(
+            "server reported an unexpected download size of {} bytes",
+            expected_length.unwrap_or_default()
+        ));
+    }
+
+    let mut temporary = tempfile::NamedTempFile::new_in(directory)
+        .map_err(|error| format!("could not create a temporary download: {error}"))?;
+    let mut downloaded = 0_u64;
+    while let Some(chunk) = response
+        .chunk()
         .await
-        .map(|bytes| bytes.to_vec())
-        .map_err(|error| format!("Failed to read {}: {}", asset.name, error))
+        .map_err(|error| format!("connection ended while reading the response body: {error}"))?
+    {
+        downloaded = downloaded
+            .checked_add(chunk.len() as u64)
+            .ok_or_else(|| "download size overflowed".to_string())?;
+        if downloaded > MAX_TOOLCHAIN_DOWNLOAD_BYTES {
+            return Err(format!(
+                "download exceeded the {} MiB safety limit",
+                MAX_TOOLCHAIN_DOWNLOAD_BYTES / 1024 / 1024
+            ));
+        }
+        temporary
+            .write_all(&chunk)
+            .map_err(|error| format!("could not write the temporary download: {error}"))?;
+    }
+    temporary
+        .flush()
+        .map_err(|error| format!("could not flush the temporary download: {error}"))?;
+
+    if downloaded == 0 {
+        return Err("server returned an empty download".to_string());
+    }
+    if expected_length.is_some_and(|length| length != downloaded) {
+        return Err(format!(
+            "incomplete download: received {downloaded} of {} bytes",
+            expected_length.unwrap_or_default()
+        ));
+    }
+    Ok(temporary)
 }
 
 fn make_executable(path: &Path) -> Result<(), String> {
@@ -504,11 +794,7 @@ pub async fn install(data_dir: &Path, requested_version: &str) -> Result<Toolcha
     if !already_installed {
         std::fs::create_dir_all(data_dir)
             .map_err(|error| format!("Failed to create app data directory: {}", error))?;
-        let bytes = download(asset).await?;
-        let temporary = tempfile::NamedTempFile::new_in(data_dir)
-            .map_err(|error| format!("Failed to stage Tinymist: {}", error))?;
-        std::fs::write(temporary.path(), bytes)
-            .map_err(|error| format!("Failed to stage Tinymist: {}", error))?;
+        let temporary = download_to_temporary_file(asset, data_dir).await?;
         install_managed_executable(data_dir, &version, temporary.path())?;
     }
     let (installed, _) = tinymist_metadata(&destination)
@@ -521,6 +807,7 @@ pub async fn install(data_dir: &Path, requested_version: &str) -> Result<Toolcha
     }
     std::fs::write(data_dir.join("toolchain").join("active-version"), &version)
         .map_err(|error| format!("Failed to select Tinymist {}: {}", version, error))?;
+    clear_selected_system_path(data_dir);
     Ok(status(data_dir))
 }
 
@@ -614,5 +901,26 @@ mod tests {
     #[test]
     fn platform_asset_is_supported_for_current_host() {
         assert!(platform_asset_name().is_ok());
+    }
+
+    #[test]
+    fn missing_selected_system_toolchain_does_not_fall_back_silently() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let marker = selected_system_path_file(data_dir.path());
+        std::fs::create_dir_all(marker.parent().unwrap()).unwrap();
+        std::fs::write(
+            &marker,
+            data_dir
+                .path()
+                .join("missing-tinymist")
+                .display()
+                .to_string(),
+        )
+        .unwrap();
+
+        let status = status(data_dir.path());
+        assert!(!status.lsp_available);
+        assert!(status.message.contains("no longer available"));
+        assert!(active_tinymist(data_dir.path()).is_none());
     }
 }
