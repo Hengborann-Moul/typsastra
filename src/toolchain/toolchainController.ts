@@ -15,6 +15,12 @@ type TinymistRelease = {
   publishedAt: string | null;
 };
 
+export type SystemToolchain = {
+  path: string;
+  tinymistVersion: string;
+  typstVersion: string;
+};
+
 type ToolchainControllerOptions = {
   getSelectedVersion: () => string | null;
   setSelectedVersion: (version: string) => void;
@@ -24,6 +30,7 @@ type ToolchainControllerOptions = {
 export class ToolchainController {
   private status: ToolchainStatus | null = null;
   private releases: TinymistRelease[] = [];
+  private systemToolchains: SystemToolchain[] = [];
   private loading = false;
 
   constructor(private readonly options: ToolchainControllerOptions) {}
@@ -35,7 +42,13 @@ export class ToolchainController {
   public initialize() {
     document.getElementById("settings-tinymist-version")?.addEventListener("change", event => {
       const version = (event.currentTarget as HTMLSelectElement).value;
-      if (version && version !== this.status?.tinymistVersion) void this.install(version);
+      if (version.startsWith("system:")) {
+        const index = Number(version.slice("system:".length));
+        const systemToolchain = this.systemToolchains[index];
+        if (systemToolchain) void this.selectSystemToolchain(systemToolchain);
+      } else if (version && version !== this.status?.tinymistVersion) {
+        void this.install(version);
+      }
     });
     document.getElementById("settings-toolchain-refresh")?.addEventListener("click", () => {
       void this.refresh(true);
@@ -58,20 +71,39 @@ export class ToolchainController {
     this.render("Checking installed tools...");
     let refreshError: string | null = null;
     try {
-      const [status, releases] = await Promise.all([
+      const [status, releases, systemToolchains] = await Promise.all([
         invoke<ToolchainStatus>("get_toolchain_status"),
         forceReleases || this.releases.length === 0
           ? invoke<TinymistRelease[]>("list_tinymist_releases")
-          : Promise.resolve(this.releases)
+          : Promise.resolve(this.releases),
+        invoke<SystemToolchain[]>("list_system_tinymist_toolchains")
       ]);
       this.status = status;
       this.releases = releases;
+      this.systemToolchains = systemToolchains;
       this.render();
     } catch (error) {
       refreshError = `Unable to refresh releases: ${String(error)}`;
     } finally {
       this.loading = false;
       this.render(refreshError ?? undefined, Boolean(refreshError));
+    }
+  }
+
+  private async selectSystemToolchain(toolchain: SystemToolchain) {
+    if (this.loading) return;
+    this.loading = true;
+    this.render(`Selecting Tinymist ${toolchain.tinymistVersion} from the system PATH...`);
+    try {
+      const status = await invoke<ToolchainStatus>("select_system_tinymist_toolchain", { path: toolchain.path });
+      this.status = status;
+      this.options.setSelectedVersion(toolchain.tinymistVersion);
+      await this.options.onToolchainChanged(status);
+    } catch (error) {
+      await message(String(error), { title: "Toolchain selection failed", kind: "error" });
+    } finally {
+      this.loading = false;
+      this.render();
     }
   }
 
@@ -113,13 +145,34 @@ export class ToolchainController {
       placeholder.textContent = this.loading && versions.length === 0
         ? "Loading stable releases..."
         : "Select a stable version";
-      select.replaceChildren(placeholder, ...versions.map(release => {
+      const systemGroup = document.createElement("optgroup");
+      systemGroup.label = "System PATH";
+      this.systemToolchains.forEach((toolchain, index) => {
+        const option = document.createElement("option");
+        option.value = `system:${index}`;
+        option.textContent = `${toolchain.tinymistVersion} · Typst ${toolchain.typstVersion}`;
+        option.title = toolchain.path;
+        systemGroup.appendChild(option);
+      });
+      const managedGroup = document.createElement("optgroup");
+      managedGroup.label = "Managed downloads";
+      managedGroup.append(...versions.map(release => {
         const option = document.createElement("option");
         option.value = release.version;
         option.textContent = `${release.version}${release.version === current ? " (current)" : ""}`;
         return option;
       }));
-      select.value = current ?? this.options.getSelectedVersion() ?? "";
+      select.replaceChildren(
+        placeholder,
+        ...(this.systemToolchains.length > 0 ? [systemGroup] : []),
+        managedGroup
+      );
+      const selectedSystemIndex = this.systemToolchains.findIndex(toolchain =>
+        this.status?.tinymistSource?.includes(toolchain.path)
+      );
+      select.value = selectedSystemIndex >= 0
+        ? `system:${selectedSystemIndex}`
+        : current ?? this.options.getSelectedVersion() ?? "";
       select.disabled = this.loading;
     }
 

@@ -87,7 +87,7 @@ import type { LargeFileOpeningNotice } from "./workspace/largeFileOpening";
 import { PerformanceController } from "./performance/performanceController";
 import { EditorToolbarController } from "./editor/toolbarController";
 import { ContextMenuController } from "./components/contextMenuController";
-import { ToolchainController, type ToolchainStatus } from "./toolchain/toolchainController";
+import { ToolchainController, type SystemToolchain, type ToolchainStatus } from "./toolchain/toolchainController";
 import { ToolchainSetupController } from "./toolchain/toolchainSetupController";
 import { DocumentOutlineController, type DocumentHeading } from "./outline/documentOutline";
 import { WindowStateController } from "./window/windowStateController";
@@ -1444,10 +1444,15 @@ export class TypsastraWorkspaceController {
   });
   private readonly toolchainSetupController = new ToolchainSetupController({
     listReleases: () => invoke("list_tinymist_releases"),
+    listSystemToolchains: () => invoke<SystemToolchain[]>("list_system_tinymist_toolchains"),
     install: version => invoke<ToolchainStatus>("install_tinymist_toolchain", { version }),
+    selectSystemToolchain: path => invoke<ToolchainStatus>("select_system_tinymist_toolchain", { path }),
     closeWindow: () => getCurrentWindow().close(),
     showInstallError: async error => {
       await message(String(error), { title: "Toolchain installation failed", kind: "error" });
+    },
+    showSelectionError: async error => {
+      await message(String(error), { title: "Toolchain selection failed", kind: "error" });
     },
   });
   private readonly previewWindowController = new PreviewWindowController({

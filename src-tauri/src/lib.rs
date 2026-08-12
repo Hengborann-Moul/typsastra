@@ -4044,6 +4044,25 @@ async fn list_tinymist_releases() -> Result<Vec<toolchain::TinymistReleaseInfo>,
     toolchain::tinymist_releases().await
 }
 
+#[tauri::command]
+async fn list_system_tinymist_toolchains() -> Result<Vec<toolchain::SystemToolchainInfo>, String> {
+    Ok(toolchain::system_toolchains())
+}
+
+#[tauri::command]
+async fn select_system_tinymist_toolchain(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, LspState>,
+    path: String,
+) -> Result<toolchain::ToolchainStatus, String> {
+    stop_lsp_process(&state).await;
+    let data_dir = app_handle
+        .path()
+        .app_local_data_dir()
+        .map_err(|error| format!("Failed to get data dir: {error}"))?;
+    toolchain::select_system_toolchain(&data_dir, &path)
+}
+
 async fn stop_lsp_process(state: &tauri::State<'_, LspState>) {
     state.generation.fetch_add(1, Ordering::SeqCst);
     *state.tx.lock().unwrap() = None;
@@ -4988,6 +5007,8 @@ pub fn run() {
             complete_language_word,
             prepare_examples_workspace,
             list_tinymist_releases,
+            list_system_tinymist_toolchains,
+            select_system_tinymist_toolchain,
             install_tinymist_toolchain,
             start_tinymist_lsp,
             stop_tinymist_lsp,
