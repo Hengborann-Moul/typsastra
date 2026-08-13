@@ -890,6 +890,7 @@ export class TypsastraWorkspaceController {
     loadExplorer: rootPath => this.explorer.loadWorkspace(rootPath),
     refreshImageTools: () => { void this.imageToolsController.refresh(); },
     imageToolsActive: () => this.sidebarController.activeTool === "images",
+    clearDiagnostics: () => this.clearDiagnostics(),
     retireSourceMap: reason => this.retirePdfSourceMapSession(reason),
     refreshPreview: force => this.refreshActivePreviewRoot(force),
     waitForPreviewRefresh: () => this.waitForExternalPreviewRefresh(),

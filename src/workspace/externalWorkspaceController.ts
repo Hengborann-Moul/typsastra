@@ -19,6 +19,7 @@ export interface ExternalWorkspaceControllerPort {
   loadExplorer(rootPath: string): Promise<void>;
   refreshImageTools(): void;
   imageToolsActive(): boolean;
+  clearDiagnostics(): void;
   retireSourceMap(reason: string): Promise<void>;
   refreshPreview(force: boolean): Promise<void>;
   waitForPreviewRefresh(): Promise<void>;
@@ -83,6 +84,10 @@ export class ExternalWorkspaceController {
     }
     this.port.log("info", `Accepted workspace ${change.kind}: ${acceptedPaths.join(", ")}`);
 
+    // Diagnostics describe the previous workspace snapshot. An external edit can
+    // resolve an error reported against a dependency rather than the changed file,
+    // so invalidate the complete cached set and let Tinymist publish the new state.
+    this.port.clearDiagnostics();
     this.port.setRefreshPending(true);
     this.port.updateForwardSyncAction();
     try {
