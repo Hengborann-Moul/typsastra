@@ -7,7 +7,7 @@ use super::provider::{
 use crate::render_prepare::scanner::{scan_typst_content, ScanState};
 use icu_segmenter::{options::WordBreakInvariantOptions, WordSegmenter, WordSegmenterBorrowed};
 use khmer_segmenter::kdict::KHypDict;
-use khmer_segmenter::{KhmerSegmenter, SegmenterConfig, SpellcheckProfile};
+use khmer_segmenter::{KhmerSegmenter, SegmenterConfig, SpellcheckProfile, SpellingAccuracy};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
@@ -418,7 +418,7 @@ impl LanguageSegmenter for KhmerProvider {
     }
 
     fn version(&self) -> &'static str {
-        "0.2.0-rc.2"
+        "0.2.0-rc.3"
     }
 
     fn license(&self) -> &'static str {
@@ -465,7 +465,7 @@ impl LanguageSegmenter for KhmerProvider {
     fn analyze(&self, text: &str) -> Result<TextAnalysis, String> {
         let analysis = self
             .segmenter
-            .analyze_text(text, SpellcheckProfile::Typing)
+            .analyze_text_with_accuracy(text, SpellcheckProfile::Typing, SpellingAccuracy::Visual)
             .map_err(|error| error.to_string())?;
         let result = &analysis.segmentation;
         let diagnostics = &analysis.diagnostics;
@@ -519,7 +519,9 @@ impl LanguageSegmenter for KhmerProvider {
             let known = !token
                 .chars()
                 .any(|character| ('\u{1780}'..='\u{17d3}').contains(&character))
-                || self.segmenter.is_spelling_valid(token);
+                || self
+                    .segmenter
+                    .is_spelling_valid_with_accuracy(token, SpellingAccuracy::Visual);
             let known_prefix = known || !self.segmenter.complete_word(token, 1).is_empty();
             let hyphenated = self
                 .hyphenation
@@ -548,7 +550,12 @@ impl LanguageSegmenter for KhmerProvider {
         }
         let config = SpellcheckProfile::Typing.config();
         self.segmenter
-            .suggest_spelling(word, config.max_edit_cost, limit)
+            .suggest_spelling_with_accuracy(
+                word,
+                config.max_edit_cost,
+                limit,
+                SpellingAccuracy::Visual,
+            )
             .into_iter()
             .map(|suggestion| suggestion.text)
             .collect()
@@ -566,7 +573,8 @@ impl LanguageSegmenter for KhmerProvider {
     }
 
     fn is_known_word(&self, word: &str) -> bool {
-        self.segmenter.is_spelling_valid(word)
+        self.segmenter
+            .is_spelling_valid_with_accuracy(word, SpellingAccuracy::Visual)
     }
 }
 
@@ -1360,7 +1368,7 @@ fn khmer_provider_capabilities() -> ProviderCapabilities {
         supports_custom_dictionary: true,
         has_editing_policy: true,
         provider_type: "deep".to_string(),
-        version: "0.2.0-rc.2".to_string(),
+        version: "0.2.0-rc.3".to_string(),
         license: "MIT; lexical data retains upstream source terms".to_string(),
     }
 }
@@ -2624,7 +2632,7 @@ mod tests {
 
     #[test]
     fn khmer_reference_provider_fixtures_are_locked() {
-        const PINNED_UPSTREAM: &str = "67a79f64f0c68908345099009765615588da1faa";
+        const PINNED_UPSTREAM: &str = "031fc60bcf29dbdd117d9ab04c5b746032d6ab0a";
         let fixture: KhmerReferenceFixture =
             serde_json::from_str(include_str!("../../../tests/fixtures/khmer/provider.json"))
                 .expect("Khmer provider reference fixture");
@@ -2824,6 +2832,21 @@ mod tests {
         assert_eq!(response.from, 0);
         assert_eq!(response.to, word.encode_utf16().count());
         assert_eq!(response.options.first().map(String::as_str), Some(word));
+    }
+
+    #[test]
+    fn accepts_visual_coeng_da_and_ta_spelling_variants() {
+        let provider = KhmerProvider::new().expect("Khmer provider");
+        let coeng_da = "ស្ដាប់";
+        let coeng_ta = "ស្តាប់";
+
+        assert!(provider.is_known_word(coeng_da));
+        assert!(provider.is_known_word(coeng_ta));
+
+        for word in [coeng_da, coeng_ta] {
+            let analysis = provider.analyze(word).expect("visual spelling analysis");
+            assert!(analysis.tokens.iter().all(|token| token.known), "{word}");
+        }
     }
 
     #[test]
@@ -3374,6 +3397,7 @@ mod tests {
             .find(|provider| provider.id == "khmer-segmenter")
             .expect("Khmer capabilities");
         assert_eq!(khmer.support_level, "deep");
+        assert_eq!(khmer.version, "0.2.0-rc.3");
         assert_eq!(khmer.stability, "experimental");
         assert!(khmer.supports_spellcheck);
         assert!(khmer.supports_completion);

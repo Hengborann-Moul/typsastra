@@ -13,12 +13,26 @@ ISO 15924 script:  Khmr
 Support:           Deep · Experimental
 Policy contract:   1
 Capability schema: 1
-Upstream commit:   67a79f64f0c68908345099009765615588da1faa (v0.2.0-rc.2)
+Upstream commit:   031fc60bcf29dbdd117d9ab04c5b746032d6ab0a (v0.2.0-rc.3)
 ```
 
-The gitlink at `third_party/khmer_segmenter` pins the code, curated language data, and normalization behavior. Typsastra rebuilds the KDIC and hyphenation binaries from that revision and stores only those compiled runtime artifacts under `src-tauri/resources/language-providers/khmer/`. RC2 uses the segmenter's single-pass analysis API, which returns segmentation plus spelling diagnostics whose source ranges already map to the original document. `tests/fixtures/khmer/provider.json` records the same commit and exact expected output. Runtime artifacts retain the usage and attribution requirements documented upstream. Changing the submodule, dictionary, normalization, or post-processing requires an intentional fixture update and an explanation in the change review.
+The gitlink at `third_party/khmer_segmenter` pins the code, curated language
+data, and normalization behavior. Typsastra rebuilds the KDIC and hyphenation
+binaries from that revision and stores only those compiled runtime artifacts
+under `src-tauri/resources/language-providers/khmer/`. RC3
+uses the segmenter's single-pass analysis API with `SpellingAccuracy::Visual`,
+which treats the legacy COENG DA and COENG TA forms in words such as `ស្ដាប់`
+and `ស្តាប់` as equivalent correct spelling. Completion and correction output
+continues to use the curated form. `tests/fixtures/khmer/provider.json` records
+the same commit and exact expected output. Runtime artifacts retain the usage
+and attribution requirements documented upstream. Changing the submodule,
+dictionary, normalization, or post-processing requires an intentional fixture
+update and an explanation in the change review.
 
-Typsastra does not add semantic or LLM-generated boundary repairs after the segmenter. The pinned deterministic output is the lexical baseline even when another compound convention could also be linguistically defensible.
+Typsastra does not add semantic or LLM-generated boundary repairs after the
+segmenter. The pinned deterministic output remains the segmentation baseline;
+visual spelling equivalence is an explicit upstream accuracy policy rather than
+Typsastra post-processing.
 
 ## Reference architecture
 
@@ -77,7 +91,7 @@ The editing policy never performs dictionary lookup or IPC. The Rust provider ne
 | Editor offsets | Khmer provider | Convert upstream source-byte boundaries to CodeMirror UTF-16 once |
 | Lexical segmentation | pinned segmenter and dictionary | Deterministic dictionary/frequency output |
 | Segmentation words | pinned segmenter | May include supplemental forms solely to maintain reliable boundaries |
-| Spellcheck validity and prefixes | pinned segmenter | Use the curated spelling vocabulary and completion index; a segmentation-only form is not silently accepted as correctly spelled |
+| Spellcheck validity and prefixes | pinned segmenter | Use visual accuracy for COENG DA/TA equivalence while keeping the curated spelling vocabulary and completion index; unrelated segmentation-only forms are not silently accepted |
 | Completion | `complete_language_word` | Return provider ID, explicit UTF-16 replacement range, and bounded ranked options |
 | Current known word | Khmer provider | Put the exact current known word first before longer completions |
 | Corrections | pinned segmenter and capability contract | Return ranked corrections for upstream intended-word spans |
@@ -176,4 +190,3 @@ cargo test --lib khmer_reference_provider_fixtures_are_locked
 ```
 
 The normal `bun test` and `cargo test --lib` commands include these fixtures. `.github/workflows/khmer-regression.yml` also runs them when the editing policy, Unicode utilities, completion, spellcheck, provider, fixture, or pinned submodule changes.
-
