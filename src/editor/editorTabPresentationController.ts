@@ -9,7 +9,7 @@ import type { PreviewFrame } from "../preview/previewFrame";
 import { isBinaryImagePath } from "../platform/fileTypes";
 import { completionCompartment, languageCompartment } from "./extensions";
 import { createTabEditorState } from "./tabHistory";
-import { refreshVisibleBracketColors } from "./bracketColorizer";
+import { prepareVisibleBracketColors } from "./bracketColorizer";
 
 export interface EditorTabPresentationDependencies {
   editor(): EditorView;
@@ -36,6 +36,9 @@ export interface EditorTabPresentationDependencies {
 export class EditorTabPresentationController {
   private loading = false;
   private syntaxPresentationGeneration = 0;
+  private pendingSyntaxPath: string | null = null;
+  private syntaxPrewarmHandle: number | null = null;
+  private syntaxPrewarmUsesIdleCallback = false;
 
   constructor(private readonly deps: EditorTabPresentationDependencies) {}
 
@@ -177,19 +180,32 @@ export class EditorTabPresentationController {
       ],
     }).state;
 
-    const presentationGeneration = ++this.syntaxPresentationGeneration;
+    this.cancelSyntaxPrewarm();
+    ++this.syntaxPresentationGeneration;
     // View plugins (including bracket colors) are recreated by setState even
     // when the immutable syntax state is retained. Keep the next tab hidden
     // until its restored viewport has both syntax and bracket decorations.
-    editor.dom.classList.add("editor-syntax-preparing");
+    if (ext === "typ") {
+      editor.dom.classList.add("editor-syntax-preparing");
+      this.pendingSyntaxPath = path;
+    } else {
+      editor.dom.classList.remove("editor-syntax-preparing");
+      this.pendingSyntaxPath = null;
+    }
     editor.setState(nextState);
     tab.editorState = nextState;
     tab.editorStateLanguage = language;
-    this.revealAfterVisibleSyntaxIsReady(editor, presentationGeneration);
+  }
+
+  finishTextPresentation(path: string): void {
+    if (this.pendingSyntaxPath !== path) return;
+    this.revealAfterVisibleSyntaxIsReady(this.deps.editor(), this.syntaxPresentationGeneration);
   }
   presentEmpty(): void {
     const editor = this.deps.editor();
+    this.cancelSyntaxPrewarm();
     ++this.syntaxPresentationGeneration;
+    this.pendingSyntaxPath = null;
     editor.dom.classList.remove("editor-syntax-preparing");
     this.loading = true;
     try {
@@ -214,31 +230,70 @@ export class EditorTabPresentationController {
   }
 
   private revealAfterVisibleSyntaxIsReady(editor: EditorView, generation: number): void {
-    const startedAt = performance.now();
     const attempt = () => {
       if (generation !== this.syntaxPresentationGeneration) return;
       const visibleTo = editor.visibleRanges.reduce(
         (maximum, range) => Math.max(maximum, range.to),
         editor.state.selection.main.head,
       );
-      const ready = forceParsing(editor, visibleTo, 24);
-      if (!ready && performance.now() - startedAt < 320) {
+      const syntaxReady = forceParsing(editor, visibleTo, 24);
+      const bracketsReady = syntaxReady && prepareVisibleBracketColors(editor);
+      if (!syntaxReady || !bracketsReady) {
         requestAnimationFrame(attempt);
         return;
       }
-      // The bracket ViewPlugin initially saw the pre-restoration viewport and
-      // otherwise waits for its scroll-settle timer. Refresh it in this same
-      // presentation cycle so base punctuation colors never flash first.
-      refreshVisibleBracketColors(editor);
       requestAnimationFrame(() => {
         if (generation !== this.syntaxPresentationGeneration) return;
+        this.pendingSyntaxPath = null;
         editor.dom.classList.remove("editor-syntax-preparing");
+        this.scheduleSyntaxPrewarm(editor, generation, visibleTo);
       });
     };
+    requestAnimationFrame(attempt);
+  }
 
-    // Viewport restoration is scheduled during activation. Waiting two frames
-    // lets that settle before prioritizing the actual visible syntax range.
-    requestAnimationFrame(() => requestAnimationFrame(attempt));
+  /**
+   * Continue parsing a large Typst document only while the WebView is idle.
+   * This makes later distant jumps progressively warmer without delaying the
+   * viewport that the user can currently see or running an unbounded task.
+   */
+  private scheduleSyntaxPrewarm(editor: EditorView, generation: number, parsedTo: number): void {
+    if (parsedTo >= editor.state.doc.length || generation !== this.syntaxPresentationGeneration) return;
+
+    const runSlice = (availableMs: number) => {
+      this.syntaxPrewarmHandle = null;
+      if (generation !== this.syntaxPresentationGeneration || !editor.dom.isConnected) return;
+
+      const nextTarget = Math.min(editor.state.doc.length, parsedTo + 64 * 1024);
+      const budget = Math.max(2, Math.min(8, availableMs));
+      forceParsing(editor, nextTarget, budget);
+      this.scheduleSyntaxPrewarm(editor, generation, nextTarget);
+    };
+
+    if (typeof window.requestIdleCallback === "function") {
+      this.syntaxPrewarmUsesIdleCallback = true;
+      this.syntaxPrewarmHandle = window.requestIdleCallback(deadline => {
+        if (deadline.timeRemaining() < 2 && !deadline.didTimeout) {
+          this.scheduleSyntaxPrewarm(editor, generation, parsedTo);
+          return;
+        }
+        runSlice(deadline.timeRemaining() || 2);
+      }, { timeout: 1_000 });
+      return;
+    }
+
+    this.syntaxPrewarmUsesIdleCallback = false;
+    this.syntaxPrewarmHandle = window.setTimeout(() => runSlice(4), 250);
+  }
+
+  private cancelSyntaxPrewarm(): void {
+    if (this.syntaxPrewarmHandle === null) return;
+    if (this.syntaxPrewarmUsesIdleCallback && typeof window.cancelIdleCallback === "function") {
+      window.cancelIdleCallback(this.syntaxPrewarmHandle);
+    } else {
+      window.clearTimeout(this.syntaxPrewarmHandle);
+    }
+    this.syntaxPrewarmHandle = null;
   }
 
   private editorLanguageKey(path: string): string {

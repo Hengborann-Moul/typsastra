@@ -1880,8 +1880,8 @@ export class TypsastraWorkspaceController {
     this.editorTabStateController.persistActive();
   }
 
-  private restoreEditorTabViewport(tab: EditorTab, path: string): void {
-    this.editorTabStateController.restoreViewport(tab, path);
+  private restoreEditorTabViewport(tab: EditorTab, path: string): Promise<void> {
+    return this.editorTabStateController.restoreViewport(tab, path);
   }
 
   private restoreTabFoldState(tab: EditorTab): void {

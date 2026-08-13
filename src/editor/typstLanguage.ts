@@ -75,12 +75,18 @@ function getCurrentMode(state: TypstParserState): "markup" | "math" | "code" {
 
 function contextualToken(token: string | null, state: TypstParserState): string | null {
   if (!token) return token;
+  let contextual = token;
+  if (state.inHeading && !hasTokenName(contextual, "heading")) contextual += " heading";
+  if (state.inStrong && !hasTokenName(contextual, "strong")) contextual += " strong";
+  if (state.inEmphasis && !hasTokenName(contextual, "emphasis")) contextual += " emphasis";
+  return contextual;
+}
 
-  const tokenNames = new Set(token.split(" "));
-  if (state.inHeading) tokenNames.add("heading");
-  if (state.inStrong) tokenNames.add("strong");
-  if (state.inEmphasis) tokenNames.add("emphasis");
-  return [...tokenNames].join(" ");
+function hasTokenName(token: string, name: string): boolean {
+  const index = token.indexOf(name);
+  return index >= 0
+    && (index === 0 || token.charCodeAt(index - 1) === 32)
+    && (index + name.length === token.length || token.charCodeAt(index + name.length) === 32);
 }
 
 function endCodeExpression(state: TypstParserState) {
@@ -122,13 +128,16 @@ const typstParser: StreamParser<TypstParserState> = {
     }
 
     if (tok && state.inCodeExpression && !state.isStatement && state.bracketStack.length <= state.expressionBracketDepth) {
-      const tokenNames = new Set(tok.split(" "));
       const current = stream.current();
-      if (["function", "variable", "number", "atom", "string"].some(name => tokenNames.has(name))) {
+      if (hasTokenName(tok, "function")
+        || hasTokenName(tok, "variable")
+        || hasTokenName(tok, "number")
+        || hasTokenName(tok, "atom")
+        || hasTokenName(tok, "string")) {
         state.expressionComplete = true;
-      } else if (tokenNames.has("operator") && current !== "#") {
+      } else if (hasTokenName(tok, "operator") && current !== "#") {
         state.expressionComplete = false;
-      } else if (tokenNames.has("punctuation")) {
+      } else if (hasTokenName(tok, "punctuation")) {
         if (/^[)\]}]$/.test(current)) state.expressionComplete = true;
         else if (/^[.,:]$/.test(current)) state.expressionComplete = false;
       }

@@ -63,31 +63,44 @@ export class EditorTabStateController {
     return this.deps.editorController().collectFoldRanges();
   }
 
-  restoreViewport(tab: EditorTab, path: string): void {
+  async restoreViewport(tab: EditorTab, path: string): Promise<void> {
     const editor = this.deps.editor();
     if (tab.scrollSnapshot) {
       editor.dispatch({ effects: tab.scrollSnapshot });
+      await this.waitForViewportMeasure(editor);
       return;
     }
-    if (tab.scrollTop === undefined && tab.scrollLeft === undefined) return;
+    if (tab.scrollTop === undefined && tab.scrollLeft === undefined) {
+      await this.waitForViewportMeasure(editor);
+      return;
+    }
 
     const targetScrollTop = tab.scrollTop ?? 0;
     const targetScrollLeft = tab.scrollLeft ?? 0;
     const restoreKey = { restoredPath: path };
-    const scheduleRestore = () => {
+    const scheduleRestore = (): Promise<void> => new Promise(resolve => {
       editor.requestMeasure({
         key: restoreKey,
         read: () => null,
         write: () => {
           const activeFilePath = this.deps.activeFilePath();
-          if (!activeFilePath || filePathKey(activeFilePath) !== filePathKey(path)) return;
-          editor.scrollDOM.scrollTop = targetScrollTop;
-          editor.scrollDOM.scrollLeft = targetScrollLeft;
+          if (activeFilePath && filePathKey(activeFilePath) === filePathKey(path)) {
+            editor.scrollDOM.scrollTop = targetScrollTop;
+            editor.scrollDOM.scrollLeft = targetScrollLeft;
+          }
+          resolve();
         },
       });
-    };
-    scheduleRestore();
-    requestAnimationFrame(scheduleRestore);
+    });
+    await scheduleRestore();
+    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+    await scheduleRestore();
+  }
+
+  private waitForViewportMeasure(editor: EditorView): Promise<void> {
+    return new Promise(resolve => {
+      editor.requestMeasure({ read: () => null, write: () => resolve() });
+    });
   }
 
   restoreFoldState(tab: EditorTab): void {

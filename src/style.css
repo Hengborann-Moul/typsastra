@@ -687,6 +687,20 @@ html.native-app-menu #app-menus {
   visibility: hidden;
 }
 
+.cm-editor.editor-syntax-preparing::after {
+  content: "Preparing syntax\2026";
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--ui-muted);
+  background: var(--editor-bg, var(--ui-bg));
+  font-family: var(--ui-font);
+  font-size: var(--ui-font-size);
+  z-index: 8;
+  pointer-events: none;
+}
+
 .editor-tab-strip {
   height: var(--editor-tab-bar-height);
   min-height: var(--editor-tab-bar-height);

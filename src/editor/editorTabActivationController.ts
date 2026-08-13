@@ -63,7 +63,7 @@ export interface EditorTabActivationDependencies {
   updateWorkspaceViewportVisibility(): void;
   resumeDeferredWorkspaceServices(): void;
   restoreTabFoldState(tab: EditorTab): void;
-  restoreEditorTabViewport(tab: EditorTab, path: string): void;
+  restoreEditorTabViewport(tab: EditorTab, path: string): Promise<void>;
   toolbar: EditorToolbarController;
   setDiagnosticWaitStartedAt(startedAt: number): void;
   previewActivation: EditorPreviewActivationController;
@@ -195,7 +195,8 @@ export class EditorTabActivationController {
     }
     deps.draftPreview.publishWarnings();
     deps.renderEditorTabs();
-    deps.restoreEditorTabViewport(tab, path);
+    await deps.restoreEditorTabViewport(tab, path);
+    deps.presentation.finishTextPresentation(path);
     const activeTypography = await deps.typography.effective(path, tab.content);
     if (activeTypography) deps.toolbar.synchronizeDocumentTypography(activeTypography);
 
