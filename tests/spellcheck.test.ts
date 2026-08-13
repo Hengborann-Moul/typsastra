@@ -67,19 +67,35 @@ const elementStub = () => ({
   appendChild() {}
 });
 
-const originalDocument = globalThis.document;
+const originalDocumentDescriptor = Object.getOwnPropertyDescriptor(globalThis, "document");
+const originalWindowDescriptor = Object.getOwnPropertyDescriptor(globalThis, "window");
 beforeAll(() => {
-  Object.assign(globalThis, {
-    document: {
+  Object.defineProperty(globalThis, "document", {
+    configurable: true,
+    writable: true,
+    value: {
       createElement: elementStub,
       body: { appendChild() {}, style: {} },
       documentElement: { style: {} }
-    },
-    window: Object.assign(globalThis, { innerWidth: 1200, innerHeight: 800 })
+    }
+  });
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    writable: true,
+    value: Object.assign(globalThis, { innerWidth: 1200, innerHeight: 800 })
   });
 });
 afterAll(() => {
-  Object.assign(globalThis, { document: originalDocument });
+  if (originalDocumentDescriptor) {
+    Object.defineProperty(globalThis, "document", originalDocumentDescriptor);
+  } else {
+    delete (globalThis as { document?: Document }).document;
+  }
+  if (originalWindowDescriptor) {
+    Object.defineProperty(globalThis, "window", originalWindowDescriptor);
+  } else {
+    delete (globalThis as { window?: Window & typeof globalThis }).window;
+  }
 });
 
 const wait = (milliseconds: number) => new Promise(resolve => setTimeout(resolve, milliseconds));
