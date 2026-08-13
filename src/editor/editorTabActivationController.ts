@@ -152,6 +152,10 @@ export class EditorTabActivationController {
     deps.setLatestDocumentVersion(tab.latestVersion);
     deps.previewSync.reset();
     deps.clearEditorDiagnostics();
+    // The first persistence pass captures the outgoing tab before diagnostics
+    // are cleared. Refresh its runtime EditorState now so a later warm tab
+    // activation cannot briefly restore stale diagnostic decorations.
+    if (!sameActivePath) deps.persistActiveTabState();
 
     deps.setLoadingFile(true);
     try {

@@ -681,6 +681,12 @@ html.native-app-menu #app-menus {
   overflow: hidden;
 }
 
+/* A cold tab is kept neutral until CodeMirror has highlighted its visible
+   range. Warm tabs retain their parsed EditorState and never enter this gate. */
+.cm-editor.editor-syntax-preparing .cm-scroller {
+  visibility: hidden;
+}
+
 .editor-tab-strip {
   height: var(--editor-tab-bar-height);
   min-height: var(--editor-tab-bar-height);

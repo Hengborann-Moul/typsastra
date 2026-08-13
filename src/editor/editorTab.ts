@@ -1,3 +1,4 @@
+import type { EditorState } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
 import type { EditorFoldRange } from "./folding";
 import type { EditorUndoHistory } from "./tabHistory";
@@ -28,6 +29,16 @@ export type EditorTab = {
   lineCount?: number;
   temporary?: boolean;
   undoHistory?: EditorUndoHistory;
+  /**
+   * Runtime-only CodeMirror state retained while the tab is inactive.
+   *
+   * Keeping the immutable state preserves CodeMirror's syntax tree, so a
+   * previously visited tab can be painted with highlighting immediately.
+   * Workspace persistence deliberately ignores this field.
+   */
+  editorState?: EditorState;
+  /** File-language extension used when the retained editor state was built. */
+  editorStateLanguage?: string;
 };
 
 export type PreviewSessionState = Pick<

@@ -14,10 +14,10 @@ describe("editor font catalog", () => {
     ).text();
     const presentation = source.indexOf("presentText(tab: EditorTab, path: string)");
     const fontUpdate = source.indexOf("this.deps.fontManager().prepareDocument(tab.content)", presentation);
-    const documentDispatch = source.indexOf("editor.dispatch({", fontUpdate);
+    const stateUpdate = source.indexOf("nextState = nextState.update({", fontUpdate);
     expect(fontUpdate).toBeGreaterThan(presentation);
-    expect(documentDispatch).toBeGreaterThan(fontUpdate);
-    expect(source.slice(documentDispatch, source.indexOf("});", documentDispatch) + 3))
+    expect(stateUpdate).toBeGreaterThan(fontUpdate);
+    expect(source.slice(stateUpdate, source.indexOf("}).state", stateUpdate) + 8))
       .toContain("...(editorFontEffect ? [editorFontEffect] : [])");
   });
 

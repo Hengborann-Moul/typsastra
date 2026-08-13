@@ -82,10 +82,14 @@ describe("per-tab editor history", () => {
       new URL("../src/editor/editorTabPresentationController.ts", import.meta.url),
     ).text();
     const capture = stateSource.indexOf("tab.undoHistory = captureEditorUndoHistory(editor.state)");
-    const restore = presentationSource.indexOf("editor.setState(createTabEditorState({");
+    const reuse = presentationSource.indexOf("tab.editorState?.doc.toString() === tab.content");
+    const restore = presentationSource.indexOf("createTabEditorState({", reuse);
     const restoredHistory = presentationSource.indexOf("undoHistory: tab.undoHistory", restore);
 
     expect(capture).toBeGreaterThan(-1);
+    expect(stateSource).toContain("tab.editorState = editor.state");
+    expect(reuse).toBeGreaterThan(-1);
+    expect(presentationSource).toContain("tab.editorStateLanguage === language");
     expect(restore).toBeGreaterThan(-1);
     expect(restoredHistory).toBeGreaterThan(restore);
     expect(stateSource).not.toContain("Transaction.addToHistory.of(false)");

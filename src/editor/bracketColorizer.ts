@@ -11,6 +11,17 @@ const PARSE_RETRY_DELAY_MS = 50;
 const MAX_PARSE_RETRIES = 20;
 const refreshBracketColors = StateEffect.define<void>();
 
+/**
+ * Rebuild bracket decorations synchronously for the editor's current viewport.
+ *
+ * Tab activation restores the viewport after installing its EditorState. The
+ * view plugin cannot retain decorations across `setState`, so callers use this
+ * after syntax parsing and viewport restoration, before revealing the editor.
+ */
+export function refreshVisibleBracketColors(view: EditorView): void {
+  view.dispatch({ effects: refreshBracketColors.of(undefined) });
+}
+
 function isBracket(character: string): boolean {
   return character === "(" || character === ")" || character === "[" || character === "]" || character === "{" || character === "}";
 }

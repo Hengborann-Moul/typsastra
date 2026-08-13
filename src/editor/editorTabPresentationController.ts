@@ -1,5 +1,6 @@
 import type { Extension, StateEffect } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
+import { forceParsing } from "@codemirror/language";
 import type { EditorFontManager } from "./fontManager";
 import type { EditorToolbarController } from "./toolbarController";
 import type { EditorTab } from "./editorTab";
@@ -8,6 +9,7 @@ import type { PreviewFrame } from "../preview/previewFrame";
 import { isBinaryImagePath } from "../platform/fileTypes";
 import { completionCompartment, languageCompartment } from "./extensions";
 import { createTabEditorState } from "./tabHistory";
+import { refreshVisibleBracketColors } from "./bracketColorizer";
 
 export interface EditorTabPresentationDependencies {
   editor(): EditorView;
@@ -33,6 +35,7 @@ export interface EditorTabPresentationDependencies {
 /** Owns editor/preview DOM presentation while a tab is being activated. */
 export class EditorTabPresentationController {
   private loading = false;
+  private syntaxPresentationGeneration = 0;
 
   constructor(private readonly deps: EditorTabPresentationDependencies) {}
 
@@ -87,6 +90,8 @@ export class EditorTabPresentationController {
     const editor = this.deps.editor();
     const selection = editor.state.selection.main;
     this.loading = true;
+    tab.editorState = undefined;
+    tab.editorStateLanguage = undefined;
     try {
       const editorFontEffect = this.deps.fontManager().prepareDocument(contents);
       editor.setState(createTabEditorState({
@@ -149,24 +154,43 @@ export class EditorTabPresentationController {
 
     const editorFontEffect = this.deps.fontManager().prepareDocument(tab.content);
     const editor = this.deps.editor();
-    editor.setState(createTabEditorState({
-      doc: tab.content,
-      anchor: tab.selectionAnchor,
-      head: tab.selectionHead,
-      extensions: this.deps.editorExtensions(),
-      undoHistory: tab.undoHistory,
-    }));
-    editor.dispatch({
+    const language = this.editorLanguageKey(path);
+    const reusableState = tab.editorState?.doc.toString() === tab.content
+      && tab.editorStateLanguage === language
+      ? tab.editorState
+      : undefined;
+    let nextState = reusableState ?? createTabEditorState({
+        doc: tab.content,
+        anchor: tab.selectionAnchor,
+        head: tab.selectionHead,
+        extensions: this.deps.editorExtensions(),
+        undoHistory: tab.undoHistory,
+      });
+    nextState = nextState.update({
       effects: [
         ...this.deps.currentSettingsEffects(),
         ...(editorFontEffect ? [editorFontEffect] : []),
-        languageCompartment.reconfigure(this.deps.editorLanguageForPath(path)),
+        ...(reusableState
+          ? []
+          : [languageCompartment.reconfigure(this.deps.editorLanguageForPath(path))]),
         completionCompartment.reconfigure(this.deps.editorCompletionForPath(path)),
       ],
-    });
+    }).state;
+
+    const presentationGeneration = ++this.syntaxPresentationGeneration;
+    // View plugins (including bracket colors) are recreated by setState even
+    // when the immutable syntax state is retained. Keep the next tab hidden
+    // until its restored viewport has both syntax and bracket decorations.
+    editor.dom.classList.add("editor-syntax-preparing");
+    editor.setState(nextState);
+    tab.editorState = nextState;
+    tab.editorStateLanguage = language;
+    this.revealAfterVisibleSyntaxIsReady(editor, presentationGeneration);
   }
   presentEmpty(): void {
     const editor = this.deps.editor();
+    ++this.syntaxPresentationGeneration;
+    editor.dom.classList.remove("editor-syntax-preparing");
     this.loading = true;
     try {
       editor.setState(createTabEditorState({
@@ -187,6 +211,40 @@ export class EditorTabPresentationController {
     if (this.deps.activeMode() === "WYSIWYM") {
       this.deps.mapMarkupToWysiwym("");
     }
+  }
+
+  private revealAfterVisibleSyntaxIsReady(editor: EditorView, generation: number): void {
+    const startedAt = performance.now();
+    const attempt = () => {
+      if (generation !== this.syntaxPresentationGeneration) return;
+      const visibleTo = editor.visibleRanges.reduce(
+        (maximum, range) => Math.max(maximum, range.to),
+        editor.state.selection.main.head,
+      );
+      const ready = forceParsing(editor, visibleTo, 24);
+      if (!ready && performance.now() - startedAt < 320) {
+        requestAnimationFrame(attempt);
+        return;
+      }
+      // The bracket ViewPlugin initially saw the pre-restoration viewport and
+      // otherwise waits for its scroll-settle timer. Refresh it in this same
+      // presentation cycle so base punctuation colors never flash first.
+      refreshVisibleBracketColors(editor);
+      requestAnimationFrame(() => {
+        if (generation !== this.syntaxPresentationGeneration) return;
+        editor.dom.classList.remove("editor-syntax-preparing");
+      });
+    };
+
+    // Viewport restoration is scheduled during activation. Waiting two frames
+    // lets that settle before prioritizing the actual visible syntax range.
+    requestAnimationFrame(() => requestAnimationFrame(attempt));
+  }
+
+  private editorLanguageKey(path: string): string {
+    const fileName = path.replace(/\\/gu, "/").split("/").pop() ?? path;
+    const extensionIndex = fileName.lastIndexOf(".");
+    return extensionIndex >= 0 ? fileName.slice(extensionIndex + 1).toLowerCase() : "";
   }
 
 }

@@ -56,6 +56,7 @@ export class EditorTabStateController {
     tab.scrollSnapshot = editor.scrollSnapshot();
     tab.foldRanges = tab.foldStateExplicit ? this.collectCurrentFoldRanges() : [];
     tab.undoHistory = captureEditorUndoHistory(editor.state);
+    if (this.deps.activeMode() === "CODE") tab.editorState = editor.state;
   }
 
   collectCurrentFoldRanges(): EditorFoldRange[] {
