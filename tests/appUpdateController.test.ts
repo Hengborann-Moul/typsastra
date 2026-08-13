@@ -18,7 +18,14 @@ describe("staged application updates", () => {
 
   test("integrates the staged update with controlled application shutdown", () => {
     expect(app).toContain("prepareForClose: () => this.appUpdateController.prepareForClose()");
+    expect(app).toContain("persistWorkspaceState: () => this.saveWorkspaceState()");
     expect(eventBindings).toContain("proceed = await actions.prepareForClose()");
+    const workspaceSave = eventBindings.indexOf("await actions.persistWorkspaceState()");
+    const windowSave = eventBindings.indexOf("await actions.persistWindowState()");
+    const windowDestroy = eventBindings.indexOf("void appWindow.destroy()");
+    expect(workspaceSave).toBeGreaterThan(-1);
+    expect(windowSave).toBeGreaterThan(workspaceSave);
+    expect(windowDestroy).toBeGreaterThan(windowSave);
     expect(html).toContain('id="app-dialog-action-start"');
     expect(html).toContain('id="app-dialog-action-middle"');
     expect(html).toContain('id="app-dialog-action-end"');

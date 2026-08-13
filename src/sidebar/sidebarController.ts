@@ -67,7 +67,6 @@ export class SidebarController {
     if (!this.port.hasWorkspace()) return;
     const toolChanged = this.state.activeTool !== tool;
     this.state.activeTool = tool;
-    this.state.visible = true;
 
     const showingImages = tool === "images";
     document.body.classList.toggle("image-tools-active", showingImages);

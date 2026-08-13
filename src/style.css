@@ -3832,6 +3832,7 @@ button.welcome-item:disabled {
 
 .cm-panel.cm-search input[type="text"],
 .cm-panel.cm-search .cm-textfield {
+  --editor-input-horizontal-inset: 10px;
   background-color: var(--ui-bg) !important;
   color: var(--ui-text) !important;
   border: 1px solid var(--ui-border) !important;
@@ -3839,7 +3840,7 @@ button.welcome-item:disabled {
   box-sizing: border-box !important;
   height: calc(var(--editor-line-height-px, 23.8px) + 10px) !important;
   min-height: calc(var(--editor-line-height-px, 23.8px) + 10px) !important;
-  padding: 4px 6px !important;
+  padding: 4px var(--editor-input-horizontal-inset) !important;
   font-size: var(--editor-font-size, 14px) !important;
   line-height: var(--editor-line-height-px, 23.8px) !important;
   font-family: var(--editor-code-font) !important;
@@ -3850,24 +3851,31 @@ button.welcome-item:disabled {
   width: 100% !important;
 }
 
-.cm-panel.cm-search .cm-search-textfield-shell {
+.typsastra-caret-input-shell {
   position: relative;
   display: block;
   min-width: 120px;
+}
+
+.cm-panel.cm-search .cm-search-textfield-shell {
   grid-column: 1;
 }
 
-.cm-panel.cm-search .cm-search-caret-measure {
+.typsastra-caret-measure {
   position: absolute;
   visibility: hidden;
   pointer-events: none;
   white-space: pre;
+}
+
+.cm-panel.cm-search .cm-search-caret-measure {
   font-size: var(--editor-font-size, 14px);
   font-family: var(--editor-code-font);
   line-height: var(--editor-line-height-px, 23.8px);
 }
 
-.cm-panel.cm-search .cm-search-editor-caret {
+.cm-panel.cm-search .cm-search-editor-caret,
+.typsastra-input-caret {
   position: absolute;
   top: 50%;
   display: none;
@@ -3881,7 +3889,7 @@ button.welcome-item:disabled {
   z-index: 2;
 }
 
-.cm-panel.cm-search .cm-search-textfield-shell:focus-within .cm-search-editor-caret {
+.typsastra-caret-input-shell:focus-within .typsastra-input-caret {
   display: block;
   animation: typsastra-search-caret-pulse 1.05s steps(1) infinite;
 }
@@ -4360,6 +4368,23 @@ button.welcome-item:disabled {
 }
 
 .image-tool-search { padding: 0 7px; }
+.image-tool-search-shell {
+  --editor-input-horizontal-inset: 10px;
+  width: 100%;
+  min-width: 0;
+  font: 12px var(--font-family-sans);
+}
+.image-tool-search-shell .image-tool-search {
+  padding-inline: var(--editor-input-horizontal-inset);
+  caret-color: transparent;
+}
+.image-tool-search-shell .typsastra-caret-measure {
+  font: inherit;
+  line-height: 26px;
+}
+.image-tool-search-shell .typsastra-input-caret {
+  height: calc(26px - 8px);
+}
 .image-tool-filter { padding: 0 24px 0 7px; }
 .image-tool-search:focus,
 .image-tool-filter:focus,

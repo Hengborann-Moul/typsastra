@@ -66,6 +66,7 @@ export interface AppEventActions {
   startWindowStateMonitor: () => Promise<void> | void;
   hasUnsavedChanges: () => boolean;
   prepareForClose: () => Promise<boolean>;
+  persistWorkspaceState: () => Promise<void>;
   persistWindowState: () => Promise<void>;
 
   wysiwymContainer: HTMLElement;
@@ -242,6 +243,7 @@ function bindWindowControls(actions: AppEventActions): void {
     }
     if (proceed) proceed = await actions.prepareForClose();
     if (proceed) {
+      await actions.persistWorkspaceState();
       await actions.persistWindowState();
       try {
         const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");

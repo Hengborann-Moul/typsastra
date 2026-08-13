@@ -2637,6 +2637,7 @@ export class TypsastraWorkspaceController {
       startWindowStateMonitor: () => this.windowStateController.start(),
       hasUnsavedChanges: () => this.openTabs.some(tab => tab.isDirty),
       prepareForClose: () => this.appUpdateController.prepareForClose(),
+      persistWorkspaceState: () => this.saveWorkspaceState(),
       persistWindowState: () => this.windowStateController.persistNow(),
       wysiwymContainer: this.wysiwymContainer,
       isWysiwymMode: () => this.activeMode === "WYSIWYM",

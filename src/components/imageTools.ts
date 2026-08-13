@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { WorkspaceExplorer } from "./explorer";
 import { workspaceParentDirectories } from "./explorer";
+import { wrapEditorCaretInput } from "../ui/editorCaretInput";
 
 export type ProjectImageReference = {
   sourcePath: string;
@@ -320,6 +321,11 @@ export class ImageToolsController {
     }
 
     const search = controls.querySelector<HTMLInputElement>(".image-tool-search")!;
+    if (!search.closest(".image-tool-search-shell")) {
+      const marker = document.createComment("image-tool-search");
+      search.replaceWith(marker);
+      marker.replaceWith(wrapEditorCaretInput(search, { shellClass: "image-tool-search-shell" }));
+    }
     const filter = controls.querySelector<HTMLSelectElement>(".image-tool-filter")!;
     search.value = this.query;
     filter.value = this.filter;
@@ -336,8 +342,13 @@ export class ImageToolsController {
 
       const images = this.filteredImages();
       if (images.length === 0) {
-        activeExplorer.clearWorkspace();
-        activeList.innerHTML = `<div class="image-tool-empty">No images match this view.</div>`;
+        // An empty filter result still belongs to the current workspace. Do
+        // not clear the explorer because that also resets the project title.
+        activeExplorer.setVisibleFiles([]);
+        const empty = document.createElement("div");
+        empty.className = "image-tool-empty";
+        empty.textContent = "No images match this view.";
+        activeList.replaceChildren(empty);
         activeFooter.textContent = `0 images · ${this.scannedTypstFiles.toLocaleString()} Typst file${this.scannedTypstFiles === 1 ? "" : "s"} scanned`;
         explorerHasRendered = false;
         return;

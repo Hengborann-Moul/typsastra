@@ -12,6 +12,7 @@ import {
   setSearchQuery
 } from "@codemirror/search";
 import { createAppIcon, type AppIconName } from "../ui/icons";
+import { wrapEditorCaretInput } from "../ui/editorCaretInput";
 import { runScopeHandlers, type EditorView, type Panel, type ViewUpdate } from "@codemirror/view";
 
 const GENERIC_DIACRITICS = /[\u0300-\u036f\u1ab0-\u1aff\u1dc0-\u1dff\u20d0-\u20ff\ufe20-\ufe2f]/gu;
@@ -286,28 +287,11 @@ function input(attributes: Record<string, string | boolean | EventListener>): HT
 }
 
 function editorCaretInput(field: HTMLInputElement): HTMLSpanElement {
-  const shell = document.createElement("span");
-  shell.className = "cm-search-textfield-shell";
-  const measure = document.createElement("span");
-  measure.className = "cm-search-caret-measure";
-  const caret = document.createElement("span");
-  caret.className = "cm-search-editor-caret";
-  shell.append(field, measure, caret);
-
-  const updateCaret = () => {
-    const selection = field.selectionStart ?? 0;
-    const selectionEnd = field.selectionEnd ?? selection;
-    caret.style.visibility = selection === selectionEnd ? "visible" : "hidden";
-    measure.textContent = field.value.slice(0, selection) || "\u200b";
-    const measuredWidth = selection === 0 ? 0 : measure.getBoundingClientRect().width;
-    caret.style.left = `${6 + measuredWidth - field.scrollLeft}px`;
-  };
-  for (const event of ["focus", "input", "click", "keyup", "select", "scroll"]) {
-    field.addEventListener(event, updateCaret);
-  }
-  field.addEventListener("focus", () => requestAnimationFrame(updateCaret));
-  updateCaret();
-  return shell;
+  return wrapEditorCaretInput(field, {
+    shellClass: "cm-search-textfield-shell",
+    measureClass: "cm-search-caret-measure",
+    caretClass: "cm-search-editor-caret",
+  });
 }
 
 function iconButton(name: string, label: string, icon: AppIconName, action: () => void): HTMLButtonElement {
