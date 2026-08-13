@@ -25,3 +25,15 @@ export function previewLinkTarget(annotation: unknown): PreviewLinkTarget | null
 export function previewLinkModifierPressed(event: Pick<MouseEvent | KeyboardEvent, "ctrlKey" | "metaKey">): boolean {
   return event.ctrlKey || event.metaKey;
 }
+
+export function previewLinkModifierAfterKeyboardEvent(
+  event: Pick<KeyboardEvent, "key" | "ctrlKey" | "metaKey">,
+  phase: "keydown" | "keyup",
+): boolean {
+  if (phase === "keydown" && (event.key === "Control" || event.key === "Meta")) return true;
+  // Some Linux WebKitGTK builds retain the released modifier in the keyup
+  // event. The other command modifier can still legitimately remain held.
+  if (phase === "keyup" && event.key === "Control") return event.metaKey;
+  if (phase === "keyup" && event.key === "Meta") return event.ctrlKey;
+  return previewLinkModifierPressed(event);
+}

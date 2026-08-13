@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { previewLinkModifierPressed, previewLinkTarget } from "../src/preview/previewLinks";
+import {
+  previewLinkModifierAfterKeyboardEvent,
+  previewLinkModifierPressed,
+  previewLinkTarget,
+} from "../src/preview/previewLinks";
 
 describe("PDF preview links", () => {
   test("recognizes external and internal PDF link annotations", () => {
@@ -18,6 +22,21 @@ describe("PDF preview links", () => {
     expect(previewLinkModifierPressed({ ctrlKey: true, metaKey: false })).toBeTrue();
     expect(previewLinkModifierPressed({ ctrlKey: false, metaKey: true })).toBeTrue();
     expect(previewLinkModifierPressed({ ctrlKey: false, metaKey: false })).toBeFalse();
+  });
+
+  test("treats modifier keyup as authoritative when WebKit reports stale modifier flags", () => {
+    expect(previewLinkModifierAfterKeyboardEvent(
+      { key: "Control", ctrlKey: true, metaKey: false },
+      "keyup",
+    )).toBeFalse();
+    expect(previewLinkModifierAfterKeyboardEvent(
+      { key: "Meta", ctrlKey: false, metaKey: true },
+      "keyup",
+    )).toBeFalse();
+    expect(previewLinkModifierAfterKeyboardEvent(
+      { key: "Control", ctrlKey: true, metaKey: true },
+      "keyup",
+    )).toBeTrue();
   });
 
   test("recognizes opaque Draft Preview image annotations without treating them as external URLs", () => {

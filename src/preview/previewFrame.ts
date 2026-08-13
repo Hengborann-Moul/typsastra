@@ -53,7 +53,12 @@ import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { parsePreviewCompilerDiagnostic, type TypstSourceLocation } from "../compiler/previewError";
 import { PERFORMANCE_BUDGETS, type PerformanceMetric } from "../performance/diagnostics";
 import { formatFileSize } from "../workspace/largeFileOpening";
-import { previewLinkModifierPressed, previewLinkTarget, type PreviewLinkTarget } from "./previewLinks";
+import {
+  previewLinkModifierAfterKeyboardEvent,
+  previewLinkModifierPressed,
+  previewLinkTarget,
+  type PreviewLinkTarget,
+} from "./previewLinks";
 import { pageDimensionsChanged, pagesToEvict, visiblePageIndexes } from "./virtualization";
 import { PreviewMotionController } from "./previewMotion";
 import {
@@ -173,6 +178,7 @@ export class PreviewFrame {
   private draftHoverRetargetTimer: number | null = null;
   private pendingRestoredScrollTop: number | null = null;
   private previewPointerInside = false;
+  private previewLinkModifierHeld = false;
 
   constructor(
     private readonly pane: HTMLElement,
@@ -199,15 +205,19 @@ export class PreviewFrame {
       }
     }, { passive: false });
     window.addEventListener("keydown", event => {
+      this.previewLinkModifierHeld = previewLinkModifierAfterKeyboardEvent(event, "keydown");
       const doc = this.iframe?.contentDocument;
-      if (doc) {
-        const modifierPressed = previewLinkModifierPressed(event) || event.key === "Control" || event.key === "Meta";
-        this.setPreviewLinkModifier(doc, this.previewPointerInside && modifierPressed);
-      }
+      if (doc) this.setPreviewLinkModifier(doc, this.previewPointerInside && this.previewLinkModifierHeld);
     });
     window.addEventListener("keyup", event => {
+      this.previewLinkModifierHeld = previewLinkModifierAfterKeyboardEvent(event, "keyup");
       const doc = this.iframe?.contentDocument;
-      if (doc) this.setPreviewLinkModifier(doc, this.previewPointerInside && previewLinkModifierPressed(event));
+      if (doc) this.setPreviewLinkModifier(doc, this.previewPointerInside && this.previewLinkModifierHeld);
+    });
+    window.addEventListener("blur", () => {
+      this.previewLinkModifierHeld = false;
+      const doc = this.iframe?.contentDocument;
+      if (doc) this.setPreviewLinkModifier(doc, false);
     });
 
     this.resizeObserver = new ResizeObserver(() => {
@@ -1449,17 +1459,18 @@ export class PreviewFrame {
     this.iframe?.contentWindow?.addEventListener("pointercancel", () => this.motion.setPointerDown(false), true);
     this.iframe?.contentWindow?.addEventListener("blur", () => {
       this.motion.setPointerDown(false);
+      this.previewLinkModifierHeld = false;
       this.setPreviewLinkModifier(doc, false);
     });
     doc.addEventListener("pointermove", event => {
       this.previewPointerInside = true;
       this.rememberDraftPointer(event);
-      this.setPreviewLinkModifier(doc, previewLinkModifierPressed(event));
+      this.setPreviewLinkModifier(doc, this.previewLinkModifierHeld);
     }, { passive: true });
     doc.addEventListener("pointerover", event => {
       this.previewPointerInside = true;
       this.rememberDraftPointer(event);
-      this.setPreviewLinkModifier(doc, previewLinkModifierPressed(event));
+      this.setPreviewLinkModifier(doc, this.previewLinkModifierHeld);
       const link = (event.target as Element | null)?.closest<HTMLElement>(".draft-image-link");
       if (link) void this.showDraftImagePopover(link);
     });
@@ -1485,11 +1496,12 @@ export class PreviewFrame {
       this.hideDraftImagePopover();
     });
     doc.addEventListener("keydown", event => {
-      const modifierPressed = previewLinkModifierPressed(event) || event.key === "Control" || event.key === "Meta";
-      this.setPreviewLinkModifier(doc, this.previewPointerInside && modifierPressed);
+      this.previewLinkModifierHeld = previewLinkModifierAfterKeyboardEvent(event, "keydown");
+      this.setPreviewLinkModifier(doc, this.previewPointerInside && this.previewLinkModifierHeld);
     });
     doc.addEventListener("keyup", event => {
-      this.setPreviewLinkModifier(doc, this.previewPointerInside && previewLinkModifierPressed(event));
+      this.previewLinkModifierHeld = previewLinkModifierAfterKeyboardEvent(event, "keyup");
+      this.setPreviewLinkModifier(doc, this.previewPointerInside && this.previewLinkModifierHeld);
     });
     doc.addEventListener("click", event => {
       const target = event.target as Element | null;
@@ -1528,6 +1540,7 @@ export class PreviewFrame {
     doc.addEventListener("wheel", event => {
       this.previewPointerInside = true;
       this.rememberDraftPointer(event);
+      this.setPreviewLinkModifier(doc, this.previewLinkModifierHeld);
       if (event.ctrlKey) {
         event.preventDefault();
         if (event.deltaY < 0) {
