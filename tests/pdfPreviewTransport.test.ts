@@ -179,7 +179,7 @@ describe("compiled PDF transport", () => {
     expect(renderMethod).toContain("const latestContents = this.deps.getEditorText()");
     expect(renderMethod).toContain("if (latestContents !== contents)");
     expect(renderMethod).toContain("queued !== contents || !renderSucceeded");
-    expect(renderMethod).toContain('this.deps.previewFrame.setError("Preview Render Failed", failureMessage)');
+    expect(renderMethod).toContain('this.deps.previewFrame.setCompilerError("Preview Render Failed", failureMessage');
     expect(renderMethod).not.toContain("if (!this.deps.previewFrame.currentUrl)");
     expect(renderMethod).not.toContain('if (reportRenderStatus) {\n        this.deps.setLspStatus({ kind: "preview-ready", message: "Preview ready" });');
     expect(renderMethod).toContain('this.deps.setLspStatus({ kind: "preview-ready", message: "Preview ready" });');

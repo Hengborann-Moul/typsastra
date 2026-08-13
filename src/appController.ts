@@ -1305,6 +1305,16 @@ export class TypsastraWorkspaceController {
       this.recoverTinymistPreviewAfterUnexpectedStop(contents, generation),
     isRenderCachePath: path => this.isRenderCachePath(path),
     mapToOriginalPath: path => this.mapToOriginalPath(path),
+    navigateToCompilerLocation: (filePath, line, column) => {
+      void this.navigateToLogEntry({
+        kind: "error",
+        source: "typst(compiler)",
+        message: "Compiler source location",
+        filePath,
+        line,
+        column,
+      });
+    },
     log: (kind, source, message) => this.appendDeveloperLog({ kind, source, message }),
     onRenderSucceeded: () => {
       this.previewDiagnosticsRecoveryController.onRenderSucceeded();

@@ -62,13 +62,13 @@ describe("theme-aware application accents", () => {
     expect(explorer).toContain('input.style.border = "1px solid var(--ui-accent-color)"');
   });
 
-  test("wraps long compiler paths inside the preview error card", () => {
+  test("keeps compiler source snippets intact while containing horizontal scrolling", () => {
     expect(style).toMatch(
       /\.compiler-preview-error-content\s*\{[^}]*min-width:\s*0;[^}]*overflow-x:\s*hidden;[^}]*overflow-y:\s*auto;/s
     );
-    expect(style).toMatch(
-      /\.compiler-preview-error-message\s*\{[^}]*white-space:\s*pre-wrap;[^}]*overflow-wrap:\s*anywhere;[^}]*word-break:\s*break-word;/s
-    );
+    expect(style).toMatch(/\.compiler-preview-diagnostic-snippet,[\s\S]*?white-space:\s*pre;[\s\S]*?overflow-x:\s*auto;/);
+    expect(style).toContain(".compiler-preview-diagnostic-secondary");
+    expect(style).toContain(".compiler-preview-diagnostic-raw");
   });
 
   test("applies and follows the active theme in the undocked preview", () => {

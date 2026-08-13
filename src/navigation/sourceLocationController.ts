@@ -3,6 +3,7 @@ import { EditorView } from "@codemirror/view";
 import type { TinymistLspClient, LspSourcePosition } from "../compiler/lsp";
 import { isTypstDocumentPath } from "../platform/fileTypes";
 import { filePathFromUri, filePathToUri } from "../platform/paths";
+import { decodeRustUnicodeEscapes } from "../compiler/previewError";
 
 export interface SourceLocationDependencies {
   workspaceRootPath(): string | null;
@@ -34,20 +35,22 @@ export class SourceLocationController {
   mapToOriginalPath(cachePath: string): string {
     const workspaceRootPath = this.deps.workspaceRootPath();
     if (!workspaceRootPath) return cachePath;
-    const prefix = `${workspaceRootPath}/.typsastra/cache/render/`.replace(/\\/g, "/").toLowerCase();
-    const cleanCache = cachePath.replace(/\\/g, "/").toLowerCase();
+    const prefix = `${normalizePathForComparison(workspaceRootPath)}/.typsastra/cache/render/`;
+    const decodedCachePath = decodeRustUnicodeEscapes(cachePath);
+    const displayCachePath = decodedCachePath.replace(/\\/g, "/").replace(/\/{2,}/g, "/");
+    const cleanCache = displayCachePath.toLowerCase();
     if (cleanCache.startsWith(prefix)) {
-      const relPath = cachePath.substring(prefix.length);
-      return `${workspaceRootPath}/${relPath}`;
+      const relPath = displayCachePath.substring(prefix.length);
+      return `${workspaceRootPath.replace(/[\\/]+$/, "")}/${relPath}`;
     }
-    return cachePath;
+    return decodedCachePath;
   }
 
   isRenderCachePath(path: string): boolean {
     const workspaceRootPath = this.deps.workspaceRootPath();
     if (!workspaceRootPath) return false;
-    const prefix = `${workspaceRootPath}/.typsastra/cache/render/`.replace(/\\/g, "/").toLowerCase();
-    return path.replace(/\\/g, "/").toLowerCase().startsWith(prefix);
+    const prefix = `${normalizePathForComparison(workspaceRootPath)}/.typsastra/cache/render/`;
+    return normalizePathForComparison(decodeRustUnicodeEscapes(path)).startsWith(prefix);
   }
 
   activeLspUri(): string {
@@ -145,4 +148,8 @@ export class SourceLocationController {
     }
     return offset;
   }
+}
+
+function normalizePathForComparison(path: string): string {
+  return path.replace(/\\/g, "/").replace(/\/{2,}/g, "/").replace(/\/$/, "").toLowerCase();
 }

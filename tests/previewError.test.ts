@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import {
+  decodeRustUnicodeEscapes,
+  parsePreviewCompilerDiagnostic,
   parsePreviewCompilerFailure,
   relocatePreviewCompilerFailureMessage,
+  relocatePreviewCompilerFailurePaths,
   typstPackageEntrypoint,
   typstPackageImports
 } from "../src/compiler/previewError";
@@ -60,6 +63,52 @@ describe("preview compiler errors", () => {
     expect(displayed).toContain(`${originalPath}:94:12`);
     expect(displayed).not.toContain(".typsastra");
     expect(displayed).toContain("#strong-[Text]");
+  });
+
+  test("decodes and relocates every compiler source frame", () => {
+    const escaped = String.raw`C:\Project\u{1781}\.typsastra\cache\render\main.typ`;
+    const decoded = decodeRustUnicodeEscapes(escaped);
+    const message = [
+      "error: invalid value",
+      `  ${escaped}:12:4`,
+      "12 | bad()",
+      "   | ^^^^^",
+      "",
+      "help: while calling `wrapper`",
+      `  ${escaped}:30:1`,
+      "30 | #wrapper()",
+    ].join("\n");
+    const relocated = relocatePreviewCompilerFailurePaths(message, path =>
+      path.includes(".typsastra") ? String.raw`C:\Project\main.typ` : path
+    );
+
+    expect(decoded).not.toContain(String.raw`\u{1781}`);
+    expect(relocated.match(/C:\\Project\\main\.typ/g)?.length).toBe(2);
+  });
+
+  test("parses terminal output into primary and collapsed call frames", () => {
+    const message = [
+      "error: cannot calculate sum of empty array with no default",
+      String.raw`  C:\Project\03_sources\lib.typ:71:26`,
+      "71 | let subtotal = values.sum()",
+      "   |                ^^^^^^^^^^^^",
+      "",
+      "help: while calling `render-items`",
+      String.raw`  C:\Project\main.typ:147:1`,
+      "147 | #render-items(items)",
+      "    | ^^^^^^^^^^^^^^^^^^^^",
+    ].join("\n");
+
+    const diagnostic = parsePreviewCompilerDiagnostic(message);
+
+    expect(diagnostic?.summary).toBe("cannot calculate sum of empty array with no default");
+    expect(diagnostic?.frames).toHaveLength(2);
+    expect(diagnostic?.frames[0]).toMatchObject({ kind: "primary", line: 71, column: 26 });
+    expect(diagnostic?.frames[1]).toMatchObject({
+      kind: "help",
+      label: "while calling `render-items`",
+      line: 147,
+    });
   });
 
   test("reads a package entrypoint from typst.toml", () => {

@@ -48,7 +48,9 @@ export type PreviewMemorySnapshot = {
 };
 
 import { invoke } from "@tauri-apps/api/core";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
+import { parsePreviewCompilerDiagnostic, type TypstSourceLocation } from "../compiler/previewError";
 import { PERFORMANCE_BUDGETS, type PerformanceMetric } from "../performance/diagnostics";
 import { formatFileSize } from "../workspace/largeFileOpening";
 import { previewLinkModifierPressed, previewLinkTarget, type PreviewLinkTarget } from "./previewLinks";
@@ -1954,6 +1956,89 @@ export class PreviewFrame {
     details.textContent = message;
     content.append(titleElement, details);
     overlay.appendChild(content);
+    this.pane.appendChild(overlay);
+    this.errorOverlay = overlay;
+  }
+
+  public setCompilerError(
+    title: string,
+    message: string,
+    options: {
+      displayPath: (filePath: string) => string;
+      navigate: (location: TypstSourceLocation) => void;
+    },
+  ): void {
+    const diagnostic = parsePreviewCompilerDiagnostic(message);
+    if (!diagnostic) return this.setError(title, message);
+    this.clearLoadingHost();
+    this.clearErrorOverlay();
+    const overlay = document.createElement("div");
+    overlay.className = "compiler-preview-error-overlay";
+    const content = document.createElement("div");
+    content.className = "compiler-preview-error-content compiler-preview-diagnostic";
+    const titleElement = document.createElement("h3");
+    titleElement.className = "compiler-preview-error-title";
+    titleElement.textContent = `\u24e7 ${title}`;
+    const summary = document.createElement("p");
+    summary.className = "compiler-preview-diagnostic-summary";
+    summary.textContent = diagnostic.summary;
+    content.append(titleElement, summary);
+
+    diagnostic.frames.forEach((frame, index) => {
+      const frameContent = document.createElement("div");
+      frameContent.className = "compiler-preview-diagnostic-frame-content";
+      const locationRow = document.createElement("div");
+      locationRow.className = "compiler-preview-diagnostic-location-row";
+      const location = document.createElement("button");
+      location.type = "button";
+      location.className = "compiler-preview-diagnostic-location";
+      location.textContent = `${options.displayPath(frame.filePath)}:${frame.line}:${frame.column}`;
+      location.title = frame.filePath;
+      location.addEventListener("click", () => options.navigate(frame));
+      const copy = document.createElement("button");
+      copy.type = "button";
+      copy.className = "compiler-preview-diagnostic-copy";
+      copy.textContent = "Copy path";
+      copy.title = `Copy ${frame.filePath}`;
+      copy.addEventListener("click", () => { void writeText(frame.filePath); });
+      locationRow.append(location, copy);
+      frameContent.append(locationRow);
+      if (frame.snippet) {
+        const snippet = document.createElement("pre");
+        snippet.className = "compiler-preview-diagnostic-snippet";
+        snippet.textContent = frame.snippet;
+        frameContent.append(snippet);
+      }
+      if (index === 0 && frame.kind === "primary") {
+        const section = document.createElement("section");
+        section.className = "compiler-preview-diagnostic-frame";
+        section.append(frameContent);
+        content.append(section);
+      } else {
+        const disclosure = document.createElement("details");
+        disclosure.className = "compiler-preview-diagnostic-frame compiler-preview-diagnostic-secondary";
+        const disclosureSummary = document.createElement("summary");
+        const label = frame.label ? `${frame.kind}: ${frame.label}` : `${frame.kind} location`;
+        disclosureSummary.textContent = `${label} \u2014 ${options.displayPath(frame.filePath)}:${frame.line}`;
+        disclosure.append(disclosureSummary, frameContent);
+        content.append(disclosure);
+      }
+    });
+    diagnostic.notes.forEach(text => {
+      const note = document.createElement("div");
+      note.className = "compiler-preview-diagnostic-note";
+      note.textContent = text;
+      content.append(note);
+    });
+    const rawDisclosure = document.createElement("details");
+    rawDisclosure.className = "compiler-preview-diagnostic-raw";
+    const rawSummary = document.createElement("summary");
+    rawSummary.textContent = "Show raw compiler output";
+    const raw = document.createElement("pre");
+    raw.textContent = diagnostic.raw;
+    rawDisclosure.append(rawSummary, raw);
+    content.append(rawDisclosure);
+    overlay.append(content);
     this.pane.appendChild(overlay);
     this.errorOverlay = overlay;
   }

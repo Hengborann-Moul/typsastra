@@ -3,7 +3,7 @@ import type { TinymistLspClient, LspStatus } from "../compiler/lsp";
 import { isTinymistStoppedRequestError } from "../compiler/lsp";
 import {
   parsePreviewCompilerFailure,
-  relocatePreviewCompilerFailureMessage,
+  relocatePreviewCompilerFailurePaths,
 } from "../compiler/previewError";
 import type { LogConsoleController } from "../diagnostics/logConsoleController";
 import type { PreviewFailureController } from "../diagnostics/previewFailureController";
@@ -14,6 +14,7 @@ import {
   filePathKey,
   filePathToUri,
   nativeFilePath,
+  relativeFilePath,
 } from "../platform/paths";
 import type { PreviewRenderMode } from "../settings";
 import type { TypographyController } from "../typography/typographyController";
@@ -78,6 +79,7 @@ export interface PdfPreviewRenderDependencies {
   recoverTinymistPreviewAfterUnexpectedStop(contents: string, failedGeneration: number): Promise<boolean>;
   isRenderCachePath(path: string): boolean;
   mapToOriginalPath(path: string): string;
+  navigateToCompilerLocation(filePath: string, line: number, column: number): void;
   log(kind: "info" | "warning" | "error", source: string, message: string): void;
   onRenderSucceeded(): void;
   onRenderFailed(contents: string): void;
@@ -508,18 +510,26 @@ export class PdfPreviewRenderController {
         failure,
         preparedPreview?.reachableSourcePaths ?? [],
       );
-      const displayedFailureMessage = failure.location !== null
-        && this.deps.isRenderCachePath(failure.location.filePath)
-        ? relocatePreviewCompilerFailureMessage(
-            failure,
-            this.deps.mapToOriginalPath(failure.location.filePath),
-          )
-        : failure.message;
+      const displayedFailureMessage = relocatePreviewCompilerFailurePaths(
+        failure.message,
+        path => this.deps.isRenderCachePath(path) ? this.deps.mapToOriginalPath(path) : path,
+      );
       const failureMessage = packageHint
         ? `${displayedFailureMessage}\n\nPackage compatibility hint\n${packageHint.message}`
         : displayedFailureMessage;
       this.deps.onRenderFailed(contents);
-      this.deps.previewFrame.setError("Preview Render Failed", failureMessage);
+      const workspaceRootPath = this.deps.getWorkspaceRootPath();
+      this.deps.previewFrame.setCompilerError("Preview Render Failed", failureMessage, {
+        displayPath: path => {
+          const relative = workspaceRootPath ? relativeFilePath(workspaceRootPath, path) : null;
+          return (relative ?? path).replace(/\\/g, "/");
+        },
+        navigate: location => this.deps.navigateToCompilerLocation(
+          location.filePath,
+          location.line,
+          location.column,
+        ),
+      });
       this.deps.previewFailure.publish(failure, packageHint);
       this.deps.draftPreview.updateControl(false);
       this.deps.setLspStatus({ kind: "preview-error", message: "PDF compile failed" });

@@ -37,7 +37,7 @@ export class PreviewDiagnosticsRecoveryController {
     const errors = diagnostics.filter(diagnostic => diagnostic.severity === 1);
     const canRenderActiveFile = this.canRenderActiveFile();
     if (errors.length > 0) {
-      if (canRenderActiveFile) {
+      if (canRenderActiveFile && this.failedContents === null) {
         this.deps.previewFrame().setError(
           "Preview Render Failed",
           this.failureMessage(errors),

@@ -4274,6 +4274,118 @@ button.welcome-item:disabled {
   box-sizing: border-box;
 }
 
+.compiler-preview-diagnostic-summary {
+  margin: 0;
+  color: var(--ui-text);
+  font-family: var(--font-family-sans);
+  font-size: var(--ui-font-size);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.compiler-preview-diagnostic-frame,
+.compiler-preview-diagnostic-note,
+.compiler-preview-diagnostic-raw {
+  min-width: 0;
+  border: 1px solid var(--ui-border);
+  background: var(--ui-hover);
+}
+
+.compiler-preview-diagnostic-frame-content {
+  min-width: 0;
+  padding: 10px;
+}
+
+.compiler-preview-diagnostic-location-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.compiler-preview-diagnostic-location,
+.compiler-preview-diagnostic-copy {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--ui-accent-color);
+  font: inherit;
+  padding: 2px 0;
+  cursor: pointer;
+}
+
+.compiler-preview-diagnostic-location {
+  min-width: 0;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--editor-code-font), monospace;
+  font-size: 12px;
+}
+
+.compiler-preview-diagnostic-location:hover,
+.compiler-preview-diagnostic-location:focus-visible {
+  text-decoration: underline;
+}
+
+.compiler-preview-diagnostic-copy {
+  flex: 0 0 auto;
+  color: var(--ui-header-text);
+  font-family: var(--font-family-sans);
+  font-size: calc(var(--ui-font-size) - 1px);
+}
+
+.compiler-preview-diagnostic-snippet,
+.compiler-preview-diagnostic-raw pre {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  margin: 8px 0 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  white-space: pre;
+  overflow-wrap: normal;
+  word-break: normal;
+  color: var(--ui-text);
+  font-family: var(--editor-code-font), monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  scrollbar-width: thin;
+}
+
+.compiler-preview-diagnostic-secondary > summary,
+.compiler-preview-diagnostic-raw > summary {
+  padding: 9px 10px;
+  color: var(--ui-header-text);
+  cursor: pointer;
+  font-family: var(--font-family-sans);
+  font-size: var(--ui-font-size);
+  overflow-wrap: anywhere;
+}
+
+.compiler-preview-diagnostic-secondary[open] > summary,
+.compiler-preview-diagnostic-raw[open] > summary {
+  border-bottom: 1px solid var(--ui-border);
+}
+
+.compiler-preview-diagnostic-note {
+  padding: 10px;
+  color: var(--ui-header-text);
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  font-family: var(--font-family-sans);
+  font-size: var(--ui-font-size);
+}
+
+.compiler-preview-diagnostic-raw pre {
+  box-sizing: border-box;
+  max-height: 260px;
+  padding: 10px;
+  margin: 0;
+  overflow: auto;
+}
+
 .tree-item.pinned-main { font-weight: 400; }
 .tree-item.pinned-main .tree-text {
   color: var(--ui-accent-color);
