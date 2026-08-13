@@ -25,6 +25,7 @@ import {
   type LanguageProviderCapabilities
 } from "./languageSupport";
 import { isAltGraphKeyboardEvent } from "./ui/keyboardModifiers";
+import { nativeAppMenuOwnsShortcuts } from "./platform/nativeAppMenuSpec";
 
 type SettingsPayload = { path: string; settings: unknown | null };
 type SystemFontCatalog = { all: string[]; monospace: string[] };
@@ -233,6 +234,7 @@ export class SettingsController {
     onChange("settings-code-font", (settings, control) => { settings.editor.codeFont = control.value; });
     onChange("settings-unicode-font", (settings, control) => { settings.editor.unicodeFont = control.value; });
     onChange("settings-word-wrap", (settings, control) => { settings.editor.wordWrap = (control as HTMLInputElement).checked; });
+    onChange("settings-visual-toolbar", (settings, control) => { settings.editor.visualToolbar = (control as HTMLInputElement).checked; });
     onChange("settings-tab-size", (settings, control) => { settings.editor.tabSize = Number(control.value) as 2 | 4 | 8; });
     onChange("settings-line-numbers", (settings, control) => { settings.editor.lineNumbers = (control as HTMLInputElement).checked; });
     onChange("settings-active-line", (settings, control) => { settings.editor.highlightActiveLine = (control as HTMLInputElement).checked; });
@@ -315,7 +317,7 @@ export class SettingsController {
     document.addEventListener("keydown", event => {
       if (isAltGraphKeyboardEvent(event)) return;
       const isMac = navigator.userAgent.toLowerCase().includes("mac");
-      if ((isMac ? event.metaKey : event.ctrlKey) && event.code === "Comma") {
+      if ((isMac ? event.metaKey : event.ctrlKey) && event.code === "Comma" && !nativeAppMenuOwnsShortcuts()) {
         event.preventDefault();
         openSettings();
       } else if (event.key === "Escape" && !overlay.classList.contains("hidden")) {
@@ -551,6 +553,7 @@ export class SettingsController {
     setValue("settings-highlight-duration", String(preview.highlightDurationMs));
     setValue("settings-auto-save-interval", String(editor.autoSaveIntervalSeconds));
     setChecked("settings-word-wrap", editor.wordWrap);
+    setChecked("settings-visual-toolbar", editor.visualToolbar);
     setChecked("settings-line-numbers", editor.lineNumbers);
     setChecked("settings-active-line", editor.highlightActiveLine);
     setChecked("settings-auto-close", editor.autoCloseBrackets);

@@ -380,12 +380,12 @@ export class EditorToolbarController {
     requestAnimationFrame(() => document.getElementById("document-typography-close")?.focus());
   }
 
-  private closeTypographyModal(): void {
+  private closeTypographyModal(restoreFocus = true): void {
     const overlay = this.typographyOverlay();
     if (!overlay || overlay.classList.contains("hidden")) return;
     overlay.classList.add("hidden");
     this.typographyReturnFocus?.setAttribute("aria-expanded", "false");
-    this.typographyReturnFocus?.focus();
+    if (restoreFocus) this.typographyReturnFocus?.focus();
     this.typographyReturnFocus = null;
   }
 
@@ -1117,6 +1117,17 @@ export class EditorToolbarController {
     }
     editor.dispatch({ changes, scrollIntoView: true, userEvent: "input" });
     editor.focus();
+  }
+
+  public setVisible(visible: boolean): void {
+    if (this.toolbar.classList.contains("hidden") === !visible) return;
+    this.toolbar.classList.toggle("hidden", !visible);
+    if (!visible) {
+      this.closeDropdowns();
+      // The typography modal lives outside the toolbar, so returning focus to a
+      // now-hidden trigger would leave the focus ring nowhere.
+      this.closeTypographyModal(false);
+    }
   }
 
   public setDisabled(disabled: boolean): void {

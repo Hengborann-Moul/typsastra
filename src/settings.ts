@@ -42,6 +42,7 @@ export type AppSettings = {
     unicodeFont: UnicodeFontPreference;
     unicodeFonts: Record<string, UnicodeFontPreference>;
     wordWrap: boolean;
+    visualToolbar: boolean;
     tabSize: 2 | 4 | 8;
     lineNumbers: boolean;
     highlightActiveLine: boolean;
@@ -101,6 +102,7 @@ export const defaultAppSettings: AppSettings = {
     unicodeFont: "auto",
     unicodeFonts: {},
     wordWrap: true,
+    visualToolbar: true,
     tabSize: 2,
     lineNumbers: true,
     highlightActiveLine: true,
@@ -264,6 +266,7 @@ export function normalizeAppSettings(value: unknown): AppSettings {
       unicodeFont: normalizeUnicodeFontPreference(editor.unicodeFont),
       unicodeFonts: unicodeFontPreferences(editor.unicodeFonts),
       wordWrap: booleanValue(editor.wordWrap, defaultAppSettings.editor.wordWrap),
+      visualToolbar: booleanValue(editor.visualToolbar, defaultAppSettings.editor.visualToolbar),
       tabSize,
       lineNumbers: booleanValue(editor.lineNumbers, defaultAppSettings.editor.lineNumbers),
       highlightActiveLine: booleanValue(editor.highlightActiveLine, defaultAppSettings.editor.highlightActiveLine),

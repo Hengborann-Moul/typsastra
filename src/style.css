@@ -422,6 +422,10 @@ button.dropdown-item {
   display: none;
 }
 
+html.native-app-menu #app-menus {
+  display: none !important;
+}
+
 .platform-macos-titlebar.macos-titlebar-simulation .titlebar-left::before {
   content: "";
   position: absolute;

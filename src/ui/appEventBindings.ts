@@ -11,6 +11,7 @@ import { installWelcomeKeyboardNavigation } from "../workspace/welcomeNavigation
 import { installModalFocusTrap } from "./modalFocus";
 import { isAltGraphKeyboardEvent } from "./keyboardModifiers";
 import { updateMaximizeIcon } from "./icons";
+import { nativeAppMenuOwnsShortcuts } from "../platform/nativeAppMenuSpec";
 
 export type PreviewWindowUpdate = Record<string, unknown> & { path: string };
 
@@ -58,6 +59,7 @@ export interface AppEventActions {
   toggleSidebar: () => void;
   setSidebarTool: (tool: "explorer" | "images") => void;
   restoreDefaultLayout: () => void;
+  toggleEditorToolbar: () => void;
   toggleLogConsole: () => void;
   clearLogs: () => void;
   restartLsp: () => Promise<void> | void;
@@ -113,14 +115,19 @@ function bindKeyboardShortcuts(actions: AppEventActions): void {
       event.preventDefault();
     }
 
-    if (cmdOrCtrl && event.shiftKey && !event.altKey && keyCode === "KeyF") {
+    if (!nativeAppMenuOwnsShortcuts() && cmdOrCtrl && event.shiftKey && !event.altKey && keyCode === "KeyF") {
       event.preventDefault();
       void actions.formatActiveDocument();
       return;
     }
-    if (cmdOrCtrl && event.shiftKey && !event.altKey && keyCode === "KeyS") {
+    if (!nativeAppMenuOwnsShortcuts() && cmdOrCtrl && event.shiftKey && !event.altKey && keyCode === "KeyS") {
       event.preventDefault();
       void actions.saveActiveFileAs();
+      return;
+    }
+    if (!nativeAppMenuOwnsShortcuts() && cmdOrCtrl && event.shiftKey && !event.altKey && keyCode === "KeyT") {
+      event.preventDefault();
+      actions.toggleEditorToolbar();
       return;
     }
 
@@ -136,7 +143,7 @@ function bindKeyboardShortcuts(actions: AppEventActions): void {
       return;
     }
 
-    if (cmdOrCtrl && !event.shiftKey && !event.altKey) {
+    if (!nativeAppMenuOwnsShortcuts() && cmdOrCtrl && !event.shiftKey && !event.altKey) {
       const actionByKey: Partial<Record<string, string>> = {
         KeyO: "action-open-folder",
         KeyN: "action-new-file",
@@ -154,7 +161,7 @@ function bindKeyboardShortcuts(actions: AppEventActions): void {
       }
     }
 
-    if (event.altKey && !cmdOrCtrl && !event.shiftKey && keyCode === "KeyZ") {
+    if (!nativeAppMenuOwnsShortcuts() && event.altKey && !cmdOrCtrl && !event.shiftKey && keyCode === "KeyZ") {
       event.preventDefault();
       document.getElementById("action-toggle-word-wrap")?.click();
     }
@@ -165,12 +172,17 @@ function bindAboutDialog(): void {
   const aboutOverlay = document.getElementById("about-overlay");
   const aboutClose = document.getElementById("about-close") as HTMLButtonElement | null;
   const aboutAction = document.getElementById("action-about-typsastra") as HTMLElement | null;
+  let focusBeforeAbout: HTMLElement | null = null;
   const closeAbout = () => {
     if (aboutOverlay?.classList.contains("hidden")) return;
     aboutOverlay?.classList.add("hidden");
-    aboutAction?.focus();
+    const restoreTarget = aboutAction && aboutAction.getClientRects().length > 0
+      ? aboutAction
+      : focusBeforeAbout;
+    restoreTarget?.focus();
   };
   aboutAction?.addEventListener("click", async () => {
+    focusBeforeAbout = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const version = document.getElementById("about-version");
     if (version) version.textContent = await getVersion().catch(() => "Unavailable");
     aboutOverlay?.classList.remove("hidden");
@@ -352,6 +364,7 @@ export function bindAppEvents(actions: AppEventActions): void {
   document.getElementById("sidebar-explorer-button")?.addEventListener("click", () => actions.setSidebarTool("explorer"));
   document.getElementById("sidebar-images-button")?.addEventListener("click", () => actions.setSidebarTool("images"));
   document.getElementById("action-restore-default-layout")?.addEventListener("click", actions.restoreDefaultLayout);
+  document.getElementById("action-toggle-editor-toolbar")?.addEventListener("click", actions.toggleEditorToolbar);
   document.getElementById("action-clear-logs")?.addEventListener("click", actions.clearLogs);
   document.getElementById("action-restart-lsp")?.addEventListener("click", () => void actions.restartLsp());
   document.getElementById("action-docs-typsastra")?.addEventListener("click", () => void openUrl("https://github.com/sovichea/typsastra"));

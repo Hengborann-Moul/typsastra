@@ -22,14 +22,14 @@
                             <div class="menu-label">File</div>
                             <div class="dropdown-menu">
                                 <div class="dropdown-item" id="action-new-file">
-                                    New File <span class="hotkey">Ctrl+N</span>
+                                    New File <span class="hotkey" data-shortcut="Mod+N">Ctrl+N</span>
                                 </div>
                                 <div
                                     class="dropdown-item"
                                     id="action-open-folder"
                                 >
-                                    Open Project...
-                                    <span class="hotkey">Ctrl+K Ctrl+O</span>
+                                    Open Workspace...
+                                    <span class="hotkey" data-shortcut="Mod+K Mod+O">Ctrl+K Ctrl+O</span>
                                 </div>
                                 <div
                                     class="dropdown-item"
@@ -57,13 +57,13 @@
                                     class="dropdown-item"
                                     id="action-save-file"
                                 >
-                                    Save <span class="hotkey">Ctrl+S</span>
+                                    Save <span class="hotkey" data-shortcut="Mod+S">Ctrl+S</span>
                                 </div>
                                 <div
                                     class="dropdown-item"
                                     id="action-save-file-as"
                                 >
-                                    Save As... <span class="hotkey">Ctrl+Shift+S</span>
+                                    Save As... <span class="hotkey" data-shortcut="Mod+Shift+S">Ctrl+Shift+S</span>
                                 </div>
                                 <div class="dropdown-separator"></div>
                                 <div
@@ -103,7 +103,7 @@
                                     id="action-open-settings"
                                 >
                                     Settings...
-                                    <span class="hotkey">Ctrl+,</span>
+                                    <span class="hotkey" data-shortcut="Mod+,">Ctrl+,</span>
                                 </div>
                                 <div class="dropdown-separator"></div>
                                 <div class="dropdown-item" id="action-exit">
@@ -115,10 +115,10 @@
                             <div class="menu-label">Edit</div>
                             <div class="dropdown-menu">
                                 <div class="dropdown-item" id="action-undo">
-                                    Undo <span class="hotkey">Ctrl+Z</span>
+                                    Undo <span class="hotkey" data-shortcut="Mod+Z">Ctrl+Z</span>
                                 </div>
                                 <div class="dropdown-item" id="action-redo">
-                                    Redo <span class="hotkey">Ctrl+Y</span>
+                                    Redo <span class="hotkey" data-shortcut="Mod+Y" data-shortcut-mac="Mod+Shift+Z">Ctrl+Y</span>
                                 </div>
                                 <div class="dropdown-separator"></div>
                                 <div
@@ -126,7 +126,7 @@
                                     id="action-format-document"
                                 >
                                     Format Document
-                                    <span class="hotkey">Ctrl+Shift+F</span>
+                                    <span class="hotkey" data-shortcut="Mod+Shift+F">Ctrl+Shift+F</span>
                                 </div>
                                 <div class="dropdown-separator"></div>
                                 <div class="dropdown-item" id="action-fold-file">
@@ -145,17 +145,24 @@
                                     id="action-toggle-word-wrap"
                                 >
                                     Toggle Word Wrap
-                                    <span class="hotkey">Alt+Z</span>
+                                    <span class="hotkey" data-shortcut="Alt+Z">Alt+Z</span>
                                 </div>
                                 <!-- TODO: Re-enable the WYSIWYM layout option when its implementation is ready.
-              <div class="dropdown-item" id="action-toggle-layout">Switch Layout <span class="hotkey">Ctrl+M</span></div>
+              <div class="dropdown-item" id="action-toggle-layout">Switch Layout <span class="hotkey" data-shortcut="Mod+M">Ctrl+M</span></div>
               -->
                                 <div
                                     class="dropdown-item"
                                     id="action-toggle-sidebar"
                                 >
                                     Toggle Sidebar
-                                    <span class="hotkey">Ctrl+B</span>
+                                    <span class="hotkey" data-shortcut="Mod+B">Ctrl+B</span>
+                                </div>
+                                <div
+                                    class="dropdown-item"
+                                    id="action-toggle-editor-toolbar"
+                                >
+                                    Toggle Editor Toolbar
+                                    <span class="hotkey" data-shortcut="Mod+Shift+T">Ctrl+Shift+T</span>
                                 </div>
                                 <div class="dropdown-separator"></div>
                                 <div
@@ -174,7 +181,7 @@
                                     id="action-toggle-logs"
                                 >
                                     Toggle Log Console
-                                    <span class="hotkey">Ctrl+`</span>
+                                    <span class="hotkey" data-shortcut="Mod+`">Ctrl+`</span>
                                 </div>
                                 <div
                                     class="dropdown-item"
@@ -357,8 +364,10 @@
                                 <span class="welcome-item-text"
                                     >Open Project</span
                                 >
-                                <span class="welcome-item-hotkey"
-                                    >Ctrl-K Ctrl-O</span
+                                <span
+                                    class="welcome-item-hotkey"
+                                    data-shortcut="Mod+K Mod+O"
+                                    >Ctrl+K Ctrl+O</span
                                 >
                             </button>
                             <button
@@ -397,7 +406,7 @@
                             <div class="welcome-item">
                                 <span class="welcome-item-icon"></span>
                                 <span class="welcome-item-text">typsastra</span>
-                                <span class="welcome-item-hotkey">Ctrl+1</span>
+                                <span class="welcome-item-hotkey" data-shortcut="Mod+1">Ctrl+1</span>
                             </div>
                         </div>
                     </div>
@@ -1827,7 +1836,7 @@
                                 class="preview-action-button"
                                 data-preview-collapsible="sync"
                                 type="button"
-                                title="Reveal Cursor in Preview (Ctrl+Alt+P)"
+                                title="Reveal Cursor in Preview (Alt+Enter)"
                                 aria-label="Reveal cursor in preview"
                             >
                                 <svg
@@ -2032,6 +2041,8 @@
                     class="status-button"
                     type="button"
                     title="Open Settings (Ctrl+,)"
+                    data-shortcut="Mod+,"
+                    data-shortcut-title="Open Settings ({})"
                 >
                     <span class="status-label">Settings</span>
                 </button>
@@ -2517,6 +2528,22 @@
                                     ><strong>Indentation guides</strong
                                     ><small
                                         >Show visual indentation markers.</small
+                                    ></span
+                                ></label
+                            >
+                            <label class="settings-toggle"
+                                ><input
+                                    id="settings-visual-toolbar"
+                                    type="checkbox"
+                                /><span
+                                    ><strong>Editor toolbar</strong
+                                    ><small
+                                        >Show the formatting and typography
+                                        toolbar above the editor. Toggle it any
+                                        time with
+                                        <span data-shortcut="Mod+Shift+T"
+                                            >Ctrl+Shift+T</span
+                                        >.</small
                                     ></span
                                 ></label
                             >

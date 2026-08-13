@@ -117,8 +117,8 @@ describe("workspace explorer", () => {
     const itemMenu = source.slice(itemMenuStart, backgroundMenuStart);
     const backgroundMenu = source.slice(backgroundMenuStart, source.indexOf("private tabItems()", backgroundMenuStart));
 
-    expect(itemMenu).not.toContain("ctx-open-project");
-    expect(itemMenu).not.toContain("ctx-restart-workspace");
+    expect(itemMenu).toContain("ctx-open-project");
+    expect(itemMenu).toContain("ctx-restart-workspace");
     expect(backgroundMenu).toContain("ctx-open-project");
     expect(backgroundMenu).toContain("ctx-restart-workspace");
   });

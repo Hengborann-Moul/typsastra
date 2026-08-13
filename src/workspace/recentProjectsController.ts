@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { filePathKey } from "../platform/paths";
+import { shortcutLabel } from "../platform/shortcuts";
 import { createAppIcon } from "../ui/icons";
 
 const storageKey = "typsastra-recent-projects";
@@ -141,6 +142,7 @@ export class RecentProjectsController {
   private popupSearch: HTMLInputElement | null = null;
   private popupList: HTMLElement | null = null;
   private popupSelectionIndex = 0;
+  private changeListener: (() => void) | null = null;
 
   constructor(
     private readonly onOpen: (path: string) => void | Promise<void>,
@@ -172,6 +174,19 @@ export class RecentProjectsController {
     });
 
     this.render();
+  }
+
+  public observe(listener: () => void): void {
+    this.changeListener = listener;
+    listener();
+  }
+
+  public visibleEntries(): readonly string[] {
+    return this.read().slice(0, visibleRecentProjects);
+  }
+
+  public open(path: string): void {
+    void this.openProject(path);
   }
 
   public add(path: string): void {
@@ -232,6 +247,7 @@ export class RecentProjectsController {
     const projects = this.read();
     this.renderWelcome(projects.slice(0, visibleRecentProjects));
     this.renderFileMenu(projects.slice(0, visibleRecentProjects));
+    this.changeListener?.();
   }
 
   private renderWelcome(projects: readonly string[]): void {
@@ -252,7 +268,7 @@ export class RecentProjectsController {
     }
 
     projects.forEach((path, index) => {
-      const item = this.createWelcomeItem(path, `Ctrl+${index + 1}`);
+      const item = this.createWelcomeItem(path, shortcutLabel(`Mod+${index + 1}`));
       item.addEventListener("click", () => this.openProject(path));
       section.appendChild(item);
     });

@@ -1,0 +1,217 @@
+import { describe, expect, test } from "bun:test";
+import {
+  buildNativeMenuSpec,
+  nativeAppMenuOwnsShortcuts,
+  nativeMenuElementIds,
+  setNativeAppMenuInstalled,
+  workspaceScopedMenuIds,
+} from "../src/platform/nativeAppMenuSpec";
+
+async function source(path: string): Promise<string> {
+  return Bun.file(new URL(path, import.meta.url)).text();
+}
+
+const acceleratorPattern = /^(CmdOrCtrl|Alt|Shift)(\+(CmdOrCtrl|Alt|Shift))*\+[^+]+$/;
+
+const expectedWorkspaceScoped = [
+  "action-new-file",
+  "action-save-file",
+  "action-save-file-as",
+  "action-export-pdf",
+  "action-export-project",
+  "action-export-source-zip",
+  "action-restart-workspace",
+  "action-close-project",
+  "action-format-document",
+  "action-fold-file",
+  "action-unfold-file",
+  "action-toggle-sidebar",
+  "action-toggle-editor-toolbar",
+  "action-restore-default-layout",
+];
+
+const spec = buildNativeMenuSpec("Typsastra");
+
+describe("native application menu spec", () => {
+  test("builds seven submenus in macOS order", () => {
+    expect(spec.map(submenu => submenu.label)).toEqual([
+      "Typsastra",
+      "File",
+      "Edit",
+      "View",
+      "Terminal",
+      "Window",
+      "Help",
+    ]);
+    expect(spec.map(submenu => submenu.role)).toEqual([
+      "app",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "window",
+      "help",
+    ]);
+  });
+
+  test("labels the app menu with the product-name argument", () => {
+    expect(buildNativeMenuSpec("Typsastra Dev")[0].label).toBe("Typsastra Dev");
+  });
+
+  test("declares only well-formed, non-bare accelerators", () => {
+    for (const submenu of spec) {
+      for (const node of submenu.nodes) {
+        if ("accelerator" in node && node.accelerator !== undefined) {
+          expect(node.accelerator).toMatch(acceleratorPattern);
+          expect(node.accelerator).not.toMatch(/^(CmdOrCtrl|Alt|Shift)$/);
+        }
+      }
+    }
+  });
+
+  test("scopes exactly the fourteen workspace-dependent menu ids", () => {
+    expect(workspaceScopedMenuIds(spec)).toEqual(expectedWorkspaceScoped);
+  });
+
+  test("keeps the dynamic recent projects entry accelerator-free", () => {
+    const fileMenu = spec.find(submenu => submenu.label === "File");
+    expect(fileMenu?.nodes[3]).toEqual({ kind: "recent-placeholder" });
+    for (const submenu of spec) {
+      for (const node of submenu.nodes) {
+        if (node.kind === "recent-placeholder") {
+          expect("accelerator" in node).toBe(false);
+        }
+      }
+    }
+  });
+
+  test("tracks the installed state behind a Tauri-free flag", () => {
+    expect(nativeAppMenuOwnsShortcuts()).toBe(false);
+    setNativeAppMenuInstalled(true);
+    expect(nativeAppMenuOwnsShortcuts()).toBe(true);
+    setNativeAppMenuInstalled(false);
+    expect(nativeAppMenuOwnsShortcuts()).toBe(false);
+  });
+});
+
+describe("native menu element drift", () => {
+  test("every spec element exists in the markup and is bound", async () => {
+    const html = await source("../index.html");
+    const events = await source("../src/ui/appEventBindings.ts");
+    const settings = await source("../src/settingsController.ts");
+
+    for (const elementId of nativeMenuElementIds(spec)) {
+      expect(html).toContain(`id="${elementId}"`);
+      const boundInEvents = events.includes(`getElementById("${elementId}")`);
+      const boundInSettings = settings.includes(`getElementById("${elementId}")`);
+      expect(boundInEvents || boundInSettings).toBe(true);
+    }
+  });
+
+  test("every bound menu action is in the spec or consciously omitted", async () => {
+    const events = await source("../src/ui/appEventBindings.ts");
+    const bound = new Set(
+      [...events.matchAll(/getElementById\("(action-[a-z-]+)"\)/g)].map(match => match[1])
+    );
+    const specIds = new Set(nativeMenuElementIds(spec));
+    const omissionAllowlist = new Map([
+      ["action-undo", "Predefined Edit role"],
+      ["action-redo", "Predefined Edit role"],
+      ["action-exit", "Custom Quit item"],
+      ["action-open-recent", "HTML-only trigger"],
+    ]);
+
+    for (const id of bound) {
+      if (specIds.has(id)) continue;
+      expect(omissionAllowlist.has(id)).toBe(true);
+    }
+    expect(bound.size).toBeGreaterThan(0);
+  });
+
+  test("does not port the retired layout toggle", () => {
+    expect(JSON.stringify(spec)).not.toContain("action-toggle-layout");
+  });
+});
+
+describe("native menu installation drift", () => {
+  test("guards against the macOS titlebar simulation and preview mode", async () => {
+    const native = await source("../src/platform/nativeAppMenu.ts");
+    expect(native).toContain("!state.simulated");
+    expect(native).toContain('get("mode") !== "preview"');
+  });
+
+  test("reveals the HTML bar only after a successful install", async () => {
+    const native = await source("../src/platform/nativeAppMenu.ts");
+    const css = await source("../src/style.css");
+    expect(native).toContain('classList.add("native-app-menu")');
+    expect(native).toContain("setNativeAppMenuInstalled(true)");
+    expect(css).toMatch(/html\.native-app-menu #app-menus\s*\{\s*display:\s*none\s*!important;/);
+  });
+
+  test("keeps the HTML menu bar as the Windows and Linux fallback", async () => {
+    const html = await source("../index.html");
+    expect(html).toContain('id="app-menus"');
+  });
+
+  test("gates JavaScript shortcuts once the native menu owns them", async () => {
+    const events = await source("../src/ui/appEventBindings.ts");
+    const settings = await source("../src/settingsController.ts");
+    const specSource = await source("../src/platform/nativeAppMenuSpec.ts");
+
+    expect(specSource).toContain("export function nativeAppMenuOwnsShortcuts");
+    expect(events).toContain("nativeAppMenuOwnsShortcuts()");
+    expect(settings).toContain("nativeAppMenuOwnsShortcuts()");
+  });
+
+  test("gates every individual shortcut branch the native menu takes over", async () => {
+    const lines = (await source("../src/ui/appEventBindings.ts")).split("\n");
+
+    /** The `if (` line enclosing the first occurrence of `marker`. */
+    const enclosingBranch = (marker: string): string => {
+      const index = lines.findIndex(line => line.includes(marker));
+      expect(index).toBeGreaterThanOrEqual(0);
+      for (let cursor = index; cursor >= 0; cursor -= 1) {
+        if (lines[cursor].trimStart().startsWith("if (")) return lines[cursor];
+      }
+      return "";
+    };
+
+    // Every accelerator the native macOS menu declares must be gated here, or it
+    // fires twice on macOS. The inner Mod+S branch sits inside the actionByKey block.
+    const gatedMarkers = [
+      'keyCode === "KeyF"',   // Shift+CmdOrCtrl+F  Format Document
+      'keyCode === "KeyS"',   // Shift+CmdOrCtrl+S  Save As
+      'keyCode === "KeyT"',   // Shift+CmdOrCtrl+T  Editor Toolbar
+      "const actionByKey",    // Mod+O/N/B/E/Q/Backquote and Mod+S
+      'keyCode === "KeyZ"',   // Alt+Z              Word Wrap
+    ];
+    for (const marker of gatedMarkers) {
+      expect(enclosingBranch(marker)).toContain("nativeAppMenuOwnsShortcuts()");
+    }
+
+    const gateCount = [...(lines.join("\n")).matchAll(/nativeAppMenuOwnsShortcuts\(\)/g)].length;
+    expect(gateCount).toBeGreaterThanOrEqual(gatedMarkers.length);
+  });
+
+  test("gates the settings accelerator without disabling Escape-to-close", async () => {
+    const settings = await source("../src/settingsController.ts");
+    const commaBranch = settings.split("\n").find(line => line.includes('event.code === "Comma"'));
+    expect(commaBranch).toBeDefined();
+    expect(commaBranch).toContain("nativeAppMenuOwnsShortcuts()");
+    // Escape must stay ungated so the dialog still closes under a native menu.
+    const escapeBranch = settings.split("\n").find(line => line.includes('event.key === "Escape"'));
+    expect(escapeBranch).toBeDefined();
+    expect(escapeBranch).not.toContain("nativeAppMenuOwnsShortcuts()");
+  });
+
+  test("restores focus safely when the About trigger is hidden by a native menu", async () => {
+    const events = await source("../src/ui/appEventBindings.ts");
+    const bindAbout = events.slice(
+      events.indexOf("function bindAboutDialog()"),
+      events.indexOf("function bindMenuDropdowns()")
+    );
+    expect(bindAbout).toContain("getClientRects().length > 0");
+    expect(bindAbout).toContain("focusBeforeAbout");
+    expect(bindAbout).not.toMatch(/\n\s*aboutAction\?\.focus\(\);/);
+  });
+});
