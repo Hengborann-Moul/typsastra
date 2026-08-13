@@ -140,6 +140,7 @@ export class TypsastraWorkspaceController {
     // This property is consumed dynamically by the temporary lifecycle proxy.
     void this.inspectedPreviewRoots;
     void this.lastPreviewRenderMode;
+    void this.finishEditorTextPresentation;
     const root = this;
     return new Proxy({} as WorkspaceLifecycleDependencies, {
       get(_target, property) {
@@ -169,6 +170,11 @@ export class TypsastraWorkspaceController {
     wysiwymMarkup: () => this.mapWysiwymToMarkup(),
     renderTabs: () => this.renderEditorTabs(),
     saveWorkspaceState: () => this.saveWorkspaceState(),
+    logSyntax: message => this.appendDeveloperLog({
+      kind: "info",
+      source: "editor syntax",
+      message,
+    }),
   });
   private readonly editorFileContentController = new EditorFileContentController({
     normalizeFoldRanges: (value, docLength) => this.normalizeFoldRanges(value, docLength),
@@ -212,6 +218,12 @@ export class TypsastraWorkspaceController {
     imagePreview: () => this.imagePreviewController,
     previewFrame: () => this.previewFrame,
     activeMode: () => this.activeMode,
+    workspaceLoading: () => this.workspaceLoading,
+    logSyntax: message => this.appendDeveloperLog({
+      kind: "info",
+      source: "editor syntax",
+      message,
+    }),
     updatePreviewActionsToolbar: path => this.updatePreviewActionsToolbar(path),
     renderNonTextPlaceholder: (path, unsupported) => this.renderNonTextEditorPlaceholder(path, unsupported),
     renderInteractiveImageViewer: source => this.renderInteractiveImageViewer(source),
@@ -1882,6 +1894,10 @@ export class TypsastraWorkspaceController {
 
   private restoreEditorTabViewport(tab: EditorTab, path: string): Promise<void> {
     return this.editorTabStateController.restoreViewport(tab, path);
+  }
+
+  private finishEditorTextPresentation(path: string): void {
+    this.editorTabPresentationController.finishTextPresentation(path);
   }
 
   private restoreTabFoldState(tab: EditorTab): void {

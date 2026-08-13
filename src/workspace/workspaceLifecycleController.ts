@@ -152,6 +152,7 @@ export interface WorkspaceLifecycleOperations {
   currentEditorSettingsEffects(): readonly StateEffect<unknown>[];
   applyFoldRanges(ranges: EditorFoldRange[]): void;
   mapMarkupToWysiwym(markup: string): void;
+  finishEditorTextPresentation(path: string): void;
 }
 
 /**
@@ -368,32 +369,97 @@ export class WorkspaceLifecycleController {
       await app.editorFontManager.ready();
       app.workspaceLoading = false;
       app.updateWorkspaceViewportVisibility();
-      this.restoreStartupViewport();
+      await this.restoreStartupViewport();
     }
     void this.startServices(selected);
   }
 
-  private restoreStartupViewport(): void {
+  private async restoreStartupViewport(): Promise<void> {
     const app = this.app;
     const activeTab = app.getActiveTab();
-    if (!activeTab || (activeTab.scrollTop === undefined && activeTab.scrollLeft === undefined)) return;
+    if (!activeTab || !app.activeFilePath) return;
     const activePath = activeTab.path;
+    if (!activeTab.contentLoaded) {
+      app.appendDeveloperLog({
+        kind: "info",
+        source: "editor syntax",
+        message: `Startup viewport restoration deferred until guarded file confirmation: ` +
+          `path=${activePath}; savedScroll=${(activeTab.scrollTop ?? 0).toFixed(1)}:` +
+          `${(activeTab.scrollLeft ?? 0).toFixed(1)}.`,
+      });
+      return;
+    }
     const targetScrollTop = activeTab.scrollTop ?? 0;
     const targetScrollLeft = activeTab.scrollLeft ?? 0;
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        if (!app.activeFilePath || filePathKey(app.activeFilePath) !== filePathKey(activePath)) return;
-        app.editorInstance.requestMeasure();
-        app.editorInstance.scrollDOM.scrollTop = targetScrollTop;
-        app.editorInstance.scrollDOM.scrollLeft = targetScrollLeft;
-        app.editorController.updateCaretMarker();
-        app.appendDeveloperLog({
-          kind: "info",
-          source: "editor state",
-          message: `Restored startup editor viewport: top=${targetScrollTop.toFixed(0)}, left=${targetScrollLeft.toFixed(0)}`,
-        });
+    const stillActive = () => !!app.activeFilePath
+      && filePathKey(app.activeFilePath) === filePathKey(activePath);
+    const viewportSnapshot = () => {
+      const ranges = app.editorInstance.visibleRanges
+        .map(range => `${range.from}:${range.to}`)
+        .join(",") || "none";
+      const scroll = app.editorInstance.scrollDOM;
+      return `actualScroll=${scroll.scrollTop.toFixed(1)}:${scroll.scrollLeft.toFixed(1)}; ` +
+        `viewport=${ranges}; scrollClient=${scroll.clientWidth}x${scroll.clientHeight}; ` +
+        `editorRect=${app.editorInstance.dom.clientWidth}x${app.editorInstance.dom.clientHeight}`;
+    };
+    app.appendDeveloperLog({
+      kind: "info",
+      source: "editor syntax",
+      message: `Startup viewport restoration started: path=${activePath}; ` +
+        `targetScroll=${targetScrollTop.toFixed(1)}:${targetScrollLeft.toFixed(1)}; ${viewportSnapshot()}.`,
+    });
+    const nextFrame = () => new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+    const restoreMeasuredViewport = (pass: number) => new Promise<void>(resolve => {
+      app.editorInstance.requestMeasure({
+        read: () => null,
+        write: () => {
+          if (stillActive()) {
+            app.editorInstance.scrollDOM.scrollTop = targetScrollTop;
+            app.editorInstance.scrollDOM.scrollLeft = targetScrollLeft;
+          }
+          app.appendDeveloperLog({
+            kind: "info",
+            source: "editor syntax",
+            message: `Startup viewport restoration pass ${pass} written: path=${activePath}; ` +
+              `stillActive=${stillActive()}; ${viewportSnapshot()}.`,
+          });
+          resolve();
+        },
       });
     });
+
+    // The editor was measured once while hidden during tab activation. Give
+    // the now-visible workspace a frame, then restore twice across a complete
+    // measure cycle. This makes CodeMirror's visibleRanges describe the saved
+    // viewport before the syntax presentation gate starts parsing it.
+    await nextFrame();
+    await restoreMeasuredViewport(1);
+    await nextFrame();
+    await restoreMeasuredViewport(2);
+    if (!stillActive()) {
+      app.appendDeveloperLog({
+        kind: "info",
+        source: "editor syntax",
+        message: `Startup viewport restoration abandoned because the active file changed: path=${activePath}.`,
+      });
+      return;
+    }
+
+    app.editorController.updateCaretMarker();
+    app.appendDeveloperLog({
+      kind: "info",
+      source: "editor syntax",
+      message: `Startup viewport restoration completed; releasing syntax presentation: ` +
+        `path=${activePath}; ${viewportSnapshot()}.`,
+    });
+    app.finishEditorTextPresentation(activePath);
+    if (activeTab.scrollTop !== undefined || activeTab.scrollLeft !== undefined) {
+      app.appendDeveloperLog({
+        kind: "info",
+        source: "editor state",
+        message: `Restored startup editor viewport: top=${targetScrollTop.toFixed(0)}, left=${targetScrollLeft.toFixed(0)}`,
+      });
+    }
   }
 
   async startServices(selected: string): Promise<void> {

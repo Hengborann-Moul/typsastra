@@ -20,6 +20,7 @@ export interface EditorTabStateDependencies {
   wysiwymMarkup(): string;
   renderTabs(): void;
   saveWorkspaceState(): void | Promise<void>;
+  logSyntax(message: string): void;
 }
 
 /** Owns persisted editor-tab state, viewport restoration, folds, and dirty promotion. */
@@ -65,20 +66,33 @@ export class EditorTabStateController {
 
   async restoreViewport(tab: EditorTab, path: string): Promise<void> {
     const editor = this.deps.editor();
+    const snapshot = () => {
+      const ranges = editor.visibleRanges.map(range => `${range.from}:${range.to}`).join(",") || "none";
+      return `actualScroll=${editor.scrollDOM.scrollTop.toFixed(1)}:${editor.scrollDOM.scrollLeft.toFixed(1)}; ` +
+        `viewport=${ranges}; scrollClient=${editor.scrollDOM.clientWidth}x${editor.scrollDOM.clientHeight}; ` +
+        `editorRect=${editor.dom.clientWidth}x${editor.dom.clientHeight}`;
+    };
+    this.deps.logSyntax(
+      `Tab viewport restoration started: path=${path}; contentLoaded=${tab.contentLoaded}; ` +
+      `savedScroll=${(tab.scrollTop ?? 0).toFixed(1)}:${(tab.scrollLeft ?? 0).toFixed(1)}; ` +
+      `hasScrollSnapshot=${Boolean(tab.scrollSnapshot)}; ${snapshot()}.`,
+    );
     if (tab.scrollSnapshot) {
       editor.dispatch({ effects: tab.scrollSnapshot });
       await this.waitForViewportMeasure(editor);
+      this.deps.logSyntax(`Tab viewport restored from snapshot: path=${path}; ${snapshot()}.`);
       return;
     }
     if (tab.scrollTop === undefined && tab.scrollLeft === undefined) {
       await this.waitForViewportMeasure(editor);
+      this.deps.logSyntax(`Tab viewport measured without a saved offset: path=${path}; ${snapshot()}.`);
       return;
     }
 
     const targetScrollTop = tab.scrollTop ?? 0;
     const targetScrollLeft = tab.scrollLeft ?? 0;
     const restoreKey = { restoredPath: path };
-    const scheduleRestore = (): Promise<void> => new Promise(resolve => {
+    const scheduleRestore = (pass: number): Promise<void> => new Promise(resolve => {
       editor.requestMeasure({
         key: restoreKey,
         read: () => null,
@@ -88,13 +102,18 @@ export class EditorTabStateController {
             editor.scrollDOM.scrollTop = targetScrollTop;
             editor.scrollDOM.scrollLeft = targetScrollLeft;
           }
+          this.deps.logSyntax(
+            `Tab viewport restoration pass ${pass} written: path=${path}; ` +
+            `active=${activeFilePath ?? "none"}; ${snapshot()}.`,
+          );
           resolve();
         },
       });
     });
-    await scheduleRestore();
+    await scheduleRestore(1);
     await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
-    await scheduleRestore();
+    await scheduleRestore(2);
+    this.deps.logSyntax(`Tab viewport restoration completed: path=${path}; ${snapshot()}.`);
   }
 
   private waitForViewportMeasure(editor: EditorView): Promise<void> {
