@@ -2860,6 +2860,13 @@
                                 <button id="settings-storage-reveal" class="settings-secondary-button" type="button">Reveal folder</button>
                             </div>
                             <p class="settings-help">Monitoring is read-only. Typsastra does not delete the complete WebView profile or clear persistent application state.</p>
+                            <h4 class="settings-storage-heading">Current project render cache</h4>
+                            <div id="settings-render-cache-status" class="settings-notice" role="status" aria-live="polite">Open a project to inspect its render cache.</div>
+                            <div class="settings-storage-summary" aria-label="Project render cache storage summary">
+                                <div><small>Hard-linked assets</small><strong id="settings-render-cache-linked">No project</strong></div>
+                                <div><small>Real copied assets</small><strong id="settings-render-cache-copied">No project</strong></div>
+                            </div>
+                            <p class="settings-help">Hard-linked paths share the source file's disk allocation. Only real copied assets consume additional file-data storage.</p>
                             <h4 class="settings-storage-heading">Scaled-font cache</h4>
                             <div id="settings-scaled-font-status" class="settings-notice" role="status" aria-live="polite">Select Storage to inspect cached font variants.</div>
                             <div class="settings-field settings-storage-path-field">

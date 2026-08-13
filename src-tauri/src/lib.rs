@@ -649,6 +649,11 @@ fn get_webview_storage_status(
 }
 
 #[tauri::command]
+fn inspect_render_cache_storage(cache_root: String) -> render_prepare::RenderCacheStorageReport {
+    render_prepare::inspect_render_cache_storage(std::path::Path::new(&cache_root))
+}
+
+#[tauri::command]
 async fn scan_webview_storage(
     app_handle: tauri::AppHandle,
     full: bool,
@@ -5034,6 +5039,7 @@ pub fn run() {
             stop_tinymist_lsp,
             send_lsp_message,
             prepare_render_project,
+            inspect_render_cache_storage,
             prepare_render_file,
             cancel_render_preparation,
             start_draft_thumbnail_generation,

@@ -17,6 +17,56 @@ const RENDER_CACHE_LAYOUT_VERSION: &str = "3-flat-preview-output";
 const RENDER_CACHE_OWNER_SCHEMA_VERSION: u32 = 1;
 const RENDER_CACHE_OWNER_FILE: &str = "workspace-owner.json";
 const DRAFT_PREPARATION_CACHE_VERSION: u32 = 2;
+const RENDER_CACHE_STORAGE_REPORT_VERSION: u32 = 1;
+const RENDER_CACHE_STORAGE_REPORT_FILE: &str = "render-storage.json";
+const LARGE_COPY_FALLBACK_THRESHOLD_BYTES: u64 = 64 * 1024 * 1024;
+const LARGE_COPY_FALLBACK_ERROR_PREFIX: &str = "TYPSASTRA_LARGE_ASSET_COPY_FALLBACK:";
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct RenderCacheStorageReport {
+    pub version: u32,
+    pub project_root: PathBuf,
+    pub cache_root: PathBuf,
+    pub recorded_at_ms: u64,
+    pub hard_linked_bytes: u64,
+    pub copied_bytes: u64,
+    pub hard_linked_files: usize,
+    pub copied_files: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AssetStorageKind {
+    HardLinked,
+    Copied,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct AssetSyncResult {
+    changed: bool,
+    bytes: u64,
+    kind: AssetStorageKind,
+}
+
+#[derive(Debug)]
+struct PendingAssetCopy {
+    source: PathBuf,
+    destination: PathBuf,
+    bytes: u64,
+}
+
+enum AssetSyncOutcome {
+    Ready(AssetSyncResult),
+    CopyRequired(PendingAssetCopy),
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LargeCopyFallbackNotice {
+    bytes: u64,
+    files: usize,
+    threshold_bytes: u64,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -63,6 +113,8 @@ pub struct RenderPrepareOptions {
     pub generate_source_map: bool,
     #[serde(default)]
     pub preview_content_mode: PreviewContentMode,
+    #[serde(default)]
+    pub allow_large_copy_fallback: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -75,6 +127,7 @@ pub struct RenderPrepareResult {
     pub draft_diagnostics: Vec<DraftImageDiagnostic>,
     pub draft_cache_hits: usize,
     pub draft_reachable_files: Vec<PathBuf>,
+    pub storage: RenderCacheStorageReport,
     pub timings: RenderPrepareTimings,
 }
 
@@ -130,6 +183,14 @@ pub fn mirror_project_cancellable(
     let mut asset_sync_ms = 0.0;
     let mut typ_files = 0usize;
     let mut asset_files = 0usize;
+    let mut storage = RenderCacheStorageReport {
+        version: RENDER_CACHE_STORAGE_REPORT_VERSION,
+        project_root: project_root.clone(),
+        cache_root: cache_root.clone(),
+        recorded_at_ms: 0,
+        ..RenderCacheStorageReport::default()
+    };
+    let mut pending_asset_copies = Vec::new();
 
     let discovery_started_at = Instant::now();
     let mut files_to_process = Vec::new();
@@ -206,11 +267,26 @@ pub fn mirror_project_cancellable(
             } else {
                 asset_files += 1;
                 let asset_started_at = Instant::now();
-                match copy_asset_to_cache(&src_path, &dest_path) {
-                    Ok(copied) => {
-                        if copied {
+                match prepare_asset_in_cache(&src_path, &dest_path) {
+                    Ok(AssetSyncOutcome::Ready(result)) => {
+                        if result.changed {
                             changed_files.push(dest_path);
                         }
+                        match result.kind {
+                            AssetStorageKind::HardLinked => {
+                                storage.hard_linked_files += 1;
+                                storage.hard_linked_bytes =
+                                    storage.hard_linked_bytes.saturating_add(result.bytes);
+                            }
+                            AssetStorageKind::Copied => {
+                                storage.copied_files += 1;
+                                storage.copied_bytes =
+                                    storage.copied_bytes.saturating_add(result.bytes);
+                            }
+                        }
+                    }
+                    Ok(AssetSyncOutcome::CopyRequired(pending)) => {
+                        pending_asset_copies.push(pending);
                     }
                     Err(err) => {
                         warnings.push(RenderPrepareWarning {
@@ -223,6 +299,26 @@ pub fn mirror_project_cancellable(
             }
         }
     }
+    if let Some(notice) =
+        large_copy_fallback_notice(&pending_asset_copies, options.allow_large_copy_fallback)
+    {
+        let payload = serde_json::to_string(&notice).map_err(|error| error.to_string())?;
+        return Err(format!("{LARGE_COPY_FALLBACK_ERROR_PREFIX}{payload}"));
+    }
+    for pending in pending_asset_copies {
+        if let Some(parent) = pending.destination.parent() {
+            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        fs::copy(&pending.source, &pending.destination).map_err(|error| {
+            format!(
+                "Failed to copy {} into the render cache: {error}",
+                pending.source.display()
+            )
+        })?;
+        changed_files.push(pending.destination);
+        storage.copied_files += 1;
+        storage.copied_bytes = storage.copied_bytes.saturating_add(pending.bytes);
+    }
 
     let generated_entry_file = render_dir.join(
         options
@@ -232,6 +328,12 @@ pub fn mirror_project_cancellable(
     );
     let mut draft_reachable_files = draft_reachable_files.into_iter().collect::<Vec<_>>();
     draft_reachable_files.sort();
+    storage.recorded_at_ms = std::time::SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .min(u64::MAX as u128) as u64;
+    write_render_cache_storage_report(cache_root, &storage)?;
 
     Ok(RenderPrepareResult {
         generated_entry_file,
@@ -241,6 +343,7 @@ pub fn mirror_project_cancellable(
         draft_diagnostics,
         draft_cache_hits,
         draft_reachable_files,
+        storage,
         timings: RenderPrepareTimings {
             total_ms: total_started_at.elapsed().as_secs_f64() * 1_000.0,
             setup_ms,
@@ -666,7 +769,7 @@ fn walk_project_dir(
     Ok(())
 }
 
-fn copy_asset_to_cache(src: &Path, dest: &Path) -> Result<bool, std::io::Error> {
+fn prepare_asset_in_cache(src: &Path, dest: &Path) -> Result<AssetSyncOutcome, std::io::Error> {
     // Cache artifacts must remain regular files. A symbolic link back into the
     // workspace can make Explorer and backup/copy tools follow the link while
     // duplicating a project, causing the operation to hang or recurse.
@@ -687,7 +790,15 @@ fn copy_asset_to_cache(src: &Path, dest: &Path) -> Result<bool, std::io::Error> 
                     (src_meta.modified(), dest_meta.modified())
                 {
                     if src_modified <= dest_modified {
-                        return Ok(false);
+                        return Ok(AssetSyncOutcome::Ready(AssetSyncResult {
+                            changed: false,
+                            bytes: src_meta.len(),
+                            kind: if same_file::is_same_file(src, dest).unwrap_or(false) {
+                                AssetStorageKind::HardLinked
+                            } else {
+                                AssetStorageKind::Copied
+                            },
+                        }));
                     }
                 }
             }
@@ -698,10 +809,64 @@ fn copy_asset_to_cache(src: &Path, dest: &Path) -> Result<bool, std::io::Error> 
     let source_is_symlink = fs::symlink_metadata(src)
         .map(|metadata| metadata.file_type().is_symlink())
         .unwrap_or(false);
+    let bytes = fs::metadata(src)?.len();
     if source_is_symlink || fs::hard_link(src, dest).is_err() {
-        fs::copy(src, dest)?;
+        return Ok(AssetSyncOutcome::CopyRequired(PendingAssetCopy {
+            source: src.to_path_buf(),
+            destination: dest.to_path_buf(),
+            bytes,
+        }));
     }
-    Ok(true)
+    Ok(AssetSyncOutcome::Ready(AssetSyncResult {
+        changed: true,
+        bytes,
+        kind: AssetStorageKind::HardLinked,
+    }))
+}
+
+fn large_copy_fallback_notice(
+    pending: &[PendingAssetCopy],
+    approved: bool,
+) -> Option<LargeCopyFallbackNotice> {
+    let bytes = pending
+        .iter()
+        .fold(0u64, |total, asset| total.saturating_add(asset.bytes));
+    (bytes > LARGE_COPY_FALLBACK_THRESHOLD_BYTES && !approved).then_some(LargeCopyFallbackNotice {
+        bytes,
+        files: pending.len(),
+        threshold_bytes: LARGE_COPY_FALLBACK_THRESHOLD_BYTES,
+    })
+}
+
+fn render_cache_storage_report_path(cache_root: &Path) -> PathBuf {
+    cache_root.join(RENDER_CACHE_STORAGE_REPORT_FILE)
+}
+
+fn write_render_cache_storage_report(
+    cache_root: &Path,
+    report: &RenderCacheStorageReport,
+) -> Result<(), String> {
+    let path = render_cache_storage_report_path(cache_root);
+    let staged = path.with_extension("json.tmp");
+    let bytes = serde_json::to_vec_pretty(report).map_err(|error| error.to_string())?;
+    fs::write(&staged, bytes).map_err(|error| error.to_string())?;
+    if path.exists() {
+        fs::remove_file(&path).map_err(|error| error.to_string())?;
+    }
+    fs::rename(staged, path).map_err(|error| error.to_string())
+}
+
+pub fn inspect_render_cache_storage(cache_root: &Path) -> RenderCacheStorageReport {
+    let path = render_cache_storage_report_path(cache_root);
+    fs::read(path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<RenderCacheStorageReport>(&bytes).ok())
+        .filter(|report| report.version == RENDER_CACHE_STORAGE_REPORT_VERSION)
+        .unwrap_or_else(|| RenderCacheStorageReport {
+            version: RENDER_CACHE_STORAGE_REPORT_VERSION,
+            cache_root: cache_root.to_path_buf(),
+            ..RenderCacheStorageReport::default()
+        })
 }
 
 struct ProcessedTypFile {
@@ -1118,6 +1283,7 @@ mod tests {
             cache_root: workspace.join(".typsastra/cache"),
             generate_source_map: true,
             preview_content_mode: PreviewContentMode::Normal,
+            allow_large_copy_fallback: false,
         };
 
         let error = mirror_project_cancellable(&options, None, || false).unwrap_err();
@@ -1146,6 +1312,7 @@ mod tests {
             cache_root: cache_root.clone(),
             generate_source_map: true,
             preview_content_mode: PreviewContentMode::Normal,
+            allow_large_copy_fallback: false,
         };
 
         let prepared = mirror_project_cancellable(&options, None, || false).unwrap();
@@ -1157,6 +1324,12 @@ mod tests {
         assert!(cache_root
             .join("render/Author/Folder/SubFolder 1/file1.typ")
             .is_file());
+        assert_eq!(prepared.storage.hard_linked_bytes, 0);
+        assert_eq!(prepared.storage.copied_bytes, 0);
+        assert_eq!(
+            inspect_render_cache_storage(&cache_root).recorded_at_ms,
+            prepared.storage.recorded_at_ms
+        );
     }
 
     #[test]
@@ -1177,6 +1350,7 @@ mod tests {
             cache_root: cache_root.clone(),
             generate_source_map: true,
             preview_content_mode: PreviewContentMode::Normal,
+            allow_large_copy_fallback: false,
         };
 
         let error = prepare_single_in_memory_file(
@@ -1199,7 +1373,15 @@ mod tests {
         fs::write(&source, b"%PDF-test").unwrap();
         fs::create_dir_all(cache_file.parent().unwrap()).unwrap();
 
-        assert!(copy_asset_to_cache(&source, &cache_file).unwrap());
+        let outcome = prepare_asset_in_cache(&source, &cache_file).unwrap();
+        assert!(matches!(
+            outcome,
+            AssetSyncOutcome::Ready(AssetSyncResult {
+                changed: true,
+                bytes: 9,
+                kind: AssetStorageKind::HardLinked,
+            })
+        ));
         assert_eq!(fs::read(&cache_file).unwrap(), b"%PDF-test");
         let metadata = fs::symlink_metadata(&cache_file).unwrap();
         assert!(metadata.file_type().is_file());
@@ -1223,12 +1405,43 @@ mod tests {
         fs::write(&source, b"original").unwrap();
         fs::create_dir_all(cache_file.parent().unwrap()).unwrap();
 
-        assert!(copy_asset_to_cache(&source, &cache_file).unwrap());
+        let outcome = prepare_asset_in_cache(&source, &cache_file).unwrap();
+        assert!(matches!(
+            outcome,
+            AssetSyncOutcome::Ready(AssetSyncResult {
+                changed: true,
+                bytes: 8,
+                kind: AssetStorageKind::HardLinked,
+            })
+        ));
         fs::write(&source, b"updated").unwrap();
         assert_eq!(fs::read(&cache_file).unwrap(), b"updated");
 
         fs::remove_file(&cache_file).unwrap();
         assert_eq!(fs::read(&source).unwrap(), b"updated");
+    }
+
+    #[test]
+    fn requires_explicit_approval_before_large_real_copy_fallbacks() {
+        let pending = vec![
+            PendingAssetCopy {
+                source: PathBuf::from("one"),
+                destination: PathBuf::from("cache/one"),
+                bytes: 40 * 1024 * 1024,
+            },
+            PendingAssetCopy {
+                source: PathBuf::from("two"),
+                destination: PathBuf::from("cache/two"),
+                bytes: 25 * 1024 * 1024,
+            },
+        ];
+
+        let notice = large_copy_fallback_notice(&pending, false).unwrap();
+        assert_eq!(notice.bytes, 65 * 1024 * 1024);
+        assert_eq!(notice.files, 2);
+        assert_eq!(notice.threshold_bytes, 64 * 1024 * 1024);
+        assert!(large_copy_fallback_notice(&pending, true).is_none());
+        assert!(large_copy_fallback_notice(&pending[..1], false).is_none());
     }
 
     #[test]
@@ -1379,6 +1592,7 @@ mod tests {
             cache_root,
             generate_source_map: true,
             preview_content_mode: PreviewContentMode::Normal,
+            allow_large_copy_fallback: false,
         };
 
         process_typ_file(&source, &render, relative, &maps, &options, None).unwrap();
@@ -1419,6 +1633,7 @@ mod tests {
             cache_root: cache_root.clone(),
             generate_source_map: true,
             preview_content_mode: PreviewContentMode::Normal,
+            allow_large_copy_fallback: false,
         };
 
         mirror_project_cancellable(&options, None, || false).unwrap();
@@ -1468,6 +1683,7 @@ mod tests {
             cache_root: cache_root.clone(),
             generate_source_map: true,
             preview_content_mode: PreviewContentMode::Draft,
+            allow_large_copy_fallback: false,
         };
 
         let first = mirror_project_cancellable(&options, None, || false).unwrap();
@@ -1531,6 +1747,7 @@ mod tests {
             cache_root,
             generate_source_map: true,
             preview_content_mode: PreviewContentMode::Draft,
+            allow_large_copy_fallback: false,
         };
 
         let prepared = mirror_project_cancellable(&options, None, || false).unwrap();
@@ -1578,6 +1795,7 @@ mod tests {
             cache_root: cache_root.clone(),
             generate_source_map: true,
             preview_content_mode: PreviewContentMode::Draft,
+            allow_large_copy_fallback: false,
         };
 
         let prepared = mirror_project_cancellable(&options, None, || false).unwrap();
@@ -1665,6 +1883,7 @@ mod tests {
             cache_root: cache_root.clone(),
             generate_source_map: true,
             preview_content_mode: PreviewContentMode::Draft,
+            allow_large_copy_fallback: false,
         };
 
         let prepared = mirror_project_cancellable(&options, None, || false).unwrap();
@@ -1707,6 +1926,7 @@ mod tests {
             cache_root: workspace.path().join(".typsastra/cache"),
             generate_source_map: true,
             preview_content_mode: PreviewContentMode::Draft,
+            allow_large_copy_fallback: false,
         };
         let mut sourcemap = SourceMap::new("main.typ".into(), "render/main.typ".into());
 
@@ -1743,6 +1963,7 @@ mod tests {
             cache_root: cache_root.clone(),
             generate_source_map: true,
             preview_content_mode: PreviewContentMode::Normal,
+            allow_large_copy_fallback: false,
         };
 
         let prepared_file =

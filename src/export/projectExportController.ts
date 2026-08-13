@@ -2,6 +2,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { message, save } from "@tauri-apps/plugin-dialog";
 import type { LspStatus } from "../compiler/lsp";
 import { filePathKey, relativeFilePath } from "../platform/paths";
+import {
+  prepareRenderProjectWithCopyGuard,
+  RenderCacheCopyCancelled,
+} from "../preview/renderCacheCopyGuard";
 
 export type ExportableEditorTab = {
   path: string;
@@ -81,7 +85,7 @@ export class ProjectExportController {
           previewContentMode: "normal"
         };
 
-        const result = await invoke<{ generatedEntryFile: string }>("prepare_render_project", { options });
+        const result = await prepareRenderProjectWithCopyGuard<{ generatedEntryFile: string }>(options);
         const tabsToOverlay = this.deps.openTabs()
           .filter(tab => tab.contentLoaded)
           .filter(tab => tab.path.toLowerCase().endsWith(".typ"))
@@ -111,6 +115,10 @@ export class ProjectExportController {
       await invoke("move_to_trash", { path: pdfPath });
       this.deps.setLspStatus({ kind: "preview-ready", message: `Exported to ${exportPdfPath}` });
     } catch (error) {
+      if (error instanceof RenderCacheCopyCancelled) {
+        this.deps.setLspStatus({ kind: "preview-ready", message: "PDF export cancelled" });
+        return;
+      }
       this.deps.setLspStatus({ kind: "error", message: `Export failed: ${error}` });
     } finally {
       this.busy = false;

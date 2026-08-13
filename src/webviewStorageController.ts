@@ -43,6 +43,16 @@ type DismissedWarning = {
   thresholdBytes: number;
 };
 
+type RenderCacheStorageReport = {
+  projectRoot: string;
+  cacheRoot: string;
+  recordedAtMs: number;
+  hardLinkedBytes: number;
+  copiedBytes: number;
+  hardLinkedFiles: number;
+  copiedFiles: number;
+};
+
 const INITIAL_SCAN_DELAY_MS = 60_000;
 const PERIODIC_SCAN_INTERVAL_MS = 30 * 60_000;
 const FULL_SCAN_INTERVAL_MS = 24 * 60 * 60_000;
@@ -55,11 +65,15 @@ const DISMISSED_WARNING_KEY = "typsastra:webview-storage-warning";
 
 export class WebviewStorageController {
   private report: WebviewStorageReport | null = null;
+  private renderCacheReport: RenderCacheStorageReport | null = null;
   private scanInProgress = false;
   private lastActivityAt = Date.now();
   private retryTimer: number | null = null;
 
-  constructor(private readonly isBusy: () => boolean = () => false) {}
+  constructor(
+    private readonly isBusy: () => boolean = () => false,
+    private readonly getCacheRootPath: () => string | null = () => null,
+  ) {}
 
   public initialize(): void {
     this.bindActivityTracking();
@@ -80,6 +94,10 @@ export class WebviewStorageController {
     });
     document.querySelector('[data-settings-panel="storage"]')?.addEventListener("click", () => {
       this.render();
+      void this.loadRenderCacheStatus();
+    });
+    document.addEventListener("typsastra:render-cache-storage-updated", () => {
+      void this.loadRenderCacheStatus();
     });
 
     void this.loadStatus();
@@ -102,11 +120,51 @@ export class WebviewStorageController {
   private async loadStatus(): Promise<void> {
     try {
       this.report = await invoke<WebviewStorageReport>("get_webview_storage_status");
+      await this.loadRenderCacheStatus();
       this.render();
       await this.refreshWarning();
     } catch (error) {
       this.renderError(`Storage status unavailable: ${String(error)}`);
     }
+  }
+
+  private async loadRenderCacheStatus(): Promise<void> {
+    const cacheRoot = this.getCacheRootPath();
+    if (!cacheRoot) {
+      this.renderCacheReport = null;
+      this.renderRenderCacheStatus();
+      return;
+    }
+    try {
+      this.renderCacheReport = await invoke<RenderCacheStorageReport>("inspect_render_cache_storage", {
+        cacheRoot,
+      });
+    } catch (error) {
+      console.warn("Render-cache storage status unavailable.", error);
+      this.renderCacheReport = null;
+    }
+    this.renderRenderCacheStatus();
+  }
+
+  private renderRenderCacheStatus(): void {
+    const status = document.getElementById("settings-render-cache-status");
+    const linked = document.getElementById("settings-render-cache-linked");
+    const copied = document.getElementById("settings-render-cache-copied");
+    if (!status || !linked || !copied) return;
+    const report = this.renderCacheReport;
+    if (!report?.recordedAtMs) {
+      status.textContent = this.getCacheRootPath()
+        ? "The project render cache has not been prepared yet."
+        : "Open a project to inspect its render cache.";
+      linked.textContent = this.getCacheRootPath() ? "Not prepared" : "No project";
+      copied.textContent = this.getCacheRootPath() ? "Not prepared" : "No project";
+      return;
+    }
+    status.textContent = report.copiedBytes > 0
+      ? `${formatBytes(report.copiedBytes)} uses additional disk space; hard-linked assets share source storage.`
+      : "All recorded project assets share source storage through hard links.";
+    linked.textContent = `${formatBytes(report.hardLinkedBytes)} · ${report.hardLinkedFiles.toLocaleString()} file${report.hardLinkedFiles === 1 ? "" : "s"}`;
+    copied.textContent = `${formatBytes(report.copiedBytes)} · ${report.copiedFiles.toLocaleString()} file${report.copiedFiles === 1 ? "" : "s"}`;
   }
 
   private needsFullScan(): boolean {

@@ -9,6 +9,7 @@ import type {
   DraftImageDiagnostic,
   PreviewContentMode,
 } from "./draftPreviewController";
+import { prepareRenderProjectWithCopyGuard } from "./renderCacheCopyGuard";
 
 export class PreviewPreparationInterrupted extends Error {
   constructor() {
@@ -132,15 +133,13 @@ export class PdfPreviewPreparationController {
     const entryFile = this.deps.mapToOriginalPath(pinnedMainFilePath);
 
     try {
-      await invoke("prepare_render_project", {
-        options: {
-          enableKhmerZws: this.deps.isKhmerRenderPreparationEnabled(),
-          projectRoot: workspaceRootPath,
-          entryFile,
-          cacheRoot,
-          generateSourceMap: true,
-          previewContentMode: "normal",
-        },
+      await prepareRenderProjectWithCopyGuard({
+        enableKhmerZws: this.deps.isKhmerRenderPreparationEnabled(),
+        projectRoot: workspaceRootPath,
+        entryFile,
+        cacheRoot,
+        generateSourceMap: true,
+        previewContentMode: "normal",
       });
     } catch (error) {
       console.error("Failed to prepare render project:", error);
@@ -181,7 +180,7 @@ export class PdfPreviewPreparationController {
       previewContentMode: contentMode,
     };
     const projectPreparationStartedAt = performance.now();
-    const result = await invoke<RenderPreparationResult>("prepare_render_project", { options });
+    const result = await prepareRenderProjectWithCopyGuard<RenderPreparationResult>(options);
     const projectPreparationMs = performance.now() - projectPreparationStartedAt;
     this.ensureCurrent(preparationRevision);
     const draftAssets = new Map(result.draftAssets.map((asset: DraftImageAsset) => [asset.id, asset]));

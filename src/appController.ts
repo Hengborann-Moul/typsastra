@@ -1235,7 +1235,8 @@ export class TypsastraWorkspaceController {
     || this.projectExportController.isBusy
     || this.settingsController.isLanguageProviderOperationInProgress
     || this.toolchainController.isBusy
-    || this.appUpdateController.isInstalling
+    || this.appUpdateController.isInstalling,
+    () => this.getCacheRootPath(),
   );
   private readonly workspaceResumeController = new WorkspaceResumeController({
     canDeferWordWrap: () => Boolean(this.editorInstance) && this.settingsController.value.editor.wordWrap,

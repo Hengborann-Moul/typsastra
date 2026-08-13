@@ -5318,6 +5318,7 @@ dependencies = [
  "open",
  "reqwest 0.12.28",
  "resvg",
+ "same-file",
  "semver",
  "serde",
  "serde_json",

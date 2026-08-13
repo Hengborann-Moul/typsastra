@@ -26,6 +26,7 @@ import {
   PreviewPreparationInterrupted,
   type PreparedPdfPreview,
 } from "./pdfPreviewPreparationController";
+import { RenderCacheCopyCancelled } from "./renderCacheCopyGuard";
 import {
   activeFileCanRenderPreview,
   previewRefreshStyle,
@@ -479,16 +480,15 @@ export class PdfPreviewRenderController {
       }
       if (
         error instanceof PreviewPreparationInterrupted
+        || error instanceof RenderCacheCopyCancelled
         || (
           this.deps.getPreviewRenderMode() === "on-type"
           && preparationRevision !== this.preparationRevisionValue
         )
       ) {
-        this.deps.log(
-          "info",
-          "preview scheduler",
-          `Render generation ${generation} interrupted by editor input; waiting for the next debounce.`,
-        );
+        this.deps.log("info", "preview scheduler", error instanceof RenderCacheCopyCancelled
+          ? `Render generation ${generation} cancelled because preview-cache copies were not approved.`
+          : `Render generation ${generation} interrupted by editor input; waiting for the next debounce.`);
         return;
       }
       if (generation !== this.generationValue) {

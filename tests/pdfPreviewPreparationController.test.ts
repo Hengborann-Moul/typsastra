@@ -8,7 +8,9 @@ describe("PDF preview preparation controller", () => {
 
     expect(source).toContain("export interface PdfPreviewPreparationDependencies");
     expect(source).toContain("private readonly generatedFilesValue = new Map");
-    expect(source).toContain('invoke<RenderPreparationResult>("prepare_render_project"');
+    expect(source).toContain(
+      "prepareRenderProjectWithCopyGuard<RenderPreparationResult>(options)",
+    );
     expect(source).toContain('invoke<RenderPreparationFileResult>("prepare_render_file"');
     expect(source).toContain("public ensureCurrent(revision: number): void");
     expect(source).not.toContain(": any");
