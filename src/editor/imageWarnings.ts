@@ -86,6 +86,25 @@ class LspErrorMarker extends GutterMarker {
   }
 }
 
+class RelatedErrorMarker extends GutterMarker {
+  constructor(readonly message: string) {
+    super();
+  }
+
+  eq(other: GutterMarker): boolean {
+    return other instanceof RelatedErrorMarker && other.message === this.message;
+  }
+
+  toDOM(): HTMLElement {
+    const marker = document.createElement("span");
+    marker.className = "cm-related-error-marker";
+    marker.appendChild(createAppIcon("circleX", { size: 15 }));
+    marker.title = this.message;
+    marker.setAttribute("aria-label", this.message);
+    return marker;
+  }
+}
+
 class ImageOptimizationSpacerMarker extends GutterMarker {
   toDOM(): HTMLElement {
     const marker = document.createElement("span");
@@ -137,7 +156,11 @@ const sharedWarningGutter = gutter({
     const imageMarkers = view.state.field(imageOptimizationWarningField);
     const diagnostics = view.state.field(editorDiagnosticsStateField, false) ?? [];
 
-    const byLine = new Map<number, { severity: "error" | "image"; message: string; imagePath?: string }>();
+    const byLine = new Map<number, {
+      severity: "error" | "related" | "image";
+      message: string;
+      imagePath?: string;
+    }>();
 
     imageMarkers.between(0, view.state.doc.length, (from, _to, marker) => {
       if (marker instanceof ImageOptimizationMarker) {
@@ -146,19 +169,19 @@ const sharedWarningGutter = gutter({
     });
 
     for (const diagnostic of diagnostics) {
-      if (diagnostic.severity !== "error") continue;
+      if (diagnostic.severity !== "error" && diagnostic.severity !== "related") continue;
 
       const position = Math.max(0, Math.min(diagnostic.from, view.state.doc.length));
       const line = view.state.doc.lineAt(position);
       const existing = byLine.get(line.from);
 
-      if (existing?.severity === "error") {
+      if (existing?.severity === "error" || existing?.severity === diagnostic.severity) {
         if (!existing.message.includes(diagnostic.message)) {
           existing.message += `\n\n${diagnostic.message}`;
         }
-      } else {
+      } else if (diagnostic.severity === "error" || !existing || existing.severity === "image") {
         byLine.set(line.from, {
-          severity: "error",
+          severity: diagnostic.severity,
           message: diagnostic.message
         });
       }
@@ -172,7 +195,9 @@ const sharedWarningGutter = gutter({
         lineFrom,
         marker.severity === "error"
           ? new LspErrorMarker(marker.message)
-          : new ImageOptimizationMarker(marker.message, marker.imagePath)
+          : marker.severity === "related"
+            ? new RelatedErrorMarker(marker.message)
+            : new ImageOptimizationMarker(marker.message, marker.imagePath)
       );
     }
 

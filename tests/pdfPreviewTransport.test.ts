@@ -194,7 +194,9 @@ describe("compiled PDF transport", () => {
     expect(diagnosticsMethod).toContain("this.diagnosticsController.handleLspDiagnostics");
     expect(recoverySource).toContain("LSP accepted a corrected revision after preview failure");
     expect(renderSource).toContain("parsePreviewCompilerFailure(error)");
-    expect(renderMethod).toContain("this.deps.previewFailure.publish(failure, packageHint)");
+    expect(renderMethod).toContain(
+      "this.deps.previewFailure.publish(failure, packageHint, displayedFailureMessage)",
+    );
     expect(failureSource).toContain("const failureComesFromRenderMirror = failure.location !== null");
     expect(failureSource).toContain("if (!failureComesFromRenderMirror)");
     expect(renderSource).toContain("this.deps.previewFailure.packageFailureHint");

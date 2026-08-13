@@ -103,9 +103,15 @@ describe("counted console logs", () => {
 
   test("survive manual clearing until their owning subsystem resolves them", () => {
     const compilerFailure = { kind: "error" as const, counted: true, message: "compile failed" };
+    const relatedCallSite = {
+      kind: "error" as const,
+      counted: false,
+      persistent: true,
+      message: "while calling wrapper",
+    };
     const developerLog = { kind: "info" as const, message: "render started" };
 
-    expect(persistentLogsAfterManualClear([compilerFailure, developerLog]))
-      .toEqual([compilerFailure]);
+    expect(persistentLogsAfterManualClear([compilerFailure, relatedCallSite, developerLog]))
+      .toEqual([compilerFailure, relatedCallSite]);
   });
 });

@@ -26,6 +26,7 @@ export type LogConsoleEntryInput = {
   toOffset?: number;
   channel?: LogEntryChannel;
   counted?: boolean;
+  persistent?: boolean;
   locations?: LogConsoleLocationInput[];
 };
 
@@ -61,10 +62,10 @@ export function countedLogTotals(
   };
 }
 
-export function persistentLogsAfterManualClear<T extends Pick<LogConsoleEntryInput, "counted">>(
+export function persistentLogsAfterManualClear<T extends Pick<LogConsoleEntryInput, "counted" | "persistent">>(
   logs: readonly T[]
 ): T[] {
-  return logs.filter(entry => entry.counted === true);
+  return logs.filter(entry => entry.counted === true || entry.persistent === true);
 }
 
 function canonicalDiagnosticMessage(message: string): string {
@@ -199,7 +200,13 @@ export class LogConsoleController {
 
     // Filter duplicates within current log entries
     const canonical = canonicalDiagnosticMessage(log.message);
-    if (this.logs.some(existing => canonicalDiagnosticMessage(existing.message) === canonical)) {
+    if (this.logs.some(existing =>
+      canonicalDiagnosticMessage(existing.message) === canonical
+      && (log.source !== "compiler call site"
+        || (filePathKey(existing.filePath ?? "") === filePathKey(log.filePath ?? "")
+          && existing.line === log.line
+          && existing.column === log.column))
+    )) {
       return;
     }
 

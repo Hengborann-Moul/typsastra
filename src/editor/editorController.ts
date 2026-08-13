@@ -400,15 +400,19 @@ export class EditorController {
     layer.replaceChildren();
     if (doc.lines <= 1) return;
 
-    const lineMarkers = new Map<number, "error" | "warning" | "info">();
+    const lineMarkers = new Map<number, "error" | "warning" | "info" | "related">();
     for (const line of this.matchMarkerLines) {
       if (line >= 1 && line <= doc.lines) lineMarkers.set(line, "info");
     }
     for (const diagnostic of diagnostics) {
-      if (diagnostic.severity !== "error" && diagnostic.severity !== "warning") continue;
+      if (diagnostic.severity !== "error"
+        && diagnostic.severity !== "warning"
+        && diagnostic.severity !== "related") continue;
       const line = doc.lineAt(Math.max(0, Math.min(diagnostic.from, doc.length))).number;
       const existing = lineMarkers.get(line);
-      if (!existing || diagnostic.severity === "error") lineMarkers.set(line, diagnostic.severity);
+      if (!existing || diagnostic.severity === "error" || existing === "info") {
+        lineMarkers.set(line, diagnostic.severity);
+      }
     }
     imageWarnings?.between(0, doc.length, from => {
       const line = doc.lineAt(Math.max(0, Math.min(from, doc.length))).number;
@@ -426,7 +430,11 @@ export class EditorController {
         top: `${top}px`,
         width: "5px",
         height: `${markerHeight}px`,
-        backgroundColor: severity === "error" ? "#f14c4c" : severity === "warning" ? "#cca700" : "#3794ff",
+        backgroundColor: severity === "error"
+          ? "#f14c4c"
+          : severity === "related"
+            ? "rgba(241, 76, 76, 0.58)"
+            : severity === "warning" ? "#cca700" : "#3794ff",
         pointerEvents: "none",
       });
       layer.appendChild(marker);

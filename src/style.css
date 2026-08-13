@@ -4717,6 +4717,21 @@ button.welcome-item:disabled {
   margin-top: max(0px, calc((var(--editor-line-height-px, 23.8px) - 18px) / 2));
 }
 
+.cm-warningGutter .cm-related-error-marker {
+  flex: 0 0 18px;
+  width: 18px;
+  height: 18px;
+  margin-top: max(0px, calc((var(--editor-line-height-px, 23.8px) - 18px) / 2));
+}
+
+.cm-related-error-marker {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: color-mix(in srgb, #f14c4c 62%, var(--ui-muted-text));
+  opacity: 0.82;
+}
+
 .preview-preserved-message-overlay {
   position: absolute;
   inset: 0;

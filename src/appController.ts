@@ -774,6 +774,8 @@ export class TypsastraWorkspaceController {
         ?? await invoke<string>("read_workspace_file", { path }).catch(() => "");
     },
     isRenderCachePath: path => this.isRenderCachePath(path),
+    setCompilerRelatedDiagnostics: entries =>
+      this.diagnosticsController.setCompilerRelatedDiagnostics(entries),
   });
   private readonly previewDiagnosticsRecoveryController = new PreviewDiagnosticsRecoveryController({
     activeFilePath: () => this.activeFilePath,

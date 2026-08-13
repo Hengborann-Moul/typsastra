@@ -429,6 +429,7 @@ export class PdfPreviewRenderController {
         documentRootPath: preparedPreview.documentRootPath,
       });
       this.deps.logConsole.clearLogsBySource(["compiler", "package compatibility"]);
+      this.deps.previewFailure.clear();
       this.deps.setLspStatus({ kind: "preview-ready", message: "Preview ready" });
       this.deps.log("info", "preview scheduler", `Render generation ${generation}: PDF presentation complete.`);
       renderSucceeded = true;
@@ -530,7 +531,7 @@ export class PdfPreviewRenderController {
           location.column,
         ),
       });
-      this.deps.previewFailure.publish(failure, packageHint);
+      this.deps.previewFailure.publish(failure, packageHint, displayedFailureMessage);
       this.deps.draftPreview.updateControl(false);
       this.deps.setLspStatus({ kind: "preview-error", message: "PDF compile failed" });
       this.previewFailureAt ??= performance.now();

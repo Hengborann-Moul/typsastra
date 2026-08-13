@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import {
+  parsePreviewCompilerDiagnostic,
   typstPackageEntrypoint,
   typstPackageImports,
   type PreviewCompilerFailure,
@@ -18,7 +19,15 @@ export interface PreviewFailureControllerPort {
   mapToOriginalPath(path: string): string;
   sourceForPath(path: string): Promise<string>;
   isRenderCachePath(path: string): boolean;
+  setCompilerRelatedDiagnostics(entries: PreviewCompilerRelatedDiagnostic[]): void;
 }
+
+export type PreviewCompilerRelatedDiagnostic = {
+  filePath: string;
+  line: number;
+  column: number;
+  message: string;
+};
 
 /** Resolves package dependency failures and publishes user-facing compiler problems. */
 export class PreviewFailureController {
@@ -65,7 +74,41 @@ export class PreviewFailureController {
     return null;
   }
 
-  publish(failure: PreviewCompilerFailure, packageHint: PreviewPackageFailureHint | null): void {
+  publish(
+    failure: PreviewCompilerFailure,
+    packageHint: PreviewPackageFailureHint | null,
+    displayedMessage = failure.message,
+  ): void {
+    this.logConsole.clearLogsBySource(["compiler call site"]);
+    const diagnostic = parsePreviewCompilerDiagnostic(displayedMessage);
+    const primary = diagnostic?.frames[0] ?? null;
+    const related = (diagnostic?.frames.slice(1) ?? [])
+      .filter(frame => !this.port.isRenderCachePath(frame.filePath))
+      .filter(frame => !primary || frame.filePath !== primary.filePath
+        || frame.line !== primary.line || frame.column !== primary.column)
+      .map(frame => ({
+        filePath: frame.filePath,
+        line: frame.line,
+        column: frame.column,
+        message: frame.label
+          ? `Related compiler location: ${frame.label}`
+          : "Related compiler call site",
+      }));
+    this.port.setCompilerRelatedDiagnostics(related);
+    for (const location of related) {
+      this.logConsole.appendLog({
+        kind: "error",
+        source: "compiler call site",
+        message: location.message,
+        channel: "lsp",
+        counted: false,
+        persistent: true,
+        filePath: location.filePath,
+        fileName: fileNameFromPath(location.filePath),
+        line: location.line,
+        column: location.column,
+      });
+    }
     const failureComesFromRenderMirror = failure.location !== null
       && this.port.isRenderCachePath(failure.location.filePath);
     if (!failureComesFromRenderMirror) {
@@ -93,6 +136,11 @@ export class PreviewFailureController {
       line: packageHint.projectImport.line,
       column: packageHint.projectImport.column,
     });
+  }
+
+  clear(): void {
+    this.port.setCompilerRelatedDiagnostics([]);
+    this.logConsole.clearLogsBySource(["compiler call site"]);
   }
 
   private async packageDependencyChain(

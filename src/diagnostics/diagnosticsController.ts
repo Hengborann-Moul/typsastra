@@ -10,6 +10,7 @@ import {
   type EditorDiagnosticSeverity,
 } from "../editor/diagnostics";
 import type { SpellcheckController, SpellingIssue } from "../editor/spellcheck";
+import type { PreviewCompilerRelatedDiagnostic } from "./previewFailureController";
 import { fileNameFromPath, filePathFromUri } from "../platform/paths";
 import { isTypstDocumentPath } from "../platform/fileTypes";
 import {
@@ -41,6 +42,7 @@ export interface DiagnosticsControllerPort {
 /** Owns LSP/spellcheck diagnostics from publication through editor and Problems UI. */
 export class DiagnosticsController {
   private readonly lspDiagnosticsByFile = new Map<string, LspDiagnostic[]>();
+  private readonly compilerRelatedByFile = new Map<string, PreviewCompilerRelatedDiagnostic[]>();
 
   constructor(
     private readonly logConsole: LogConsoleController,
@@ -111,6 +113,7 @@ export class DiagnosticsController {
       }
 
       if (!this.shouldAcceptLspDiagnostics(originalPath, version)) return;
+      editorDiagnostics.push(...this.compilerRelatedEditorDiagnostics(originalPath));
       this.editor()!.dispatch({ effects: setEditorDiagnosticsEffect.of(editorDiagnostics) });
       this.logConsole.setDiagnostics(
         originalPath,
@@ -203,6 +206,7 @@ export class DiagnosticsController {
 
   clear(): void {
     this.lspDiagnosticsByFile.clear();
+    this.compilerRelatedByFile.clear();
     this.logConsole.clearDiagnostics();
     this.clearEditorDiagnostics();
   }
@@ -216,13 +220,13 @@ export class DiagnosticsController {
     const editor = this.editor();
     const activePath = this.port.activeFilePath();
     const cached = this.lspDiagnosticsByFile.get(this.port.pathKey(path));
-    if (!editor || !activePath || !cached || this.port.pathKey(path) !== this.port.pathKey(activePath)) return;
+    if (!editor || !activePath || this.port.pathKey(path) !== this.port.pathKey(activePath)) return;
 
     const externalLabels = this.port.previewImported() && this.port.previewStandalone()
       ? new Set(externalReferenceLabels(editor.state.doc.toString()))
       : new Set<string>();
     const editorDiagnostics: EditorDiagnostic[] = [];
-    for (const diagnostic of cached) {
+    for (const diagnostic of cached ?? []) {
       if (
         /label.*does not exist|unknown label/i.test(diagnostic.message)
         && [...externalLabels].some(label =>
@@ -240,7 +244,38 @@ export class DiagnosticsController {
         message: diagnostic.message,
       });
     }
+    editorDiagnostics.push(...this.compilerRelatedEditorDiagnostics(path));
     editor.dispatch({ effects: setEditorDiagnosticsEffect.of(editorDiagnostics) });
+  }
+
+  setCompilerRelatedDiagnostics(entries: readonly PreviewCompilerRelatedDiagnostic[]): void {
+    this.compilerRelatedByFile.clear();
+    for (const entry of entries) {
+      const key = this.port.pathKey(entry.filePath);
+      const group = this.compilerRelatedByFile.get(key) ?? [];
+      if (!group.some(candidate => candidate.line === entry.line && candidate.column === entry.column)) {
+        group.push(entry);
+      }
+      this.compilerRelatedByFile.set(key, group);
+    }
+    const activePath = this.port.activeFilePath();
+    if (activePath && this.port.activeTabContentLoaded()) {
+      this.restoreCachedEditorDiagnostics(activePath);
+    }
+  }
+
+  private compilerRelatedEditorDiagnostics(path: string): EditorDiagnostic[] {
+    const entries = this.compilerRelatedByFile.get(this.port.pathKey(path)) ?? [];
+    return entries.map(entry => {
+      const from = this.port.editorPositionFromSourceLocation(entry.line, entry.column);
+      return {
+        from,
+        to: from,
+        severity: "related" as const,
+        message: entry.message,
+        gutterOnly: true,
+      };
+    });
   }
 
   diagnosticSeverityFromLsp(severity: number | undefined): EditorDiagnosticSeverity {
@@ -317,8 +352,9 @@ export class DiagnosticsController {
 
   private logEntryFromDiagnostic(uri: string, diagnostic: LspDiagnostic): LogConsoleEntryInput {
     const filePath = this.port.mapToOriginalPath(filePathFromUri(uri));
+    const severity = this.diagnosticSeverityFromLsp(diagnostic.severity);
     return {
-      kind: this.diagnosticSeverityFromLsp(diagnostic.severity),
+      kind: severity === "related" ? "info" : severity,
       source: diagnostic.source ?? "typst",
       filePath,
       fileName: fileNameFromPath(filePath),

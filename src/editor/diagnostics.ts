@@ -3,13 +3,14 @@ import type { Extension, Text } from "@codemirror/state";
 import { Decoration, EditorView } from "@codemirror/view";
 import type { DecorationSet } from "@codemirror/view";
 
-export type EditorDiagnosticSeverity = "error" | "warning" | "info" | "hint";
+export type EditorDiagnosticSeverity = "error" | "warning" | "info" | "hint" | "related";
 
 export type EditorDiagnostic = {
   from: number;
   to: number;
   severity: EditorDiagnosticSeverity;
   message: string;
+  gutterOnly?: boolean;
 };
 
 export const setEditorDiagnosticsEffect = StateEffect.define<EditorDiagnostic[]>({
@@ -121,6 +122,7 @@ function buildDiagnosticDecorations(diagnostics: EditorDiagnostic[], docLength: 
   const sorted = [...diagnostics].sort((left, right) => left.from - right.from || left.to - right.to);
 
   for (const diagnostic of sorted) {
+    if (diagnostic.gutterOnly) continue;
     const from = Math.max(0, Math.min(diagnostic.from, docLength));
     const to = Math.max(from, Math.min(diagnostic.to, docLength));
     const markTo = to > from ? to : Math.min(from + 1, docLength);
