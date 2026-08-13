@@ -278,7 +278,7 @@ Typst formatting is available from **Edit → Format Document** or `Ctrl+Shift+F
 | Action | Windows and Linux | macOS |
 | --- | --- | --- |
 | New File | `Ctrl+N` | `Cmd+N` |
-| Open Workspace | `Ctrl+K Ctrl+O` | `Cmd+K Cmd+O` |
+| Open Project | `Ctrl+K Ctrl+O` | `Cmd+K Cmd+O` |
 | Save | `Ctrl+S` | `Cmd+S` |
 | Save As | `Ctrl+Shift+S` | `Cmd+Shift+S` |
 | Open Settings | `Ctrl+,` | `Cmd+,` |
