@@ -1,6 +1,6 @@
 # Packaged `.typsastra` Import Tests
 
-Run this checklist against release artifacts, not `bun run tauri dev`. Record the application version, OS version, architecture, installer type, and result in the release issue.
+Run this checklist against release artifacts, not `bun run tauri:dev`. Record the application version, OS version, architecture, installer type, and result in the release issue.
 
 ## Fixture set
 

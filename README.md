@@ -296,7 +296,7 @@ When reporting an issue, include:
 git clone --recurse-submodules https://github.com/Sovichea/typsastra.git
 cd typsastra
 bun install --frozen-lockfile
-bun run tauri dev
+bun run tauri:dev
 ```
 
 ### Validation commands

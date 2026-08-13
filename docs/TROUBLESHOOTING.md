@@ -9,7 +9,7 @@ keeps the detailed build, packaging, platform, and diagnostic procedures.
 Use:
 
 ```bash
-bun run tauri dev
+bun run tauri:dev
 ```
 
 `bun run dev` starts only Vite in a browser. Native filesystem access, dialogs, settings persistence, Tinymist, and Tauri IPC will not work there.

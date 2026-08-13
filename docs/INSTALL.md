@@ -160,7 +160,7 @@ git submodule update --init --recursive
 Start the complete desktop development environment:
 
 ```bash
-bun run tauri dev
+bun run tauri:dev
 ```
 
 `bun run dev` starts only Vite in a browser. It is useful for isolated styling work, but native filesystem access, dialogs, settings persistence, Tinymist, and Tauri IPC will not work there.
@@ -170,7 +170,7 @@ bun run tauri dev
 Build on each target operating system; a normal local Tauri build does not produce installers for the other operating systems.
 
 ```bash
-bun run tauri build
+bun run tauri:build
 ```
 
 The native executable is written under `src-tauri/target/release/`. Installers and application bundles are written under `src-tauri/target/release/bundle/`, with platform-specific subdirectories such as `nsis`/`msi`, `deb`/`rpm`/`appimage`, or `dmg`/`macos`.

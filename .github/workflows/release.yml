@@ -89,7 +89,7 @@ jobs:
           releaseBody: ${{ steps.release-notes.outputs.body }}
           releaseDraft: true
           prerelease: false
-          tauriScript: bun run tauri
+          # tauri-action appends `build`; with no override it auto-detects Bun.
           args: ${{ matrix.args }}
           uploadUpdaterJson: true
           uploadUpdaterSignatures: true

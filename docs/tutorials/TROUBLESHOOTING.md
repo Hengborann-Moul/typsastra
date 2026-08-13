@@ -2,7 +2,7 @@
 
 ## Native actions do nothing in development
 
-Run `bun run tauri dev`. `bun run dev` starts only the browser frontend and
+Run `bun run tauri:dev`. `bun run dev` starts only the browser frontend and
 cannot provide native filesystem, process, dialog, or managed-toolchain APIs.
 
 ## A script has no spelling marks

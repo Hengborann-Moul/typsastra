@@ -14,7 +14,7 @@
 git clone --recurse-submodules https://github.com/Sovichea/typsastra.git
 cd typsastra
 bun install --frozen-lockfile
-bun run tauri dev
+bun run tauri:dev
 ```
 
 The first launch requires internet access to retrieve the selected stable Tinymist binary from GitHub. Later launches use the managed copy in the platform application-data directory.
@@ -68,7 +68,7 @@ PDF preview and source-map synchronization are documented in [PREVIEW_INTERCEPTI
 ## Release builds
 
 ```bash
-bun run tauri build
+bun run tauri:build
 ```
 
 Build on each target operating system. Cross-platform installer output is not produced by a normal local Tauri build.

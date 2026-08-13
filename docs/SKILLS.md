@@ -3,7 +3,7 @@
 This document serves as the core knowledge base and skill reference for the Typsastra repository. AI agents and developers should read this file to understand the framework, technology stack, architecture boundaries, and best practices.
 
 ## 1. Technology Stack
-- **Package Manager:** Bun (`bun install`, `bun run tauri dev`)
+- **Package Manager:** Bun (`bun install`, `bun run tauri:dev`, `bun run tauri:build`)
 - **Desktop Framework:** Tauri v2 (Rust + Webview)
 - **Frontend Core:** Vite + Vanilla TypeScript (No UI frameworks like React or Vue)
 - **Editor Engine:** CodeMirror 6
