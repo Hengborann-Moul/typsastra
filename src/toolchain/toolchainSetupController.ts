@@ -2,10 +2,16 @@ import type { SystemToolchain, ToolchainStatus } from "./toolchainController";
 
 type TinymistRelease = { version: string; publishedAt: string | null };
 
+export type ToolchainInstallProgress = {
+  phase: "resolving" | "downloading" | "installing" | "verifying" | "complete";
+  downloadedBytes: number;
+  totalBytes: number | null;
+};
+
 export interface ToolchainSetupDependencies {
   listReleases(): Promise<TinymistRelease[]>;
   listSystemToolchains(): Promise<SystemToolchain[]>;
-  install(version: string): Promise<ToolchainStatus>;
+  install(version: string, onProgress: (progress: ToolchainInstallProgress) => void): Promise<ToolchainStatus>;
   selectSystemToolchain(path: string): Promise<ToolchainStatus>;
   closeWindow(): Promise<void>;
   showInstallError(error: unknown): Promise<void>;
@@ -150,36 +156,19 @@ export class ToolchainSetupController {
     actions.classList.add("hidden");
     progressContainer.classList.remove("hidden");
 
-    let progress = 0;
     progressBar.style.width = "0%";
-    progressLabel.textContent = `Installing Tinymist ${selectedVersion}...`;
-    const progressInterval = window.setInterval(() => {
-      if (progress < 15) {
-        progress += 2;
-        progressLabel.textContent = `Installing Tinymist ${selectedVersion}...`;
-      } else if (progress < 55) {
-        progress += 1.5;
-        progressLabel.textContent = "Downloading Tinymist...";
-      } else if (progress < 75) {
-        progress += 1;
-        progressLabel.textContent = "Verifying embedded Typst compiler...";
-      } else if (progress < 93) {
-        progress += 0.5;
-        progressLabel.textContent = "Finalizing toolchain...";
-      }
-      progressBar.style.width = `${Math.min(93, progress)}%`;
-    }, 300);
+    progressLabel.textContent = `Preparing Tinymist ${selectedVersion}...`;
 
     try {
-      const status = await this.deps.install(selectedVersion);
-      window.clearInterval(progressInterval);
+      const status = await this.deps.install(selectedVersion, progress => {
+        this.renderInstallProgress(progress, progressLabel, progressBar);
+      });
       progressBar.style.width = "100%";
       progressLabel.textContent = "Installation complete!";
       await new Promise<void>(done => window.setTimeout(done, 700));
       overlay.classList.add("hidden");
       resolve(status);
     } catch (error) {
-      window.clearInterval(progressInterval);
       progressBar.style.width = "0%";
       progressLabel.textContent = "Installation failed. Please try again.";
       await this.deps.showInstallError(error);
@@ -188,4 +177,39 @@ export class ToolchainSetupController {
       actions.classList.remove("hidden");
     }
   }
+
+  private renderInstallProgress(
+    progress: ToolchainInstallProgress,
+    label: HTMLElement,
+    bar: HTMLElement,
+  ): void {
+    if (progress.phase === "resolving") {
+      label.textContent = "Resolving Tinymist release...";
+      bar.style.width = "3%";
+      return;
+    }
+    if (progress.phase === "downloading") {
+      const total = progress.totalBytes;
+      const ratio = total && total > 0 ? Math.min(1, progress.downloadedBytes / total) : null;
+      bar.style.width = `${ratio === null ? 8 : 5 + ratio * 80}%`;
+      label.textContent = total
+        ? `Downloading Tinymist... ${formatBytes(progress.downloadedBytes)} of ${formatBytes(total)}`
+        : `Downloading Tinymist... ${formatBytes(progress.downloadedBytes)}`;
+      return;
+    }
+    if (progress.phase === "installing") {
+      label.textContent = "Installing downloaded toolchain...";
+      bar.style.width = "88%";
+      return;
+    }
+    if (progress.phase === "verifying") {
+      label.textContent = "Verifying embedded Typst compiler...";
+      bar.style.width = "95%";
+    }
+  }
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024 * 1024) return `${Math.max(0, bytes / 1024).toFixed(1)} KiB`;
+  return `${Math.max(0, bytes / (1024 * 1024)).toFixed(1)} MiB`;
 }

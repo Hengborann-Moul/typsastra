@@ -1,6 +1,8 @@
 use serde::Serialize;
 #[cfg(target_os = "linux")]
 use std::path::{Path, PathBuf};
+#[cfg(target_os = "linux")]
+use std::sync::OnceLock;
 
 #[cfg(target_os = "linux")]
 const APP_IDENTIFIER: &str = "com.typsastra.editor";
@@ -8,6 +10,28 @@ const APP_IDENTIFIER: &str = "com.typsastra.editor";
 const DMABUF_ENVIRONMENT_VARIABLE: &str = "WEBKIT_DISABLE_DMABUF_RENDERER";
 #[cfg(target_os = "linux")]
 const DMABUF_APPLIED_BY_TYPSASTRA: &str = "TYPSASTRA_DMABUF_SETTING_APPLIED";
+#[cfg(target_os = "linux")]
+static X11_THREADS_INITIALIZED: OnceLock<bool> = OnceLock::new();
+
+/// Enables Xlib's process-wide locking before GTK, WebKit, or a Tauri plugin
+/// can open an X11/XWayland display from another thread.
+pub fn initialize_linux_x11_threads() {
+    #[cfg(target_os = "linux")]
+    {
+        let initialized = X11_THREADS_INITIALIZED.get_or_init(|| {
+            let Ok(xlib) = x11_dl::xlib::Xlib::open() else {
+                // A pure Wayland environment may not provide Xlib at all.
+                return false;
+            };
+            unsafe { (xlib.XInitThreads)() != 0 }
+        });
+        if !initialized {
+            eprintln!(
+                "X11 thread support could not be initialized; continuing with the available display backend."
+            );
+        }
+    }
+}
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]

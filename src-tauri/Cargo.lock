@@ -5342,6 +5342,7 @@ dependencies = [
  "unicode-normalization",
  "windows-sys 0.61.2",
  "winreg",
+ "x11-dl",
  "zip",
 ]
 

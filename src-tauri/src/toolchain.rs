@@ -3,8 +3,8 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::time::Duration;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -15,6 +15,8 @@ const TINYMIST_RELEASES_URL: &str = "https://api.github.com/repos/Myriad-Dreamin
 const TINYMIST_TAGS_URL: &str = "https://api.github.com/repos/Myriad-Dreamin/tinymist/tags";
 const TOOLCHAIN_DOWNLOAD_ATTEMPTS: usize = 3;
 const MAX_TOOLCHAIN_DOWNLOAD_BYTES: u64 = 512 * 1024 * 1024;
+const TOOLCHAIN_DOWNLOAD_STALL_TIMEOUT: Duration = Duration::from_secs(60);
+const TOOLCHAIN_VERSION_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Deserialize)]
 struct GithubTag {
@@ -82,6 +84,31 @@ pub struct ToolchainStatus {
     pub message: String,
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolchainInstallProgress {
+    pub phase: String,
+    pub downloaded_bytes: u64,
+    pub total_bytes: Option<u64>,
+}
+
+type InstallProgressCallback<'a> = Option<&'a (dyn Fn(ToolchainInstallProgress) + Send + Sync)>;
+
+fn report_install_progress(
+    callback: InstallProgressCallback<'_>,
+    phase: &str,
+    downloaded_bytes: u64,
+    total_bytes: Option<u64>,
+) {
+    if let Some(callback) = callback {
+        callback(ToolchainInstallProgress {
+            phase: phase.to_string(),
+            downloaded_bytes,
+            total_bytes,
+        });
+    }
+}
+
 fn version_dir(data_dir: &Path, version: &str) -> PathBuf {
     data_dir.join("toolchain").join(version)
 }
@@ -111,7 +138,31 @@ fn command_for(executable: &Path) -> Command {
 }
 
 fn version_output(executable: &Path) -> Option<String> {
-    let output = command_for(executable).arg("--version").output().ok()?;
+    version_output_with_timeout(executable, TOOLCHAIN_VERSION_TIMEOUT)
+}
+
+fn version_output_with_timeout(executable: &Path, timeout: Duration) -> Option<String> {
+    let mut child = command_for(executable)
+        .arg("--version")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .ok()?;
+    let started = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if started.elapsed() < timeout => {
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            Ok(None) | Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    }
+    let output = child.wait_with_output().ok()?;
     if !output.status.success() {
         return None;
     }
@@ -648,12 +699,13 @@ fn platform_asset_name() -> Result<String, String> {
 async fn download_to_temporary_file(
     asset: &GithubAsset,
     directory: &Path,
+    progress: InstallProgressCallback<'_>,
 ) -> Result<tempfile::NamedTempFile, String> {
     let client = github_asset_client()?;
     let mut last_error = None;
 
     for attempt in 1..=TOOLCHAIN_DOWNLOAD_ATTEMPTS {
-        match download_once(&client, asset, directory).await {
+        match download_once(&client, asset, directory, progress).await {
             Ok(download) => return Ok(download),
             Err(error) => {
                 last_error = Some(error);
@@ -676,6 +728,7 @@ async fn download_once(
     client: &reqwest::Client,
     asset: &GithubAsset,
     directory: &Path,
+    progress: InstallProgressCallback<'_>,
 ) -> Result<tempfile::NamedTempFile, String> {
     let mut response = client
         .get(&asset.browser_download_url)
@@ -695,11 +748,24 @@ async fn download_once(
     let mut temporary = tempfile::NamedTempFile::new_in(directory)
         .map_err(|error| format!("could not create a temporary download: {error}"))?;
     let mut downloaded = 0_u64;
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .map_err(|error| format!("connection ended while reading the response body: {error}"))?
-    {
+    let mut last_reported_percent = None;
+    let mut last_reported_bytes = 0_u64;
+    report_install_progress(progress, "downloading", 0, expected_length);
+    loop {
+        let chunk = tokio::time::timeout(TOOLCHAIN_DOWNLOAD_STALL_TIMEOUT, response.chunk())
+            .await
+            .map_err(|_| {
+                format!(
+                    "download stalled for {} seconds after receiving {downloaded} bytes",
+                    TOOLCHAIN_DOWNLOAD_STALL_TIMEOUT.as_secs()
+                )
+            })?
+            .map_err(|error| {
+                format!("connection ended while reading the response body: {error}")
+            })?;
+        let Some(chunk) = chunk else {
+            break;
+        };
         downloaded = downloaded
             .checked_add(chunk.len() as u64)
             .ok_or_else(|| "download size overflowed".to_string())?;
@@ -712,6 +778,16 @@ async fn download_once(
         temporary
             .write_all(&chunk)
             .map_err(|error| format!("could not write the temporary download: {error}"))?;
+        let percent = expected_length
+            .filter(|length| *length > 0)
+            .map(|length| downloaded.saturating_mul(100) / length);
+        let should_report = percent != last_reported_percent
+            || downloaded.saturating_sub(last_reported_bytes) >= 1024 * 1024;
+        if should_report {
+            report_install_progress(progress, "downloading", downloaded, expected_length);
+            last_reported_percent = percent;
+            last_reported_bytes = downloaded;
+        }
     }
     temporary
         .flush()
@@ -771,7 +847,12 @@ fn install_managed_executable(data_dir: &Path, version: &str, source: &Path) -> 
     Ok(())
 }
 
-pub async fn install(data_dir: &Path, requested_version: &str) -> Result<ToolchainStatus, String> {
+async fn install_internal(
+    data_dir: &Path,
+    requested_version: &str,
+    progress: InstallProgressCallback<'_>,
+) -> Result<ToolchainStatus, String> {
+    report_install_progress(progress, "resolving", 0, None);
     let requested = Version::parse(requested_version.trim_start_matches('v'))
         .map_err(|_| format!("Invalid stable Tinymist version: {}", requested_version))?;
     if !requested.pre.is_empty() || requested.patch % 2 == 1 {
@@ -794,9 +875,11 @@ pub async fn install(data_dir: &Path, requested_version: &str) -> Result<Toolcha
     if !already_installed {
         std::fs::create_dir_all(data_dir)
             .map_err(|error| format!("Failed to create app data directory: {}", error))?;
-        let temporary = download_to_temporary_file(asset, data_dir).await?;
+        let temporary = download_to_temporary_file(asset, data_dir, progress).await?;
+        report_install_progress(progress, "installing", 0, None);
         install_managed_executable(data_dir, &version, temporary.path())?;
     }
+    report_install_progress(progress, "verifying", 0, None);
     let (installed, _) = tinymist_metadata(&destination)
         .ok_or_else(|| "Downloaded Tinymist executable could not be started or did not report its embedded Typst version.".to_string())?;
     if installed != requested {
@@ -808,7 +891,21 @@ pub async fn install(data_dir: &Path, requested_version: &str) -> Result<Toolcha
     std::fs::write(data_dir.join("toolchain").join("active-version"), &version)
         .map_err(|error| format!("Failed to select Tinymist {}: {}", version, error))?;
     clear_selected_system_path(data_dir);
-    Ok(status(data_dir))
+    let status = status(data_dir);
+    report_install_progress(progress, "complete", 0, None);
+    Ok(status)
+}
+
+pub async fn install(data_dir: &Path, requested_version: &str) -> Result<ToolchainStatus, String> {
+    install_internal(data_dir, requested_version, None).await
+}
+
+pub async fn install_with_progress(
+    data_dir: &Path,
+    requested_version: &str,
+    progress: &(dyn Fn(ToolchainInstallProgress) + Send + Sync),
+) -> Result<ToolchainStatus, String> {
+    install_internal(data_dir, requested_version, Some(progress)).await
 }
 
 pub async fn ensure(data_dir: &Path) -> Result<ToolchainStatus, String> {
@@ -901,6 +998,21 @@ mod tests {
     #[test]
     fn platform_asset_is_supported_for_current_host() {
         assert!(platform_asset_name().is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn version_probe_times_out_for_an_unresponsive_executable() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let executable = temp.path().join("unresponsive-tinymist");
+        std::fs::write(&executable, "#!/bin/sh\nexec sleep 60\n").unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let started = Instant::now();
+        assert!(version_output_with_timeout(&executable, Duration::from_millis(50)).is_none());
+        assert!(started.elapsed() < Duration::from_secs(2));
     }
 
     #[test]

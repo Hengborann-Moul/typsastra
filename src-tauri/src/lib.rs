@@ -4093,6 +4093,24 @@ async fn install_tinymist_toolchain(
 }
 
 #[tauri::command]
+async fn install_tinymist_toolchain_with_progress(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, LspState>,
+    version: String,
+    on_progress: tauri::ipc::Channel<toolchain::ToolchainInstallProgress>,
+) -> Result<toolchain::ToolchainStatus, String> {
+    stop_lsp_process(&state).await;
+    let data_dir = app_handle
+        .path()
+        .app_local_data_dir()
+        .map_err(|error| format!("Failed to get data dir: {error}"))?;
+    toolchain::install_with_progress(&data_dir, &version, &|progress| {
+        let _ = on_progress.send(progress);
+    })
+    .await
+}
+
+#[tauri::command]
 async fn start_tinymist_lsp(
     app_handle: tauri::AppHandle,
     state: tauri::State<'_, LspState>,
@@ -4851,6 +4869,7 @@ async fn select_project_toolchain(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    compatibility::initialize_linux_x11_threads();
     compatibility::configure_process_environment();
     let native_start = Instant::now();
     let startup_timings = StartupTimings::default();
@@ -5010,6 +5029,7 @@ pub fn run() {
             list_system_tinymist_toolchains,
             select_system_tinymist_toolchain,
             install_tinymist_toolchain,
+            install_tinymist_toolchain_with_progress,
             start_tinymist_lsp,
             stop_tinymist_lsp,
             send_lsp_message,

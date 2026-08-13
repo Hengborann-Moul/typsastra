@@ -1,6 +1,6 @@
 import { message } from "@tauri-apps/plugin-dialog";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { dirname, join } from "@tauri-apps/api/path";
 import { EditorState, type Extension, type Text } from "@codemirror/state";
@@ -88,7 +88,7 @@ import { PerformanceController } from "./performance/performanceController";
 import { EditorToolbarController } from "./editor/toolbarController";
 import { ContextMenuController } from "./components/contextMenuController";
 import { ToolchainController, type SystemToolchain, type ToolchainStatus } from "./toolchain/toolchainController";
-import { ToolchainSetupController } from "./toolchain/toolchainSetupController";
+import { ToolchainSetupController, type ToolchainInstallProgress } from "./toolchain/toolchainSetupController";
 import { DocumentOutlineController, type DocumentHeading } from "./outline/documentOutline";
 import { WindowStateController } from "./window/windowStateController";
 import { bindAppEvents } from "./ui/appEventBindings";
@@ -1460,7 +1460,14 @@ export class TypsastraWorkspaceController {
   private readonly toolchainSetupController = new ToolchainSetupController({
     listReleases: () => invoke("list_tinymist_releases"),
     listSystemToolchains: () => invoke<SystemToolchain[]>("list_system_tinymist_toolchains"),
-    install: version => invoke<ToolchainStatus>("install_tinymist_toolchain", { version }),
+    install: (version, onProgress) => {
+      const progress = new Channel<ToolchainInstallProgress>();
+      progress.onmessage = onProgress;
+      return invoke<ToolchainStatus>("install_tinymist_toolchain_with_progress", {
+        version,
+        onProgress: progress,
+      });
+    },
     selectSystemToolchain: path => invoke<ToolchainStatus>("select_system_tinymist_toolchain", { path }),
     closeWindow: () => getCurrentWindow().close(),
     showInstallError: async error => {
