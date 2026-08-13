@@ -6,7 +6,7 @@ use super::provider::{
 };
 use crate::render_prepare::scanner::{scan_typst_content, ScanState};
 use icu_segmenter::{options::WordBreakInvariantOptions, WordSegmenter, WordSegmenterBorrowed};
-use khmer_segmenter::kdict::KHypDict;
+use khmer_segmenter::kdict::{coeng_da_ta_variants, KHypDict};
 use khmer_segmenter::{KhmerSegmenter, SegmenterConfig, SpellcheckProfile, SpellingAccuracy};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -386,6 +386,24 @@ impl KhmerProvider {
             hyphenation,
         })
     }
+
+    fn visual_completions(&self, prefix: &str, limit: usize) -> Vec<String> {
+        if prefix.is_empty() || limit == 0 {
+            return Vec::new();
+        }
+        let mut completions = Vec::new();
+        for candidate in std::iter::once(prefix.to_owned()).chain(coeng_da_ta_variants(prefix)) {
+            for suggestion in self.segmenter.complete_word(&candidate, limit) {
+                if !completions.iter().any(|word| word == &suggestion.text) {
+                    completions.push(suggestion.text);
+                    if completions.len() == limit {
+                        return completions;
+                    }
+                }
+            }
+        }
+        completions
+    }
 }
 
 impl LanguageSegmenter for KhmerProvider {
@@ -522,7 +540,7 @@ impl LanguageSegmenter for KhmerProvider {
                 || self
                     .segmenter
                     .is_spelling_valid_with_accuracy(token, SpellingAccuracy::Visual);
-            let known_prefix = known || !self.segmenter.complete_word(token, 1).is_empty();
+            let known_prefix = known || !self.visual_completions(token, 1).is_empty();
             let hyphenated = self
                 .hyphenation
                 .lookup(token)
@@ -565,11 +583,7 @@ impl LanguageSegmenter for KhmerProvider {
         if prefix.is_empty() || limit == 0 {
             return Vec::new();
         }
-        self.segmenter
-            .complete_word(prefix, limit)
-            .into_iter()
-            .map(|suggestion| suggestion.text)
-            .collect()
+        self.visual_completions(prefix, limit)
     }
 
     fn is_known_word(&self, word: &str) -> bool {
@@ -2847,6 +2861,27 @@ mod tests {
             let analysis = provider.analyze(word).expect("visual spelling analysis");
             assert!(analysis.tokens.iter().all(|token| token.known), "{word}");
         }
+    }
+
+    #[test]
+    fn completes_a_visual_coeng_ta_prefix_with_the_curated_spelling() {
+        let provider = KhmerProvider::new().expect("Khmer provider");
+        let response = complete_with_provider(
+            &provider,
+            &CompletionRequest {
+                provider: "khmer-segmenter".to_string(),
+                text: "ស្តាប".to_string(),
+                cursor_utf16: "ស្តាប".encode_utf16().count(),
+                limit: 10,
+                user_dictionary: Vec::new(),
+            },
+        )
+        .expect("visual prefix completion")
+        .expect("completion response");
+
+        assert_eq!(response.from, 0);
+        assert_eq!(response.to, "ស្តាប".encode_utf16().count());
+        assert!(response.options.iter().any(|word| word == "ស្ដាប់"));
     }
 
     #[test]

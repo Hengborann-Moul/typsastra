@@ -22,8 +22,10 @@ binaries from that revision and stores only those compiled runtime artifacts
 under `src-tauri/resources/language-providers/khmer/`. RC3
 uses the segmenter's single-pass analysis API with `SpellingAccuracy::Visual`,
 which treats the legacy COENG DA and COENG TA forms in words such as `ស្ដាប់`
-and `ស្តាប់` as equivalent correct spelling. Completion and correction output
-continues to use the curated form. `tests/fixtures/khmer/provider.json` records
+and `ស្តាប់` as equivalent correct spelling. Completion also queries the visual
+COENG alias of a typed prefix, so `ស្តាប` can offer the curated `ស្ដាប់` before
+the final mark is entered. Completion and correction output continues to use
+the curated form. `tests/fixtures/khmer/provider.json` records
 the same commit and exact expected output. Runtime artifacts retain the usage
 and attribution requirements documented upstream. Changing the submodule,
 dictionary, normalization, or post-processing requires an intentional fixture

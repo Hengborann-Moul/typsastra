@@ -255,8 +255,6 @@ export function languageCompletionRange(
   return { from: runFrom + completion.from, to: runFrom + completion.to };
 }
 
-export const languageCompletionValidFor = () => false;
-
 // Keep a Tinymist or fallback Typst completion result alive while the user
 // extends the same identifier. Without this, the asynchronous list opened by
 // `#` is discarded on the very next character instead of being filtered.
@@ -1027,9 +1025,15 @@ export function createTypstAutocomplete(
                     type: "text",
                     detail: `${completion.provider} · ${selected.languageTag} (document script)`
                   })),
-                  // Results are deliberately bounded and ranked for the current
-                  // segmented prefix, so every typed character must query again.
-                  validFor: languageCompletionValidFor
+                  // The native provider has already filtered and ranked these
+                  // results for the current prefix. Do not make CodeMirror
+                  // compare the displayed curated spelling to the literal
+                  // source prefix again: visual aliases such as Khmer COENG
+                  // TA vs COENG DA intentionally differ by code point.
+                  // No `validFor` is provided: each edit must query the native
+                  // provider again, and CodeMirror forbids combining it with
+                  // an unfiltered result.
+                  filter: false,
                 };
               }
               } catch (e) {

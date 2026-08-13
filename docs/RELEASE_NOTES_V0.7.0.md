@@ -55,7 +55,7 @@ Released August 13, 2026.
 - Updated the pinned Khmer segmenter to v0.2.0-rc.3 and
   selected visual spelling accuracy so legacy COENG DA/TA variants such as
   `ស្ដាប់` and `ស្តាប់` are accepted as equivalent correct spelling while
-  completion retains the curated form.
+  visual prefixes receive completion suggestions in the curated form.
 - Allowed any browser-accessible installed font in the source editor while
   retaining fixed-width indentation metrics and complex-script fallbacks.
 - Rendered compiler failures as structured, navigable source frames, including

@@ -19,7 +19,6 @@ import {
   isTypstFunctionArgumentContextAt,
   isTypstRuleTargetAt,
   languageCompletionRange,
-  languageCompletionValidFor,
   liveTypstCompletionEditOffsets,
   liveTypstMemberCompletionEditOffsets,
   lspCompletionEditOffsets,
@@ -766,8 +765,11 @@ describe("LSP autocomplete edits", () => {
 });
 
 describe("segmented language completion", () => {
-  test("refreshes bounded native results after every typed character", () => {
-    expect(languageCompletionValidFor()).toBe(false);
+  test("preserves provider-ranked visual alias completions", async () => {
+    const source = await Bun.file(new URL("../src/editor/autocomplete.ts", import.meta.url)).text();
+    expect(source).toContain("filter: false,");
+    expect(source).toContain("visual aliases such as Khmer COENG");
+    expect(source).toContain("No `validFor` is provided");
   });
 
   test("replaces only the final word in an unspaced run", () => {
