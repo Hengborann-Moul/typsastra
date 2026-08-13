@@ -175,10 +175,10 @@ manageable without changing the portable Typst source model.
   hover overlays, cache behavior, and known layout and retained-memory
   limitations.
 
-## v0.6.4 — autocomplete snippets
+## Deferred autocomplete snippets (moved to v0.8.0)
 
-Expand the existing Typst autocomplete panel with curated, portable authoring
-snippets instead of introducing a separate snippet popup.
+v0.6.3 added contextual starter values and type-aware Tab stops. The remaining
+broader snippet library was not released as v0.6.4 and now belongs to v0.8.0:
 
 - Add commonly used set rules, functions, paragraph formatting, figures,
   images, tables, grids, references, and mathematics constructs incrementally.
@@ -192,38 +192,31 @@ snippets instead of introducing a separate snippet popup.
   so templates never replace or reorder the normal syntax choices.
 - Preserve portability: inserted snippets must not require a Typsastra runtime.
 
-## v0.7.0 — resource-aware authoring and secondary previews
+## v0.7.0 — resource-aware authoring and secondary previews (released)
 
-Make local images, language tools, and non-Typst previews manageable without
-weakening project portability or silently modifying source assets.
+v0.7.0 was released on August 13, 2026. The delivered scope was verified
+against the repository changes since v0.6.3 rather than the earlier plan.
 
-- Add an explicit, user-invoked **Image Optimizer** from the Images Problems
-  category, image-path context menu, and image viewer. Support downscaling and
-  re-encoding statically resolved local raster images after showing original
-  dimensions, decoded-memory estimate, source size, target format, quality,
-  transparency/color-profile implications, and an output-size preview.
-- Default image optimization to **Save Optimized Copy**. Replacing an original
-  must require separate confirmation and an atomic, recoverable write. Never
-  overwrite source merely because a warning exists, never process package,
-  remote, plugin, dynamic, or unresolved resources, and never imply that
-  compression alone reduces decoded-memory pressure.
-- When saving an optimized copy, offer to update only the selected static
-  `#image` reference or every exact reference to that asset. Keep unrelated
-  source untouched, preserve Unicode paths, and make the edit undoable.
-- Revisit document-language configuration so project inheritance and provider
-  assignment are easier to understand without weakening deterministic routing.
-- Add a separate, sanitized Markdown live-preview renderer for `.md` files,
+- Added a separate, sanitized Markdown live-preview renderer for `.md` files,
   with debounced updates, theme-aware typography, local images, common
   GitHub-Flavored Markdown constructs, link navigation, and preserved scroll
   position. Markdown preview must not start Tinymist, compile Typst, or discard
   the existing PDF session when switching tabs.
-- Add a toolchain health panel showing active Typst/Tinymist versions,
-  provenance, validation state, download status, and recovery actions.
-- Add font-dependency health reporting for missing, moved, ambiguous, and
-  unavailable system/private fonts without silently substituting or installing
-  a replacement.
-- Publish resource-workflow benchmarks for image inspection/optimization,
-  language configuration, toolchain health, and Markdown preview.
+- Added **Image Tools** for local raster inventory, source and decoded-size
+  inspection, bounded comparisons, resize/re-encoding previews, Save Optimized
+  Copy, and optional updates to all indexed exact static references.
+- Added generated scaled-font cache inspection, renewal, deletion, and unused
+  variant cleanup while protecting variants used by saved typography settings.
+- Added selectable bracket-pair editing, redesigned search, editor scrollbar
+  markers, member completion, closure indentation, and preservation of tab
+  syntax, history, folds, selections, diagnostics, and scroll state.
+- Added structured compiler diagnostics with navigable related call sites.
+- Added system-`PATH` Tinymist discovery and hardened managed downloads with
+  byte progress, retries, stall detection, and validation timeouts.
+- Added a cancellable, renameable import destination step with conflict checks
+  and transactional extraction; the project archive schema remains version 2.
+- Added native macOS menus and packaging checks plus Linux WebKit/Xlib startup
+  and live-preview modifier-state fixes.
 
 The Markdown scope, security boundaries, lifecycle, and release gates are in
 the [v0.7.0 Markdown live preview implementation plan](./V0_7_0_MARKDOWN_LIVE_PREVIEW_IMPLEMENTATION_PLAN.md).
@@ -253,6 +246,21 @@ individual chapters and complete long documents.
 - Publish qualification results for migration, source synchronization,
   reference behavior, repeated scope switching, compilation latency, and
   bounded memory.
+
+Complete resource-workflow work deferred from the original v0.7.0 plan:
+
+- Add confirmed, atomic, recoverable replacement of an original image and a
+  choice between rewriting one selected static reference or all exact static
+  references. v0.7.0 saves optimized copies and can update all indexed exact
+  references only.
+- Revisit document-language inheritance and provider assignment without
+  weakening deterministic routing.
+- Expand toolchain status into validation and recovery workflows, and add
+  font-dependency health for missing, moved, ambiguous, or unavailable fonts.
+- Publish resource-workflow benchmarks covering image operations, language
+  configuration, toolchain behavior, and Markdown preview.
+- Continue the curated portable autocomplete snippet library beyond the
+  contextual starter values delivered in v0.6.3.
 
 The architecture, migration, reference, memory, and qualification work is in
 the [v0.8.0 Active File preview implementation plan](./V0_8_0_ACTIVE_FILE_PREVIEW_IMPLEMENTATION_PLAN.md).
@@ -338,7 +346,7 @@ The long-term research tasks and gates are in the [v2 implementation plan](./V2_
 
 ## Current release status
 
-Typsastra is beta software. The latest release is v0.6.3; see the
-[release notes](./RELEASE_NOTES_V0.6.3.md). Planned development continues with
-v0.6.4 autocomplete snippets, v0.7.0 resource-aware authoring, v0.8.0 portable
-preview scopes, and v0.9.0 prerelease RTL hardening.
+Typsastra is beta software. The latest release is v0.7.0; see the
+[release notes](./RELEASE_NOTES_V0.7.0.md). Planned development continues with
+v0.8.0 portable preview scopes and deferred resource-workflow refinements,
+followed by v0.9.0 prerelease RTL hardening.

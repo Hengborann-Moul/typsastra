@@ -28,6 +28,18 @@ included source normally; changing active tabs should not change preview owner.
 This is intentional. Activate the tab and confirm the large-file notice in the
 editor pane. Inactive large tabs stay lazy to keep workspace startup responsive.
 
+## A Markdown image is unavailable
+
+Confirm that the image exists inside the open workspace and that its path is
+relative to the Markdown file. Remote images and resources outside the
+workspace are blocked intentionally. See [Markdown preview](MARKDOWN_PREVIEW.md).
+
+## Tinymist download stops progressing
+
+Open **Settings → Toolchain** and check whether a validated system Tinymist is
+available. Managed downloads show received-byte progress and retry stalled or
+transient transfers within bounded limits. Verify GitHub access before retrying.
+
 ## Preview is white on Linux
 
 Use the Linux DMA-BUF compatibility setting described in

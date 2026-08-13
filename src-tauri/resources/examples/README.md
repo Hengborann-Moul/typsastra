@@ -1,7 +1,7 @@
 # Typsastra examples
 
 This workspace is a writable learning copy installed in a versioned folder in
-your Documents directory, such as `Typsastra Examples v0.6.0`. Open
+your Documents directory, such as `Typsastra Examples v0.7.0`. Open
 `START-HERE.typ` for the recommended order.
 
 Each application release creates and opens its own examples folder. A newer
@@ -35,3 +35,12 @@ The `06-v0.6-feature-showcase` section provides short exercises for:
 These complement the existing multilingual and research projects. The examples
 do not bundle pathological images or private fonts; use your own assets when you
 want to test those machine-specific workflows.
+
+## v0.7.0 showcase
+
+The `07-v0.7-feature-showcase` section provides exercises for:
+
+- sanitized Markdown live preview, GFM content, workspace links, mixed scripts,
+  local images, and blocked remote resources;
+- Image Tools inspection and Save Optimized Copy using the bundled v0.6 raster
+  assets.

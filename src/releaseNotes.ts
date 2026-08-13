@@ -6,6 +6,17 @@ export type ReleaseSummary = {
 };
 
 const releaseSummaries: Record<string, ReleaseSummary> = {
+  "0.7.0": {
+    version: "0.7.0",
+    title: "Resource-aware authoring",
+    highlights: [
+      "Secure Markdown live preview renders common GFM content, workspace images, and links without starting Tinymist or discarding the current PDF session.",
+      "Image Tools inventories project raster assets, previews resize and re-encoding results, saves optimized copies, and can update their static Typst references.",
+      "Selected-text and diagnostic scrollbar markers, structured compiler errors, persistent tab syntax state, pair editing, and a refined search panel improve editing and navigation.",
+      "Scaled-font cache controls, safer project import, system Tinymist discovery, native macOS menus, and Linux reliability fixes strengthen desktop workflows."
+    ],
+    detailsUrl: "https://github.com/Sovichea/typsastra/releases/tag/v0.7.0"
+  },
   "0.6.3": {
     version: "0.6.3",
     title: "Refined multilingual authoring",

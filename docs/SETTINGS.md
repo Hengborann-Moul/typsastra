@@ -70,7 +70,14 @@ Typsastra project exports include `config.json` and `workspace.json` only from t
 
 ## Toolchain
 
-The Toolchain panel installs stable Tinymist releases and shows each release's embedded Typst version. Tinymist is the only toolchain download: its embedded compiler handles diagnostics, fallback SVG compilation, and PDF export, so a separate Typst installation is not required.
+The Toolchain panel discovers validated Tinymist installations from the system
+`PATH` and installs managed stable releases. It shows the active source,
+Tinymist version, and embedded Typst version. Managed downloads report real
+byte progress, retry transient failures, detect a stalled transfer, and bound
+executable validation time. Tinymist's embedded compiler handles diagnostics,
+fallback SVG compilation, and PDF export, so a separate Typst installation is
+not required. This is toolchain selection and download status, not yet a full
+dependency-health or automated-recovery dashboard.
 
 ## Preview
 
@@ -125,6 +132,31 @@ forward sync remains available from the preview toolbar and keyboard shortcut.
 On Linux, the Preview panel reports the desktop session, WebKitGTK version, graphics vendor when detectable, CPU architecture, and whether the DMA-BUF renderer is active. A Wayland, AMD, and WebKitGTK 2.52.x combination is marked as a reported-risk profile for an all-white preview that may flash briefly while resizing. Detection is advisory and never changes the renderer automatically.
 
 **Disable WebKitGTK DMA-BUF renderer** persists `compatibility.disableWebkitDmabufRenderer` globally. After confirmation and restart, Typsastra sets `WEBKIT_DISABLE_DMABUF_RENDERER=1` before creating the WebKit webview. This workaround may reduce rendering performance and should remain off unless the preview is affected. An environment variable supplied by an AppImage manager, shell, or desktop launcher remains authoritative and is identified separately in the compatibility status.
+
+## Markdown preview
+
+Opening a `.md` or `.markdown` file selects a separate theme-aware Markdown
+surface. It renders common GitHub-Flavored Markdown after sanitization,
+resolves permitted local images relative to the document, opens workspace
+links through Typsastra, blocks automatic remote images, and preserves a
+separate scroll position per Markdown tab. Markdown does not start Tinymist,
+change the configured main Typst document, use Typst completion or spellcheck,
+or replace the retained PDF session.
+
+See the [Markdown preview tutorial](tutorials/MARKDOWN_PREVIEW.md) for supported
+content and security boundaries.
+
+## Image Tools
+
+The sidebar's **Image Tools** workspace inventories local raster assets and
+their indexed static Typst references. It reports encoded and estimated
+decoded size, dimensions, format, usage, and optimization recommendations.
+Resize and PNG/JPEG/WebP conversion settings generate a bounded comparison
+before **Save Optimized Copy** writes a new asset. v0.7.0 can then update all
+indexed exact static references; it does not overwrite the original or offer a
+single-reference rewrite.
+
+See the [Image Tools tutorial](tutorials/IMAGE_TOOLS.md).
 
 ## Fonts and typography
 

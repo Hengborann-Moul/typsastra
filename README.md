@@ -14,7 +14,7 @@ Available packages:
 - Linux: `.AppImage` and `.deb`
 - macOS: experimental, unsigned and unnotarized build
 
-Typsastra is currently beta software. The latest release is v0.6.3.
+Typsastra is currently beta software. The latest release is v0.7.0.
 
 Typsastra is an open-source project and does not plan to purchase Apple
 Developer ID signing or notarization. On macOS, Gatekeeper may therefore report
@@ -43,13 +43,31 @@ It serves writers and researchers whose languages are not always well supported 
 
 Khmer is the first language with deep support, including tailored cursor and deletion behavior, spellcheck, and word completion. Khmer demonstrates the depth Typsastra aims to provide; it is not the boundary of the project. The editing-policy and language-provider architecture is designed so other languages can add their own behavior without changing or weakening Khmer support.
 
-## v0.6.0 feature showcase
+## v0.7.0 feature showcase
 
-Typsastra v0.6.0 focuses on responsive image-heavy authoring, document typography, private font workflows, and clearer navigation between Typst source and the rendered document.
+Typsastra v0.7.0 adds resource-aware image workflows and secure Markdown live
+preview while retaining the Draft Preview, document typography, private-font,
+and source-navigation features introduced throughout v0.6.x.
 
 Choose **Open Examples** from the welcome screen and follow
-`06-v0.6-feature-showcase` for editable Draft Preview, image-diagnostic,
-preview-navigation, and private-font exercises.
+`07-v0.7-feature-showcase` for Markdown preview guidance, then use
+`06-v0.6-feature-showcase/01-draft-preview-and-image-guidance` to exercise the
+new Image Tools workspace with bundled raster assets.
+
+### Markdown live preview
+
+Opening a `.md` or `.markdown` file activates a separate sanitized preview for
+common GitHub-Flavored Markdown. Local images and workspace links are resolved
+inside the open project, remote resources are not loaded automatically, and
+the existing Typst PDF session remains available when returning to source.
+
+### Image Tools
+
+Image Tools inventories project raster images, reports source and decoded
+sizes, finds static Typst references, and prepares bounded resize or re-encoding
+previews. Optimizations are saved as new copies; source images are not silently
+overwritten. Authors may explicitly update the indexed static references to
+the saved copy.
 
 ### Draft Preview
 
@@ -174,9 +192,12 @@ Typsastra also treats a document as a project rather than an isolated file. A re
 - English spellcheck bundled by default, with optional Hunspell-compatible dictionaries for additional languages.
 - Independent controls for script-aware editing, spellcheck, and typing suggestions.
 - Document-script language routing: each configured script can select one spellcheck and word-completion provider, with no keyboard or same-script guessing.
-- Tinymist diagnostics and managed Typst tooling.
+- Tinymist diagnostics with validated system or managed toolchain selection.
 - Hardware-accelerated, virtualized PDF preview designed for responsive long-document scrolling and constrained memory use.
 - Direct in-app PDF viewing with editable current-page navigation.
+- Sanitized Markdown live preview with workspace-bound local resources.
+- Project Image Tools for raster inspection, optimization previews, optimized
+  copies, and explicit static-reference updates.
 - Main-document preview workflows for multi-file projects.
 - Explicit source-to-preview navigation through the preview toolbar or keyboard shortcut.
 - Portable `.typsastra` workspace state, lazy restored tabs, and confirmation before loading large files.
@@ -238,9 +259,12 @@ the implementation details and current limitations.
 1. Download the latest installer from [Releases](https://github.com/Sovichea/typsastra/releases/latest).
 2. Install and open Typsastra.
 3. Open a Typst workspace or use an included example from the welcome screen.
-4. Configure fonts, language tools, preview behavior, and the managed Tinymist toolchain in Settings.
+4. Configure fonts, language tools, preview behavior, and a validated system or
+   managed Tinymist toolchain in Settings.
 
-Typsastra downloads and manages Tinymist for preview and diagnostics. A separate Typst installation is not required for normal use.
+Typsastra can use a compatible validated Tinymist from the system `PATH` or
+download a managed stable release for preview and diagnostics. A separate Typst
+installation is not required for normal use.
 
 ## Documentation
 
@@ -251,8 +275,11 @@ Typsastra downloads and manages Tinymist for preview and diagnostics. A separate
 - [Document typography](./docs/tutorials/DOCUMENT_TYPOGRAPHY.md)
 - [Long-document workflow](./docs/tutorials/LONG_DOCUMENT_WORKFLOW.md)
 - [PDF preview and source synchronization](./docs/tutorials/PDF_PREVIEW_AND_SYNC.md)
+- [Markdown live preview](./docs/tutorials/MARKDOWN_PREVIEW.md)
+- [Image Tools](./docs/tutorials/IMAGE_TOOLS.md)
 - [Roadmap](./docs/ROADMAP.md)
 - [Troubleshooting](./docs/TROUBLESHOOTING.md)
+- [Typsastra v0.7.0 release notes](./docs/RELEASE_NOTES_V0.7.0.md)
 - [Typsastra v0.6.3 release notes](./docs/RELEASE_NOTES_V0.6.3.md)
 - [Typsastra v0.6.2 release notes](./docs/RELEASE_NOTES_V0.6.2.md)
 

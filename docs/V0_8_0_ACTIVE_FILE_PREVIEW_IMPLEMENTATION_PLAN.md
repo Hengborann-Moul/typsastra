@@ -32,6 +32,26 @@ v0.8.0 retains the qualified PDF renderer for both preview scopes. A separate
 SVG live renderer is outside this milestone and may be reconsidered only after
 v1.0 using measured compiled-output and runtime-resource budgets.
 
+### Deferred v0.7 resource workflows
+
+The original v0.7 roadmap included work that was not part of the actual v0.7.0
+implementation. v0.8.0 also owns these explicitly separate workstreams:
+
+- confirmed, atomic, recoverable replacement of an original image;
+- choosing one selected static image reference or all exact references when
+  applying a saved optimized copy;
+- clearer document-language inheritance and provider assignment;
+- toolchain validation and recovery actions beyond v0.7.0 source/provenance,
+  version, download-progress, retry, stall, and timeout reporting;
+- font-dependency health for missing, moved, ambiguous, or unavailable fonts;
+- published qualification benchmarks for the resource workflows; and
+- continued curated portable autocomplete snippets beyond the contextual
+  starter values delivered in v0.6.3.
+
+These tasks must preserve the same portability and explicit-consent boundaries
+as the preview architecture, but they do not change Active File compiler
+ownership or eligibility.
+
 ### Decoded-image preflight dependency
 
 The focused v0.5.3 release owns correction and qualification of the
@@ -261,8 +281,8 @@ its portable entry point plus Typsastra's lightweight reference catalog.
 
 ## Release gates
 
-- All preview entry points compile with the managed compiler and ordinary Typst
-  without `.typsastra` source dependencies.
+- All preview entry points compile with the selected validated Tinymist
+  toolchain and ordinary Typst without `.typsastra` source dependencies.
 - Active File never previews an import-only, unrelated, or unsupported file.
 - The unavailable state never exposes a stale PDF as if it belonged to the
   active file.

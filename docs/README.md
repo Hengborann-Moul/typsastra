@@ -14,8 +14,10 @@ the reference documents when you need exact behavior or contributor contracts.
 6. [Installing language providers](tutorials/LANGUAGE_PROVIDER_INSTALLATION.md)
 7. [Long-document workflow](tutorials/LONG_DOCUMENT_WORKFLOW.md)
 8. [PDF preview and source synchronization](tutorials/PDF_PREVIEW_AND_SYNC.md)
-9. [Project import and export](tutorials/PROJECT_IMPORT_AND_EXPORT.md)
-10. [Troubleshooting guide](tutorials/TROUBLESHOOTING.md)
+9. [Markdown live preview](tutorials/MARKDOWN_PREVIEW.md)
+10. [Image Tools](tutorials/IMAGE_TOOLS.md)
+11. [Project import and export](tutorials/PROJECT_IMPORT_AND_EXPORT.md)
+12. [Troubleshooting guide](tutorials/TROUBLESHOOTING.md)
 
 ## User reference
 
@@ -40,6 +42,7 @@ the reference documents when you need exact behavior or contributor contracts.
 ## Releases and plans
 
 - [Roadmap](ROADMAP.md)
+- [v0.7.0 release notes](RELEASE_NOTES_V0.7.0.md)
 - [v0.6.3 release notes](RELEASE_NOTES_V0.6.3.md)
 - [v0.6.2 release notes](RELEASE_NOTES_V0.6.2.md)
 - [v0.6.1 release notes](RELEASE_NOTES_V0.6.1.md)
@@ -50,8 +53,8 @@ the reference documents when you need exact behavior or contributor contracts.
 - [v0.5.0 release notes](RELEASE_NOTES_V0.5.0.md)
 - [v0.5.1 implementation plan](V0_5_1_EXAMPLES_DOCUMENTATION_IMPLEMENTATION_PLAN.md)
 - [v0.6.0 Draft Preview implementation plan](V0_6_0_DRAFT_PREVIEW_IMPLEMENTATION_PLAN.md)
-- [v0.8.0 Active File preview implementation plan](V0_8_0_ACTIVE_FILE_PREVIEW_IMPLEMENTATION_PLAN.md)
 - [v0.7.0 Markdown live preview implementation plan](V0_7_0_MARKDOWN_LIVE_PREVIEW_IMPLEMENTATION_PLAN.md)
+- [v0.8.0 Active File preview implementation plan](V0_8_0_ACTIVE_FILE_PREVIEW_IMPLEMENTATION_PLAN.md)
 - [v1.0 implementation plan](V1_RELEASE_IMPLEMENTATION_PLAN.md)
 
 First-class RTL editor behavior is planned for v0.9.0. Current Arabic and

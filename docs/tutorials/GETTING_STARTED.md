@@ -8,7 +8,7 @@ projects. A project is a directory containing ordinary Typst source and assets.
 
 To learn without changing your own files, choose **Open Examples**. Typsastra
 installs writable copies in a versioned Documents folder such as
-`Typsastra Examples v0.6.0` and opens `START-HERE.typ`. Every release uses a new
+`Typsastra Examples v0.7.0` and opens `START-HERE.typ`. Every release uses a new
 folder, so upgrading never overwrites or silently reuses an older example copy.
 
 ## Choose the main document
@@ -39,6 +39,8 @@ expensive assets but never resizes or re-encodes them automatically.
 
 Try the bundled `06-v0.6-feature-showcase` examples for Draft Preview, image
 guidance, preview links, manual synchronization, and private local fonts.
+The `07-v0.7-feature-showcase` section adds a Markdown live-preview fixture and
+an Image Tools walkthrough using those bundled raster assets.
 
 ## Save and export
 

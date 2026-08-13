@@ -23,8 +23,13 @@ It excludes:
 Recipients install required fonts separately. Toolchain binding improves source
 compatibility but does not claim identical rendering without the same fonts.
 
-Import validates the archive before extraction, compares toolchains, verifies
-hashes, extracts transactionally, and never overwrites an existing destination.
+Import validates the archive before extraction and then opens a cancellable
+destination step. You can edit the proposed portable folder name before
+continuing. Typsastra rejects invalid or reserved names, checks for destination
+conflicts, repeats preflight before extraction, compares toolchains, verifies
+hashes in a hidden staging directory, and promotes the completed project
+transactionally. It never overwrites an existing destination or presents a
+partially extracted project as successful.
 
 ## Source ZIP
 

@@ -16,9 +16,9 @@ Markdown preview is a separate presentation surface:
 other text    -> editor only
 ```
 
-## Implementation status
+## Implementation status — released in v0.7.0
 
-The first functional slice is implemented:
+The implementation shipped in v0.7.0:
 
 - `.md` and `.markdown` files use CodeMirror's Markdown language support;
 - Markdown is parsed in memory with GitHub-Flavored Markdown enabled and is
@@ -34,9 +34,11 @@ The first functional slice is implemented:
 - the bounded PDF preview session stays mounted behind the Markdown surface so
   returning to Typst does not discard the existing document.
 
-Remaining release qualification includes runtime smoke testing on WebView2,
-WebKitGTK, and WKWebView, measuring large Markdown documents, and verifying the
-retained-PDF memory budget while repeatedly switching renderers.
+Automated contracts cover routing, sanitization, resources, stale-render
+rejection, scroll restoration, and lifecycle isolation. Runtime smoke testing
+on WebView2, WebKitGTK, and WKWebView, large-document measurement, and repeated
+renderer-switch memory measurement remain ongoing compatibility qualification,
+not claims made by the v0.7.0 release notes.
 
 ## Product scope
 

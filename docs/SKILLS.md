@@ -9,7 +9,7 @@ This document serves as the core knowledge base and skill reference for the Typs
 - **Editor Engine:** CodeMirror 6
 - **Bundled Fonts:** Only MiSans Latin (UI and Latin-script fallback) and Fira Mono (default code font) are bundled. The Rust font store installs both for the current user on first launch.
 - **Language Server:** Tinymist LSP spawned by the Rust backend and bridged to the frontend over Tauri IPC (`lsp-rx`, `lsp-status`, `send_lsp_message`). Tinymist preview assets may still use local `127.0.0.1` ports.
-- **Toolchain:** Tinymist is the single managed toolchain. `src-tauri/src/toolchain.rs` installs stable platform binaries in Tauri app-local data; compilation and export use Tinymist's embedded Typst compiler. Do not download or require a separate `typst` executable.
+- **Toolchain:** Tinymist is the single compiler toolchain. `src-tauri/src/toolchain.rs` discovers and validates compatible Tinymist executables on the system `PATH` and can install stable platform binaries in Tauri app-local data. Compilation and export use the selected Tinymist executable's embedded Typst compiler; do not download or require a separate `typst` executable.
 
 ## 2. Architecture & Process Boundaries
 The application operates across distinct processes and contexts:
@@ -28,7 +28,7 @@ The application operates across distinct processes and contexts:
 - **CodeMirror Integration (`editor/`):** Contains `extensions.ts` and `themes.ts`. Implements a highly customized, dark-themed Unicode-compliant editor layout with basic Typst token matching.
 - **LSP Interface (`compiler/`):** `lspTransport.ts` exclusively owns Tauri IPC transport, `jsonRpc.ts` validates the JSON-RPC boundary, and `lsp.ts` maps typed Tinymist operations such as changes, diagnostics, hover/completion, preview startup, and inverse sync.
 - **Preview (`preview/`):** Preview tasks use deterministic unique IDs per root and the user-selected refresh policy. Imported files currently use the configured main-document preview. Independent standalone roots remain disabled pending the portable v0.8.0 replacement and v1.x hardening under `V1X-P.1`.
-- **Toolchain UI (`toolchain/`):** Owns stable Tinymist release selection and displays the embedded Typst version read-only.
+- **Toolchain UI (`toolchain/`):** Owns validated system-`PATH` and managed stable Tinymist selection, source/provenance display, download progress, and the embedded Typst version read-only.
 
 ## 3. Implementation Rules & Best Practices
 1. **Never use React/Vue/Svelte:** This project strictly uses `document.createElement`, `DocumentFragment`, and Vanilla TS/HTML/CSS for maximum performance and minimum footprint.
@@ -42,7 +42,7 @@ The application operates across distinct processes and contexts:
 9. **Cross-Platform Compatibility:** Ensure cross-platform compatibility in every code edit and fix. When dealing with file paths, system paths, line endings, or OS-specific APIs, always implement solutions that work robustly across Windows, macOS, and Linux (e.g., using `filePathKey()` for case-insensitive path comparisons on Windows, or `@tauri-apps/api/path` utilities instead of hardcoding delimiters).
 
 ## 4. Common Troubleshooting
-- **LSP Offline Warnings:** Check the Toolchain settings panel and the managed Tinymist binary. Frontend JSON-RPC uses Tauri IPC; only preview assets use random loopback ports.
+- **LSP Offline Warnings:** Check the Toolchain settings panel and the selected validated system or managed Tinymist binary. Frontend JSON-RPC uses Tauri IPC; only preview assets use random loopback ports.
 - **LNK1104 msvcrt.lib / Rust Compile Errors on Windows:** Tauri requires the MSVC toolchain. Ensure that **Desktop development with C++** and the **Windows 10/11 SDK** are installed via the Visual Studio Installer.
 
 ## 5. Development Cycle & AI Session Handover

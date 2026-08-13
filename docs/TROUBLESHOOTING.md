@@ -74,7 +74,19 @@ bun --version
 
 ## Tinymist cannot be downloaded
 
-Verify GitHub access and retry from **Settings → Toolchain**. A system `typst` executable does not replace the managed Tinymist requirement.
+Open **Settings → Toolchain** first. A compatible validated Tinymist found on
+the system `PATH` can be selected without a managed download. Otherwise verify
+GitHub access and retry the managed release. The progress indicator reports
+received bytes; an unchanged transfer is treated as stalled and retried within
+bounded limits. A system `typst` executable is not a Tinymist replacement.
+
+## Markdown preview blocks an image or link
+
+Local Markdown images must resolve inside the open workspace. Missing files,
+paths outside the workspace, unsafe URL schemes, and remote images are blocked;
+remote resources are never fetched automatically. Move a required local asset
+into the workspace and use a relative Markdown path. Open an external link only
+through the explicit link action.
 
 ## Preview or inverse sync problems
 

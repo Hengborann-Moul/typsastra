@@ -16,6 +16,11 @@ bundling a pathological image.
 7. Replace an image path with a high-resolution raster of your own to exercise
    the gutter, Problems, and preview-toolbar warnings.
 8. Export a PDF and confirm that export uses the original images.
+9. Open **Image Tools** in the sidebar, select a bundled raster asset, adjust
+   resize or output-format settings, and preview the comparison.
+10. Choose **Save Optimized Copy** under a new name. If you enable reference
+    updates, v0.7.0 updates all indexed exact static references; it does not
+    overwrite the original or update only one selected occurrence.
 
 The bundled assets are intentionally modest. A high-resolution or pathological
 image has a decoded pixel workload disproportionate to its displayed size.
@@ -26,4 +31,3 @@ rendering.
 Draft substitution is qualified for standalone image calls and common images
 inside clipped blocks. Other compositions can produce different placeholder
 geometry or interaction.
-

@@ -66,6 +66,15 @@ English and Khmer are bundled. Optional providers are installed from Settings
 - `03-private-local-fonts`: machine-local font directories, source portability,
   fallback order, and export boundaries.
 
+== 07. v0.7.0 feature showcase
+
+- `01-markdown-live-preview/README.md`: sanitized Markdown rendering, common
+  GFM structures, workspace links and images, mixed scripts, and blocked remote
+  resources.
+- Open `06-v0.6-feature-showcase/01-draft-preview-and-image-guidance/main.typ`,
+  then choose Image Tools to inspect its bundled raster assets and preview an
+  optimized copy.
+
 Open a `main.typ` file from Explorer. Set it as the project main file when the
 example contains included files. Your installed examples are writable. Each
 Typsastra release uses a new versioned examples folder, so a future update does
