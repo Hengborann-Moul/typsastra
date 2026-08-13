@@ -1,8 +1,14 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { EditorTab } from "../editor/editorTab";
-import { fileExtension, isBinaryImagePath, isTypstDocumentPath } from "../platform/fileTypes";
+import {
+  fileExtension,
+  isBinaryImagePath,
+  isMarkdownDocumentPath,
+  isTypstDocumentPath,
+} from "../platform/fileTypes";
 import type { PreviewRenderMode } from "../settings";
 import type { ImagePreviewController } from "./imagePreviewController";
+import type { MarkdownPreviewFrame } from "./markdownPreviewFrame";
 import type { PreviewFrame } from "./previewFrame";
 import {
   previewLspMainPath,
@@ -19,6 +25,8 @@ function normalizeEditorText(text: string): string {
 export interface PreviewContentDependencies {
   previewFrame: PreviewFrame;
   imagePreview: ImagePreviewController;
+  markdownPreview: MarkdownPreviewFrame;
+  setMarkdownPreviewActive(active: boolean): void;
   isImageToolActive(): boolean;
   getActiveFilePath(): string | null;
   getPinnedMainFilePath(): string | null;
@@ -47,6 +55,21 @@ export interface PreviewContentDependencies {
 /** Owns selection of the active preview surface and restoration of document preview content. */
 export class PreviewContentController {
   public constructor(private readonly deps: PreviewContentDependencies) {}
+
+  public suspendDocumentPreviewForImageTools(): void {
+    this.deps.markdownPreview.deactivate();
+    this.deps.setMarkdownPreviewActive(false);
+  }
+
+  public restoreMarkdownPreviewIfActive(): boolean {
+    const tab = this.deps.getActiveTab();
+    if (!tab || !isMarkdownDocumentPath(tab.path)) return false;
+    this.deps.imagePreview.clear();
+    this.deps.setMarkdownPreviewActive(true);
+    this.deps.markdownPreview.activate(tab.path, tab.content);
+    this.deps.updateActionsToolbar(tab.path);
+    return true;
+  }
 
   public noMainFileMessage(): string {
     return (

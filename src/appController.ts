@@ -636,7 +636,10 @@ export class TypsastraWorkspaceController {
       );
     },
     invalidatePreview: reason => this.invalidatePreviewWork(reason),
-    showImageTools: () => this.imageToolsController.show(),
+    showImageTools: () => {
+      this.previewContentController.suspendDocumentPreviewForImageTools();
+      this.imageToolsController.show();
+    },
     hideImageTools: () => this.imageToolsController.hide(),
     showRestoringPreview: () => this.previewFrame.setMessage(
       `<div class="preview-disabled-placeholder"><div class="guardrail-placeholder-content">` +
@@ -644,7 +647,11 @@ export class TypsastraWorkspaceController {
       `<div class="preview-disabled-msg">Preparing the active document preview.</div>` +
       `</div></div>`,
     ),
-    restoreDocumentPreview: () => void this.refreshActivePreviewRoot(false),
+    restoreDocumentPreview: () => {
+      if (!this.previewContentController.restoreMarkdownPreviewIfActive()) {
+        void this.refreshActivePreviewRoot(false);
+      }
+    },
     setMainPreviewVisibleWhileUndocked: visible =>
       this.layoutController.setMainPreviewVisibleWhileUndocked(visible),
     reconcileDockedPaneWidths: () => this.layoutController.reconcileDockedPaneWidths(),
@@ -1414,6 +1421,8 @@ export class TypsastraWorkspaceController {
   private readonly previewContentController = new PreviewContentController({
     previewFrame: this.previewFrame,
     imagePreview: this.imagePreviewController,
+    markdownPreview: this.markdownPreviewFrame,
+    setMarkdownPreviewActive: active => this.setMarkdownPreviewActive(active),
     isImageToolActive: () => this.sidebarController.activeTool === "images",
     getActiveFilePath: () => this.activeFilePath,
     getPinnedMainFilePath: () => this.pinnedMainFilePath,

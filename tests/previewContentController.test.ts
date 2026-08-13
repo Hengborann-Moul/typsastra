@@ -7,6 +7,10 @@ describe("preview content controller", () => {
     ).text();
 
     expect(source).toContain("export interface PreviewContentDependencies");
+    expect(source).toContain("public suspendDocumentPreviewForImageTools(): void");
+    expect(source).toContain("this.deps.markdownPreview.deactivate();");
+    expect(source).toContain("public restoreMarkdownPreviewIfActive(): boolean");
+    expect(source).toContain("this.deps.markdownPreview.activate(tab.path, tab.content);");
     expect(source).toContain("public renderImageToolPreview(");
     expect(source).toContain("public renderInteractiveImageViewer(");
     expect(source).toContain('setLoading("Preparing image preview…", false)');
@@ -21,6 +25,8 @@ describe("preview content controller", () => {
     const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
 
     expect(source).toContain("new PreviewContentController({");
+    expect(source).toContain("this.previewContentController.suspendDocumentPreviewForImageTools();");
+    expect(source).toContain("this.previewContentController.restoreMarkdownPreviewIfActive()");
     expect(source).toContain("return this.previewContentController.noMainFileMessage();");
     expect(source).toContain("this.previewContentController.renderImageToolPreview(source, imagePath);");
     expect(source).toContain("return this.previewContentController.refreshActivePreviewRoot(forceRender);");
