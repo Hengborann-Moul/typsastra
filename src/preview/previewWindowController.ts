@@ -1,6 +1,6 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { applyUIThemeVariables } from "../editor/extensions";
-import type { ThemeName } from "../settings";
+import type { PreviewColorMode, ThemeName } from "../settings";
 import type { PdfUpdatePayload } from "./pdfPreviewRenderController";
 import type { DraftPreviewController } from "./draftPreviewController";
 import type { PreviewFrame } from "./previewFrame";
@@ -10,6 +10,8 @@ export type UndockedPreviewAction = "export-pdf" | "open-external";
 export interface PreviewWindowDependencies {
   loadSettings(): Promise<void>;
   theme(): ThemeName;
+  previewColorMode(): PreviewColorMode;
+  setPreviewColorMode(mode: PreviewColorMode): void;
   previewFrame: PreviewFrame;
   draftPreview: DraftPreviewController;
   zoomIn(): void;
@@ -60,7 +62,10 @@ export class PreviewWindowController {
     await getCurrentWindow().show();
 
     const { listen, emit } = await import("@tauri-apps/api/event");
-    this.initializeOptions(action => emit("preview-window-action", action));
+    this.initializeOptions(
+      action => emit("preview-window-action", action),
+      mode => emit("preview-color-mode-request", mode),
+    );
 
     document.getElementById("preview-content-mode-toggle")?.addEventListener("click", () => {
       const requestedMode = deps.draftPreview.mode === "draft" ? "normal" : "draft";
@@ -71,6 +76,10 @@ export class PreviewWindowController {
 
     await listen<ThemeName>("preview-theme-update", event => {
       void applyUIThemeVariables(event.payload).then(() => deps.previewFrame.syncTheme());
+    });
+
+    await listen<PreviewColorMode>("preview-color-mode-update", event => {
+      deps.setPreviewColorMode(event.payload);
     });
 
     await listen<string | PdfUpdatePayload>("pdf-update", event => {
@@ -97,7 +106,10 @@ export class PreviewWindowController {
     void emit("preview-window-ready");
   }
 
-  private initializeOptions(requestMainWindowAction: (action: UndockedPreviewAction) => Promise<void>): void {
+  private initializeOptions(
+    requestMainWindowAction: (action: UndockedPreviewAction) => Promise<void>,
+    requestColorMode: (mode: PreviewColorMode) => Promise<void>,
+  ): void {
     const deps = this.deps;
     const button = document.getElementById("preview-menu-btn");
     const menu = document.getElementById("context-menu");
@@ -108,10 +120,26 @@ export class PreviewWindowController {
       delete menu.dataset.menuKind;
     };
     const show = () => {
+      const colorMode = deps.previewColorMode();
+      const colorItem = (mode: PreviewColorMode, label: string) => `
+        <div class="dropdown-item preview-color-mode-item" data-preview-color-mode="${mode}" role="menuitemradio" aria-checked="${colorMode === mode}">
+          <span>${label}</span><span class="preview-color-mode-check" aria-hidden="true">${colorMode === mode ? "✓" : ""}</span>
+        </div>`;
       menu.innerHTML = `
         <div class="dropdown-item" data-preview-action="zoom-out">Zoom Out</div>
         <div class="dropdown-item" data-preview-action="zoom-fit">Fit to Width</div>
         <div class="dropdown-item" data-preview-action="zoom-in">Zoom In</div>
+        <div class="dropdown-separator"></div>
+        <div class="dropdown-submenu">
+          <div class="dropdown-item dropdown-submenu-trigger" role="menuitem" tabindex="0" aria-haspopup="menu" aria-expanded="false">
+            <span>Preview colors</span><span class="dropdown-submenu-arrow" aria-hidden="true">›</span>
+          </div>
+          <div class="dropdown-submenu-menu dropdown-submenu-menu-left context-preview-color-submenu-menu" role="menu">
+            ${colorItem("document", "Document colors")}
+            ${colorItem("dark", "Dark preview")}
+            ${colorItem("inverted", "Inverted preview (experimental)")}
+          </div>
+        </div>
         <div class="dropdown-separator"></div>
         <div class="dropdown-item" data-preview-action="export-pdf">Export PDF</div>
         <div class="dropdown-item" data-preview-action="open-external">Open in External Viewer</div>
@@ -131,6 +159,24 @@ export class PreviewWindowController {
       else show();
     });
     menu.addEventListener("click", event => {
+      const trigger = (event.target as HTMLElement).closest<HTMLElement>(".dropdown-submenu-trigger");
+      if (trigger) {
+        event.preventDefault();
+        event.stopPropagation();
+        const submenu = trigger.nextElementSibling as HTMLElement | null;
+        const expanded = !submenu?.classList.contains("submenu-open");
+        submenu?.classList.toggle("submenu-open", expanded);
+        trigger.setAttribute("aria-expanded", String(expanded));
+        return;
+      }
+      const colorMode = (event.target as HTMLElement)
+        .closest<HTMLElement>("[data-preview-color-mode]")?.dataset.previewColorMode as PreviewColorMode | undefined;
+      if (colorMode) {
+        deps.setPreviewColorMode(colorMode);
+        void requestColorMode(colorMode);
+        hide();
+        return;
+      }
       const action = (event.target as HTMLElement).closest<HTMLElement>("[data-preview-action]")?.dataset.previewAction;
       if (!action) return;
       hide();

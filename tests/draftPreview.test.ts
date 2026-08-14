@@ -136,7 +136,8 @@ describe("Draft Preview", () => {
   });
 
   test("initializes preview options inside the undocked window", () => {
-    expect(previewWindowController).toContain('this.initializeOptions(action => emit("preview-window-action", action))');
+    expect(previewWindowController).toContain("this.initializeOptions(");
+    expect(previewWindowController).toContain('action => emit("preview-window-action", action)');
     expect(previewWindowController).toContain('data-preview-action="zoom-fit"');
     expect(previewWindowController).toContain('data-preview-action="export-pdf"');
     expect(previewWindowController).toContain('data-preview-action="open-external"');

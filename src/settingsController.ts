@@ -5,6 +5,7 @@ import {
   cloneDefaultAppSettings,
   normalizeAppSettings,
   type AppSettings,
+  type PreviewColorMode,
   type PreviewRenderMode,
   type TerminologyEntry,
   type ThemeName
@@ -261,6 +262,9 @@ export class SettingsController {
       this.populatePanel();
     });
     onChange("settings-cursor-sync", (settings, control) => { settings.preview.cursorSync = (control as HTMLInputElement).checked; });
+    onChange("settings-preview-color-mode", (settings, control) => {
+      settings.preview.colorMode = control.value as PreviewColorMode;
+    });
     onChange("settings-sync-debounce", (settings, control) => { settings.preview.syncDebounceMs = Number(control.value); });
     onChange("settings-forward-sync-timeout", (settings, control) => {
       settings.preview.forwardSyncTimeoutMs = Number(control.value);
@@ -548,6 +552,7 @@ export class SettingsController {
     setValue("settings-tab-size", String(editor.tabSize));
     const effectivePreviewRenderMode = this.workspacePreviewRenderMode ?? preview.renderMode;
     setValue("settings-preview-render-mode", effectivePreviewRenderMode);
+    setValue("settings-preview-color-mode", preview.colorMode);
     setValue("settings-sync-debounce", String(preview.syncDebounceMs));
     setValue("settings-forward-sync-timeout", String(preview.forwardSyncTimeoutMs));
     setValue("settings-highlight-duration", String(preview.highlightDurationMs));

@@ -21,6 +21,7 @@ describe("application settings", () => {
     expect(settings.editor.autoSave).toBe(true);
     expect(settings.editor.autoSaveIntervalSeconds).toBe(30);
     expect(settings.preview.renderMode).toBe("on-save");
+    expect(settings.preview.colorMode).toBe("document");
     expect(settings.preview.syncDebounceMs).toBe(defaultAppSettings.preview.syncDebounceMs);
     expect(settings.preview.forwardSyncTimeoutMs).toBe(5000);
     expect(settings.preview.khmerRenderPreparation).toBe(false);
@@ -36,6 +37,7 @@ describe("application settings", () => {
       editor: { tabSize: 3, codeFont: "MiSans Latin", unicodeFont: "unknown-font" },
       preview: {
         renderMode: "sometimes",
+        colorMode: "sepia",
         syncDebounceMs: 1,
         forwardSyncTimeoutMs: 50000,
         highlightDurationMs: 50000
@@ -56,6 +58,7 @@ describe("application settings", () => {
     expect(settings.preview.forwardSyncTimeoutMs).toBe(30000);
     expect(settings.preview.highlightDurationMs).toBe(10000);
     expect(settings.preview.renderMode).toBe("on-save");
+    expect(settings.preview.colorMode).toBe("document");
     expect(settings.toolchain.tinymistVersion).toBeNull();
   });
 
@@ -130,6 +133,12 @@ describe("application settings", () => {
   test("preserves both supported preview render modes", () => {
     expect(normalizeAppSettings({ preview: { renderMode: "on-save" } }).preview.renderMode).toBe("on-save");
     expect(normalizeAppSettings({ preview: { renderMode: "on-type" } }).preview.renderMode).toBe("on-type");
+  });
+
+  test("preserves supported preview color modes", () => {
+    expect(normalizeAppSettings({ preview: { colorMode: "document" } }).preview.colorMode).toBe("document");
+    expect(normalizeAppSettings({ preview: { colorMode: "dark" } }).preview.colorMode).toBe("dark");
+    expect(normalizeAppSettings({ preview: { colorMode: "inverted" } }).preview.colorMode).toBe("inverted");
   });
 
   test("keeps the Linux WebKit DMA-BUF compatibility override", () => {

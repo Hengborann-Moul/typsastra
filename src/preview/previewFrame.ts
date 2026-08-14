@@ -53,6 +53,7 @@ import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { parsePreviewCompilerDiagnostic, type TypstSourceLocation } from "../compiler/previewError";
 import { PERFORMANCE_BUDGETS, type PerformanceMetric } from "../performance/diagnostics";
 import { formatFileSize } from "../workspace/largeFileOpening";
+import type { PreviewColorMode } from "../settings";
 import {
   previewLinkModifierAfterKeyboardEvent,
   previewLinkModifierPressed,
@@ -61,6 +62,7 @@ import {
 } from "./previewLinks";
 import { pageDimensionsChanged, pagesToEvict, visiblePageIndexes } from "./virtualization";
 import { PreviewMotionController } from "./previewMotion";
+import { applyDarkPreviewPixels } from "./darkPreview";
 import {
   PreviewRenderScheduler,
   type PreviewRenderReason,
@@ -179,6 +181,8 @@ export class PreviewFrame {
   private pendingRestoredScrollTop: number | null = null;
   private previewPointerInside = false;
   private previewLinkModifierHeld = false;
+  private previewColorMode: PreviewColorMode = "document";
+  private readonly pageImageCoordinates = new WeakMap<HTMLCanvasElement, readonly number[]>();
 
   constructor(
     private readonly pane: HTMLElement,
@@ -267,6 +271,82 @@ export class PreviewFrame {
     copy("--ui-bg", "--preview-ui-bg", "#fcfcfc");
     copy("--ui-header-text", "--preview-ui-header", "#616161");
     copy("--ui-accent-color", "--preview-ui-accent", TYPSASTRA_GREEN);
+    this.applyColorMode(root);
+  }
+
+  public setColorMode(mode: PreviewColorMode): void {
+    this.previewColorMode = mode;
+    this.syncResidentColorCanvases();
+    const root = this.iframe?.contentDocument?.documentElement;
+    if (root) this.applyColorMode(root);
+  }
+
+  public get colorMode(): PreviewColorMode {
+    return this.previewColorMode;
+  }
+
+  private applyColorMode(root: HTMLElement): void {
+    root.dataset.previewColorMode = this.previewColorMode;
+  }
+
+  private syncResidentColorCanvases(): void {
+    const doc = this.iframe?.contentDocument;
+    if (!doc) return;
+    for (const original of doc.querySelectorAll<HTMLCanvasElement>(".pdf-page-canvas-original")) {
+      const slot = original.closest<HTMLElement>(".pdf-page-container");
+      if (!slot) continue;
+      if (this.previewColorMode === "dark") this.installDarkCanvas(slot, original);
+      else this.removeDarkCanvas(slot);
+    }
+  }
+
+  private installDarkCanvas(slot: HTMLElement, original: HTMLCanvasElement): void {
+    this.removeDarkCanvas(slot);
+    const darkCanvas = original.ownerDocument.createElement("canvas");
+    darkCanvas.className = "pdf-page-canvas pdf-page-canvas-dark";
+    darkCanvas.width = original.width;
+    darkCanvas.height = original.height;
+    const context = darkCanvas.getContext("2d", { willReadFrequently: true });
+    if (!context) {
+      releaseCanvas(darkCanvas);
+      return;
+    }
+
+    context.drawImage(original, 0, 0);
+    const darkPixels = context.getImageData(0, 0, darkCanvas.width, darkCanvas.height);
+    applyDarkPreviewPixels(darkPixels.data);
+    context.putImageData(darkPixels, 0, 0);
+
+    const coordinates = this.pageImageCoordinates.get(original) ?? [];
+    for (let index = 0; index + 5 < coordinates.length; index += 6) {
+      const x1 = coordinates[index] * original.width;
+      const y1 = coordinates[index + 1] * original.height;
+      const x2 = coordinates[index + 2] * original.width;
+      const y2 = coordinates[index + 3] * original.height;
+      const x3 = coordinates[index + 4] * original.width;
+      const y3 = coordinates[index + 5] * original.height;
+      const x4 = x2 + x3 - x1;
+      const y4 = y2 + y3 - y1;
+      context.save();
+      context.beginPath();
+      context.moveTo(x1, y1);
+      context.lineTo(x2, y2);
+      context.lineTo(x4, y4);
+      context.lineTo(x3, y3);
+      context.closePath();
+      context.clip();
+      context.drawImage(original, 0, 0);
+      context.restore();
+    }
+
+    original.insertAdjacentElement("afterend", darkCanvas);
+  }
+
+  private removeDarkCanvas(slot: HTMLElement): void {
+    for (const canvas of slot.querySelectorAll<HTMLCanvasElement>(".pdf-page-canvas-dark")) {
+      releaseCanvas(canvas);
+      canvas.remove();
+    }
   }
 
   public suspendResizeLayout(): void {
@@ -679,6 +759,14 @@ export class PreviewFrame {
       #viewer-container{box-sizing:border-box;min-width:100%;width:max-content;padding:20px;display:flex;flex-direction:column;gap:20px}
       .pdf-page-container{position:relative;box-sizing:border-box;flex:none;margin:0 auto;background:#fff;box-shadow:0 2px 10px rgba(0,0,0,.25);overflow:hidden}
       .pdf-page-canvas{position:absolute;inset:0;display:block;width:100%;height:100%}
+      .pdf-page-canvas-dark{display:none}
+      :root[data-preview-color-mode="dark"]{--preview-surface-bg:#17191c}
+      :root[data-preview-color-mode="dark"] .pdf-page-container{background:#191b1f;box-shadow:0 2px 12px rgba(0,0,0,.55)}
+      :root[data-preview-color-mode="dark"] .pdf-page-canvas-original{display:none}
+      :root[data-preview-color-mode="dark"] .pdf-page-canvas-dark{display:block}
+      :root[data-preview-color-mode="inverted"]{--preview-surface-bg:#151515}
+      :root[data-preview-color-mode="inverted"] .pdf-page-container{background:#000;box-shadow:0 2px 12px rgba(0,0,0,.6)}
+      :root[data-preview-color-mode="inverted"] .pdf-page-canvas-original{filter:invert(1)}
       .forward-sync-ripple{position:fixed;z-index:2147483647;box-sizing:border-box;width:18px;height:18px;margin:-9px 0 0 -9px;border:2px solid ${TYPSASTRA_GREEN};border-radius:999px;background:${TYPSASTRA_GREEN_RIPPLE_FILL};box-shadow:0 0 0 0 ${TYPSASTRA_GREEN_RIPPLE_SHADOW};pointer-events:none;animation:typsastra-forward-ripple 900ms ease-out forwards}
       @keyframes typsastra-forward-ripple{0%{opacity:0;transform:scale(.55);box-shadow:0 0 0 0 rgba(61,180,137,.38)}12%{opacity:1}100%{opacity:0;transform:scale(3.1);box-shadow:0 0 0 14px rgba(61,180,137,0)}}
       .annotation-link{position:absolute;display:block;box-sizing:border-box;cursor:default;text-decoration:none}
@@ -1049,16 +1137,18 @@ export class PreviewFrame {
       const renderViewport = page.getViewport({ scale: cssScale * outputScale });
       const canvas = doc.createElement("canvas");
       active.canvas = canvas;
-      canvas.className = "pdf-page-canvas";
+      canvas.className = "pdf-page-canvas pdf-page-canvas-original";
       canvas.width = Math.max(1, Math.floor(renderViewport.width));
       canvas.height = Math.max(1, Math.floor(renderViewport.height));
 
-      const task = page.render({ canvas, viewport: renderViewport });
+      const task = page.render({ canvas, viewport: renderViewport, recordImages: true });
       active.task = task;
       const canvasStartedAt = performance.now();
       await task.promise;
       active.task = null;
       if (!this.renderIsCurrent(pageNo, active, slot)) return;
+      const imageCoordinates = task.imageCoordinates ?? page.imageCoordinates;
+      if (imageCoordinates) this.pageImageCoordinates.set(canvas, [...imageCoordinates]);
       this.onPerformance?.({
         name: "preview.canvas-render",
         milliseconds: performance.now() - canvasStartedAt,
@@ -1082,6 +1172,7 @@ export class PreviewFrame {
       });
 
       this.commitFinalCanvas(slot, canvas, annotationLinks);
+      if (this.previewColorMode === "dark") this.installDarkCanvas(slot, canvas);
       slot.dataset.renderKey = renderKey;
       if (this.motion.current().state !== "moving") {
         this.retargetDraftHoverAtPointer();

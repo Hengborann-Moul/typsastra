@@ -2701,6 +2701,19 @@
                                     >Stored per project. On type updates the PDF preview after typing pauses. On save minimizes background compilation.</small
                                 >
                             </div>
+                            <div class="settings-field">
+                                <label for="settings-preview-color-mode"
+                                    >Preview colors</label
+                                >
+                                <select id="settings-preview-color-mode">
+                                    <option value="document">Document colors</option>
+                                    <option value="dark">Dark preview</option>
+                                    <option value="inverted">Inverted preview (experimental)</option>
+                                </select>
+                                <small
+                                    >Document colors preserves the authored PDF. Dark preview reduces glare while retaining embedded images in their original colors. Inverted preview applies a full color inversion as a compatibility fallback.</small
+                                >
+                            </div>
                             <!-- TODO: Re-enable in prerelease v0.9.0 after improving performance and timeout reliability -->
                             <!--
                             <label class="settings-toggle"

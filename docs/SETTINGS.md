@@ -29,6 +29,7 @@ Open Settings from **File → Settings**, the status bar, or `Ctrl + ,` (`Cmd + 
   },
   "preview": {
     "renderMode": "on-save",
+    "colorMode": "document",
     "cursorSync": true,
     "syncDebounceMs": 500,
     "forwardSyncTimeoutMs": 5000,
@@ -80,6 +81,15 @@ not required. This is toolchain selection and download status, not yet a full
 dependency-health or automated-recovery dashboard.
 
 ## Preview
+
+`colorMode` controls compiled and standalone PDF previews and accepts `"document"`,
+`"dark"`, or `"inverted"`. **Document colors** displays the PDF exactly as
+authored. **Dark preview** applies a hue-preserving dark transform to page
+content while restoring PDF.js-reported embedded-image regions in their
+original colors. **Inverted preview** applies a full inversion and is provided
+as an experimental compatibility fallback. Choose a mode from the preview
+overflow menu or **Settings → Preview**. Exported PDFs are never altered by
+this setting.
 
 The workspace `previewRenderMode` accepts `"on-type"` and `"on-save"`.
 On-type keeps editor changes in memory and starts a PDF update after

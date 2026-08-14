@@ -11,6 +11,7 @@ describe("preview UI controller", () => {
     expect(source).toContain("public initializePageControls()");
     expect(source).toContain("public updateActionsToolbar(");
     expect(source).toContain("public reportInteractionStatus(");
+    expect(source).toContain("if (showTypstOnly || isPdf) menuBtn.classList.remove");
     expect(source).not.toContain(": any");
     expect(source).not.toContain("host: object");
     expect(source).not.toContain("new Proxy(");

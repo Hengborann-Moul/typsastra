@@ -120,7 +120,7 @@ export class PreviewUiController {
       else recompileBtn.classList.add("hidden");
     }
     if (menuBtn) {
-      if (showTypstOnly) menuBtn.classList.remove("hidden");
+      if (showTypstOnly || isPdf) menuBtn.classList.remove("hidden");
       else menuBtn.classList.add("hidden");
     }
     imageWarningBtn?.classList.toggle(

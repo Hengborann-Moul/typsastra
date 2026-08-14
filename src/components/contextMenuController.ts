@@ -15,6 +15,8 @@ import {
   type SurroundWithOption,
 } from "../editor/surroundWith";
 import { applyShortcutLabels } from "../platform/shortcuts";
+import { isTypstDocumentPath } from "../platform/fileTypes";
+import type { PreviewColorMode } from "../settings";
 
 export type ContextMenuDependencies = {
   getWorkspaceRoot: () => string | null;
@@ -24,6 +26,8 @@ export type ContextMenuDependencies = {
   getExplorerForElement?: (element: HTMLElement) => WorkspaceExplorer | null;
   refreshSecondaryExplorer?: () => void | Promise<void>;
   getPreviewFrame: () => HTMLIFrameElement | null;
+  getPreviewColorMode: () => PreviewColorMode;
+  setPreviewColorMode: (mode: PreviewColorMode) => void;
   loadFile: (path: string) => void | Promise<void>;
   save: () => void | Promise<void>;
   renameWorkspacePath: (oldPath: string, newPath: string, updateImageReferences?: boolean) => void | Promise<void>;
@@ -110,7 +114,7 @@ export class ContextMenuController {
     document.addEventListener("click", () => this.hide());
     this.menu.addEventListener("click", event => {
       const submenuTrigger = (event.target as HTMLElement)
-        .closest<HTMLElement>(".context-spelling-submenu-trigger");
+        .closest<HTMLElement>(".dropdown-submenu-trigger");
       if (submenuTrigger) {
         event.preventDefault();
         event.stopPropagation();
@@ -178,14 +182,33 @@ export class ContextMenuController {
         : ""
     ].filter(Boolean).join("");
     const typstSeparator = typstActions ? '<div class="dropdown-separator"></div>' : "";
+    const exportAction = isTypstDocumentPath(this.dependencies.getActiveFile() ?? "")
+      ? '<div class="dropdown-item" id="ctx-export-pdf">Export PDF</div>'
+      : "";
+    const colorMode = this.dependencies.getPreviewColorMode();
+    const colorItem = (mode: PreviewColorMode, label: string) => `
+      <div class="dropdown-item preview-color-mode-item" id="ctx-preview-color-${mode}" role="menuitemradio" aria-checked="${colorMode === mode}">
+        <span>${label}</span><span class="preview-color-mode-check" aria-hidden="true">${colorMode === mode ? "✓" : ""}</span>
+      </div>`;
     return `
       <div class="dropdown-item" id="ctx-preview-zoom-out">Zoom Out</div>
       <div class="dropdown-item" id="ctx-preview-zoom-fit">Fit to Width</div>
       <div class="dropdown-item" id="ctx-preview-zoom-in">Zoom In</div>
       <div class="dropdown-separator"></div>
+      <div class="dropdown-submenu">
+        <div class="dropdown-item dropdown-submenu-trigger" role="menuitem" tabindex="0" aria-haspopup="menu" aria-expanded="false">
+          <span>Preview colors</span><span class="dropdown-submenu-arrow" aria-hidden="true">›</span>
+        </div>
+        <div class="dropdown-submenu-menu context-preview-color-submenu-menu" role="menu">
+          ${colorItem("document", "Document colors")}
+          ${colorItem("dark", "Dark preview")}
+          ${colorItem("inverted", "Inverted preview (experimental)")}
+        </div>
+      </div>
+      <div class="dropdown-separator"></div>
       ${typstActions}
       ${typstSeparator}
-      <div class="dropdown-item" id="ctx-export-pdf">Export PDF</div>
+      ${exportAction}
       <div class="dropdown-item" id="ctx-preview-open-external">Open in External Viewer</div>
       <div class="dropdown-item" id="ctx-preview-undock">Undock Preview</div>`;
   }
@@ -280,6 +303,9 @@ export class ContextMenuController {
       case "ctx-preview-zoom-out": document.getElementById("preview-zoom-out-btn")?.click(); return;
       case "ctx-preview-zoom-fit": document.getElementById("preview-zoom-fit-btn")?.click(); return;
       case "ctx-preview-zoom-in": document.getElementById("preview-zoom-in-btn")?.click(); return;
+      case "ctx-preview-color-document": this.dependencies.setPreviewColorMode("document"); return;
+      case "ctx-preview-color-dark": this.dependencies.setPreviewColorMode("dark"); return;
+      case "ctx-preview-color-inverted": this.dependencies.setPreviewColorMode("inverted"); return;
       case "ctx-tab-close": if (this.targetPath) await this.dependencies.closeTabInteractive(this.targetPath); return;
       case "ctx-tab-close-others": if (this.targetPath) await this.dependencies.closeOtherTabs(this.targetPath); return;
       case "ctx-restart-workspace": await this.dependencies.restartWorkspace(); return;
@@ -633,11 +659,9 @@ export class ContextMenuController {
     if (alignRight) x -= rect.width;
     this.menu.style.left = `${Math.max(0, Math.min(x, window.innerWidth - rect.width))}px`;
     this.menu.style.top = `${Math.max(0, Math.min(y, window.innerHeight - rect.height))}px`;
-    const spellingSubmenu = this.menu.querySelector<HTMLElement>(".context-spelling-submenu-menu");
-    spellingSubmenu?.classList.toggle(
-      "dropdown-submenu-menu-left",
-      x + rect.width + 360 > window.innerWidth,
-    );
+    this.menu.querySelectorAll<HTMLElement>(".dropdown-submenu-menu").forEach(submenu => {
+      submenu.classList.toggle("dropdown-submenu-menu-left", x + rect.width + 360 > window.innerWidth);
+    });
   }
 
   private hide(): void {
@@ -649,8 +673,8 @@ export class ContextMenuController {
 
   private handleContextMenuKeydown(event: KeyboardEvent): void {
     const target = event.target as HTMLElement;
-    const trigger = target.closest<HTMLElement>(".context-spelling-submenu-trigger");
-    const submenu = target.closest<HTMLElement>(".context-spelling-submenu-menu");
+    const trigger = target.closest<HTMLElement>(".dropdown-submenu-trigger");
+    const submenu = target.closest<HTMLElement>(".dropdown-submenu-menu");
     if (trigger && ["ArrowRight", "Enter", " "].includes(event.key)) {
       event.preventDefault();
       event.stopPropagation();

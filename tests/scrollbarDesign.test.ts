@@ -29,6 +29,9 @@ describe("cross-platform scrollbar design", () => {
     const controller = await Bun.file(
       new URL("../src/preview/pdfPreviewRenderController.ts", import.meta.url),
     ).text();
+    const contextMenu = await Bun.file(
+      new URL("../src/components/contextMenuController.ts", import.meta.url),
+    ).text();
     expect(source).toContain('export type PreviewSurface = "live" | "pdf"');
     expect(source).toContain('iframeDoc.documentElement.dataset.previewSurface = surface');
     expect(source).toContain(':root[data-preview-surface="pdf"]{--preview-surface-bg:#b8b8b8}');
@@ -37,6 +40,27 @@ describe("cross-platform scrollbar design", () => {
     expect(controller).toContain(
       'this.deps.previewFrame.loadPdfBytes(bytes, identity, sessionKey, surface)',
     );
+    expect(contextMenu).toContain("isTypstDocumentPath(this.dependencies.getActiveFile()");
+  });
+
+  test("supports persistent document, dark, and inverted preview colors", async () => {
+    const frame = await Bun.file(new URL("../src/preview/previewFrame.ts", import.meta.url)).text();
+    const menu = await Bun.file(
+      new URL("../src/components/contextMenuController.ts", import.meta.url),
+    ).text();
+    const settingsUi = await Bun.file(new URL("../index.html", import.meta.url)).text();
+    expect(frame).toContain('root.dataset.previewColorMode = this.previewColorMode');
+    expect(frame).toContain('data-preview-color-mode="dark"');
+    expect(frame).toContain('data-preview-color-mode="inverted"');
+    expect(frame).toContain("recordImages: true");
+    expect(frame).toContain("task.imageCoordinates ?? page.imageCoordinates");
+    expect(frame).toContain('darkCanvas.className = "pdf-page-canvas pdf-page-canvas-dark"');
+    expect(frame).toContain("applyDarkPreviewPixels(darkPixels.data)");
+    expect(frame).toContain('context.drawImage(original, 0, 0)');
+    expect(menu).toContain('colorItem("document", "Document colors")');
+    expect(menu).toContain('colorItem("dark", "Dark preview")');
+    expect(menu).toContain('colorItem("inverted", "Inverted preview (experimental)")');
+    expect(settingsUi).toContain('id="settings-preview-color-mode"');
   });
 
   test("does not build an unused PDF text layer", async () => {

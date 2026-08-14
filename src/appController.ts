@@ -27,7 +27,7 @@ import { DocumentSessionController } from "./session/documentSessionController";
 import { LspDocumentController } from "./session/lspDocumentController";
 import { LspSyncController } from "./session/lspSyncController";
 import { type LspDiagnostic, type LspInverseSyncResult, type LspLogEntry, type LspSourcePosition, type LspStatus } from "./compiler/lsp";
-import type { AppSettings, DeveloperLogCategory, PreviewRenderMode } from "./settings";
+import type { AppSettings, DeveloperLogCategory, PreviewColorMode, PreviewRenderMode } from "./settings";
 import { SettingsController } from "./settingsController";
 import { SettingsRuntimeController } from "./settingsRuntimeController";
 import { fileNameFromPath, filePathKey, relativeFilePath } from "./platform/paths";
@@ -372,6 +372,7 @@ export class TypsastraWorkspaceController {
   private externalPreviewRefreshPending = false;
   private get managedPreviewPdfPathKeys(): ReadonlySet<string> { return this.pdfPreviewRenderController.managedPdfPathKeys; }
   private readonly managedImageToolPathKeys = new Set<string>();
+  private lastBroadcastPreviewColorMode: PreviewColorMode | null = null;
   private readonly settingsController: SettingsController = new SettingsController(
     settings => this.applySettingsToRuntime(settings),
     providers => this.handleLanguageProvidersChanged(providers),
@@ -1034,6 +1035,10 @@ export class TypsastraWorkspaceController {
       ? this.imageToolsController.refresh()
       : undefined,
     getPreviewFrame: () => this.previewFrame.element,
+    getPreviewColorMode: () => this.settingsController.value.preview.colorMode,
+    setPreviewColorMode: mode => this.settingsController.update(settings => {
+      settings.preview.colorMode = mode;
+    }),
     loadFile: path => this.loadFile(path),
     save: () => this.saveActiveFile(),
     renameWorkspacePath: (oldPath, newPath, updateImageReferences) =>
@@ -1502,6 +1507,10 @@ export class TypsastraWorkspaceController {
   private readonly previewWindowController = new PreviewWindowController({
     loadSettings: () => this.settingsController.load(),
     theme: () => this.settingsController.value.appearance.theme,
+    previewColorMode: () => this.settingsController.value.preview.colorMode,
+    setPreviewColorMode: mode => this.settingsController.update(settings => {
+      settings.preview.colorMode = mode;
+    }),
     previewFrame: this.previewFrame,
     draftPreview: this.draftPreviewController,
     zoomIn: () => this.zoomIn(),
@@ -1816,8 +1825,28 @@ export class TypsastraWorkspaceController {
   private applySettingsToRuntime(settings: AppSettings): void {
     const { editor } = settings;
     this.settingsRuntimeController.apply(settings);
+    this.previewFrame.setColorMode(settings.preview.colorMode);
+    this.updatePreviewColorModeButton(settings.preview.colorMode);
+    if (this.lastBroadcastPreviewColorMode !== settings.preview.colorMode) {
+      this.lastBroadcastPreviewColorMode = settings.preview.colorMode;
+      if (new URLSearchParams(window.location.search).get("mode") !== "preview") {
+        void import("@tauri-apps/api/event").then(({ emit }) =>
+          emit("preview-color-mode-update", settings.preview.colorMode)
+        ).catch(error => console.error("Failed to synchronize preview color mode", error));
+      }
+    }
     this.editorToolbarController.setVisible(editor.visualToolbar);
     this.nativeAppMenu?.syncCheckState({ wordWrap: editor.wordWrap, editorToolbar: editor.visualToolbar });
+  }
+
+  private updatePreviewColorModeButton(mode: PreviewColorMode): void {
+    const button = document.getElementById("preview-menu-btn");
+    if (!button) return;
+    const label = mode === "dark" ? "Dark preview"
+      : mode === "inverted" ? "Inverted preview (experimental)"
+      : "Document colors";
+    button.title = mode === "document" ? "Preview Options" : `Preview Options · ${label}`;
+    button.setAttribute("aria-label", mode === "document" ? "Preview options" : `Preview options; ${label} active`);
   }
 
   private currentEditorSettingsEffects() {
@@ -2642,6 +2671,9 @@ export class TypsastraWorkspaceController {
         };
       },
       changePreviewContentMode: mode => this.draftPreviewController.changeMode(mode),
+      changePreviewColorMode: mode => this.settingsController.update(settings => {
+        settings.preview.colorMode = mode;
+      }),
       previewContentMode: () => this.draftPreviewController.mode,
       openLastPreviewExternally: () => this.lastPdfPath ? this.openFileExternally(this.lastPdfPath) : undefined,
       handlePdfPreviewClick: point => this.handlePdfPreviewClick(point),

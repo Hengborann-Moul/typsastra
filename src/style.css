@@ -357,8 +357,26 @@ html {
   overflow-y: auto;
 }
 
+.context-preview-color-submenu-menu {
+  min-width: 245px;
+}
+
+.preview-color-mode-item,
+.dropdown-submenu-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.preview-color-mode-check {
+  color: var(--ui-accent-color);
+  font-weight: 700;
+}
+
 .context-spelling-submenu-menu .dropdown-item:focus-visible,
-.context-spelling-submenu-trigger:focus-visible {
+.context-spelling-submenu-trigger:focus-visible,
+.dropdown-submenu-trigger:focus-visible {
   background: var(--ui-hover);
   outline: 1px solid var(--ui-accent-color);
   outline-offset: -1px;

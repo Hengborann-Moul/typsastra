@@ -13,6 +13,7 @@ export const themeNames = [
 
 export type ThemeName = typeof themeNames[number];
 export type PreviewRenderMode = "on-type" | "on-save";
+export type PreviewColorMode = "document" | "dark" | "inverted";
 export type DeveloperLogCategory =
   | "preview"
   | "inverseSync"
@@ -62,6 +63,7 @@ export type AppSettings = {
   };
   preview: {
     renderMode: PreviewRenderMode;
+    colorMode: PreviewColorMode;
     cursorSync: boolean;
     syncDebounceMs: number;
     forwardSyncTimeoutMs: number;
@@ -122,6 +124,7 @@ export const defaultAppSettings: AppSettings = {
   },
   preview: {
     renderMode: "on-save",
+    colorMode: "document",
     // TODO: Re-enable in prerelease v0.9.0 after improving performance and timeout reliability
     // cursorSync: true,
     cursorSync: false,
@@ -159,6 +162,10 @@ function booleanValue(value: unknown, fallback: boolean): boolean {
 
 function previewRenderMode(value: unknown): PreviewRenderMode {
   return value === "on-type" ? "on-type" : "on-save";
+}
+
+function previewColorMode(value: unknown): PreviewColorMode {
+  return value === "dark" || value === "inverted" ? value : "document";
 }
 
 function terminologyEntries(value: unknown, limit = 2_000): TerminologyEntry[] {
@@ -295,6 +302,7 @@ export function normalizeAppSettings(value: unknown): AppSettings {
     },
     preview: {
       renderMode: previewRenderMode(preview.renderMode),
+      colorMode: previewColorMode(preview.colorMode),
       cursorSync: booleanValue(preview.cursorSync, defaultAppSettings.preview.cursorSync),
       syncDebounceMs: Math.round(boundedNumber(preview.syncDebounceMs, defaultAppSettings.preview.syncDebounceMs, 50, 2000)),
       forwardSyncTimeoutMs: Math.round(boundedNumber(
