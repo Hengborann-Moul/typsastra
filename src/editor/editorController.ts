@@ -1,5 +1,5 @@
 import type { Text, Transaction } from "@codemirror/state";
-import type { EditorView } from "@codemirror/view";
+import { EditorView } from "@codemirror/view";
 import {
   foldAll,
   foldEffect,
@@ -23,6 +23,14 @@ type EditorInputProfile = {
   listenerStartedAt: number;
 };
 
+type ScrollMarkerSeverity = "error" | "warning" | "info" | "related";
+type ScrollMarkerTarget = {
+  line: number;
+  severity: ScrollMarkerSeverity;
+  from: number;
+  to: number;
+};
+
 export interface EditorControllerPort {
   performanceEnabled(): boolean;
   recordPerformance(metric: Omit<PerformanceMetric, "recordedAt">): void;
@@ -44,7 +52,7 @@ export class EditorController {
   private diagnosticMarkerLayer: HTMLElement | null = null;
   private matchMarkerFrame: number | null = null;
   private matchMarkerGeneration = 0;
-  private matchMarkerLines = new Set<number>();
+  private matchMarkerTargets = new Map<number, { from: number; to: number }>();
   private inputSequence = 0;
   private inputStartedAt: number | null = null;
   private inputType = "unknown";
@@ -83,7 +91,7 @@ export class EditorController {
       position: "absolute",
       top: "0",
       right: "2px",
-      width: "5px",
+      width: "12px",
       height: "100%",
       pointerEvents: "none",
       zIndex: "19",
@@ -400,42 +408,69 @@ export class EditorController {
     layer.replaceChildren();
     if (doc.lines <= 1) return;
 
-    const lineMarkers = new Map<number, "error" | "warning" | "info" | "related">();
-    for (const line of this.matchMarkerLines) {
-      if (line >= 1 && line <= doc.lines) lineMarkers.set(line, "info");
+    const lineMarkers = new Map<number, ScrollMarkerTarget>();
+    const priority: Record<ScrollMarkerSeverity, number> = {
+      error: 4,
+      warning: 3,
+      related: 2,
+      info: 1,
+    };
+    const addMarker = (target: ScrollMarkerTarget) => {
+      const existing = lineMarkers.get(target.line);
+      if (!existing || priority[target.severity] > priority[existing.severity]) {
+        lineMarkers.set(target.line, target);
+      }
+    };
+    for (const [line, range] of this.matchMarkerTargets) {
+      if (line >= 1 && line <= doc.lines) addMarker({ line, severity: "info", ...range });
     }
     for (const diagnostic of diagnostics) {
       if (diagnostic.severity !== "error"
         && diagnostic.severity !== "warning"
         && diagnostic.severity !== "related") continue;
       const line = doc.lineAt(Math.max(0, Math.min(diagnostic.from, doc.length))).number;
-      const existing = lineMarkers.get(line);
-      if (!existing || diagnostic.severity === "error" || existing === "info") {
-        lineMarkers.set(line, diagnostic.severity);
-      }
+      addMarker({
+        line,
+        severity: diagnostic.severity,
+        from: Math.max(0, Math.min(diagnostic.from, doc.length)),
+        to: Math.max(0, Math.min(diagnostic.to, doc.length)),
+      });
     }
-    imageWarnings?.between(0, doc.length, from => {
+    imageWarnings?.between(0, doc.length, (from, to) => {
       const line = doc.lineAt(Math.max(0, Math.min(from, doc.length))).number;
-      if (!lineMarkers.has(line)) lineMarkers.set(line, "warning");
+      addMarker({ line, severity: "warning", from, to: Math.max(from, to) });
     });
 
-    for (const [line, severity] of lineMarkers) {
+    for (const target of lineMarkers.values()) {
+      const { line, severity } = target;
       const documentRatio = (line - 1) / Math.max(1, doc.lines - 1);
       const top = documentRatio * documentTrackRatio * Math.max(0, trackHeight - markerHeight);
       const marker = document.createElement("div");
+      const color = severity === "error"
+        ? "#f14c4c"
+        : severity === "related"
+          ? "rgba(241, 76, 76, 0.58)"
+          : severity === "warning" ? "#cca700" : "#3794ff";
       marker.className = `editor-diagnostic-scroll-marker editor-diagnostic-scroll-marker-${severity}`;
       Object.assign(marker.style, {
         position: "absolute",
         right: "0",
         top: `${top}px`,
-        width: "5px",
+        width: "12px",
         height: `${markerHeight}px`,
-        backgroundColor: severity === "error"
-          ? "#f14c4c"
-          : severity === "related"
-            ? "rgba(241, 76, 76, 0.58)"
-            : severity === "warning" ? "#cca700" : "#3794ff",
-        pointerEvents: "none",
+        backgroundColor: "transparent",
+        boxShadow: `inset -5px 0 ${color}`,
+        cursor: "pointer",
+        pointerEvents: "auto",
+      });
+      marker.title = `${severity === "info" ? "Search match" : `${severity[0].toUpperCase()}${severity.slice(1)}`}: line ${line}`;
+      marker.addEventListener("pointerdown", event => {
+        if (event.button !== 0) return;
+        event.preventDefault();
+        event.stopPropagation();
+        this.scrollbarPointerActive = true;
+        this.port.suppressPreviewSync(1000);
+        this.navigateToScrollMarker(target);
       });
       layer.appendChild(marker);
     }
@@ -451,15 +486,19 @@ export class EditorController {
 
     const state = editor.state;
     const query = editorMatchQuery(state);
-    const lines = new Set<number>();
+    const targets = new Map<number, { from: number; to: number }>();
+    const addTarget = (from: number, to: number) => {
+      const line = state.doc.lineAt(from).number;
+      if (!targets.has(line)) targets.set(line, { from, to });
+    };
     const selection = state.selection.main;
     if (query && !selection.empty) {
       const selectedMatch = query.getCursor(state, selection.from, selection.to).next();
       if (!selectedMatch.done && selectedMatch.value.from === selection.from && selectedMatch.value.to === selection.to) {
-        lines.add(state.doc.lineAt(selection.from).number);
+        addTarget(selection.from, selection.to);
       }
     }
-    this.matchMarkerLines = new Set(lines);
+    this.matchMarkerTargets = new Map(targets);
     this.updateDiagnosticMarkers();
     if (!query) return;
 
@@ -472,20 +511,73 @@ export class EditorController {
         const result = cursor.next();
         if (result.done) {
           this.matchMarkerFrame = null;
-          this.matchMarkerLines = lines;
+          this.matchMarkerTargets = targets;
           this.updateDiagnosticMarkers();
           return;
         }
-        lines.add(state.doc.lineAt(result.value.from).number);
+        addTarget(result.value.from, result.value.to);
       }
       completedFrames += 1;
       if (completedFrames === 1 || completedFrames % 4 === 0) {
-        this.matchMarkerLines = new Set(lines);
+        this.matchMarkerTargets = new Map(targets);
         this.updateDiagnosticMarkers();
       }
       this.matchMarkerFrame = requestAnimationFrame(scan);
     };
     this.matchMarkerFrame = requestAnimationFrame(scan);
+  }
+
+  private navigateToScrollMarker(target: ScrollMarkerTarget): void {
+    const editor = this.editor;
+    if (!editor) return;
+    const doc = editor.state.doc;
+    const from = Math.max(0, Math.min(target.from, doc.length));
+    const to = Math.max(from, Math.min(target.to, doc.length));
+    const effects = [EditorView.scrollIntoView(from, { y: "center", yMargin: 24 })];
+    foldedRanges(editor.state).between(
+      Math.max(0, from - 1),
+      Math.min(doc.length, Math.max(from + 1, to)),
+      (foldFrom, foldTo) => {
+        if (foldFrom <= from && foldTo >= from) {
+          effects.unshift(unfoldEffect.of({ from: foldFrom, to: foldTo }));
+        }
+      },
+    );
+    editor.dispatch({
+      selection: { anchor: from, head: to },
+      effects,
+      userEvent: "select.scroll-marker",
+    });
+    editor.focus();
+    this.ensureScrollMarkerVisible(editor, doc, from, 0);
+  }
+
+  private ensureScrollMarkerVisible(
+    editor: EditorView,
+    doc: Text,
+    position: number,
+    attempt: number,
+  ): void {
+    requestAnimationFrame(() => {
+      if (this.editor !== editor || editor.state.doc !== doc) return;
+      editor.requestMeasure({
+        read: () => {
+          const coordinates = editor.coordsAtPos(position);
+          const viewport = editor.scrollDOM.getBoundingClientRect();
+          const margin = Math.min(24, viewport.height / 4);
+          return Boolean(coordinates
+            && coordinates.top >= viewport.top + margin
+            && coordinates.bottom <= viewport.bottom - margin);
+        },
+        write: visible => {
+          if (visible || attempt >= 2 || this.editor !== editor || editor.state.doc !== doc) return;
+          editor.dispatch({
+            effects: EditorView.scrollIntoView(position, { y: "center", yMargin: 24 }),
+          });
+          this.ensureScrollMarkerVisible(editor, doc, position, attempt + 1);
+        },
+      });
+    });
   }
 
   private initializeLongTaskObserver(): void {
