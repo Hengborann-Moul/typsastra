@@ -145,6 +145,8 @@ describe("theme-aware application accents", () => {
     expect(editorExtensions).toContain('color-mix(in srgb, var(--ui-accent-color) 58%, var(--ui-text))');
     expect(editorExtensions).toContain("activeThickness: 1");
     expect(editorExtensions).toContain("var(--ui-accent-color) 58%");
+    expect(editorExtensions).toContain('"--ui-search-match-background"');
+    expect(editorExtensions).toContain('${colors.brackets[3]} 30%, ${colors.bg}');
     expect(controller).toContain("visibleIndentationMarkers()");
     expect(editorThemes).toContain('".cm-indent-markers::before"');
     expect(editorThemes).toContain('left: "calc(13px - 0.7ch) !important"');
@@ -184,16 +186,25 @@ describe("theme-aware application accents", () => {
       '"&.cm-focused .cm-selectionLayer .cm-selectionBackground"',
     );
     expect(editorThemes).toContain(
-      'backgroundColor: "var(--ui-word-selection-focus-background, rgba(3, 102, 214, 0.52)) !important"',
+      '"& .cm-selectionLayer .cm-selectionBackground::before"',
+    );
+    expect(editorThemes).toContain(
+      '"--typsastra-selection-background": "var(--ui-word-selection-focus-background, rgba(3, 102, 214, 0.52))"',
     );
     const selectionLayerTheme = editorThemes.slice(
       editorThemes.indexOf('"& .cm-selectionLayer .cm-selectionBackground"'),
       editorThemes.indexOf('"& .cm-content .cm-line::selection'),
     );
     expect(selectionLayerTheme).toContain(
-      'backgroundColor: "var(--ui-word-selection-background, rgba(3, 102, 214, 0.4)) !important"',
+      '"--typsastra-selection-background": "var(--ui-word-selection-background, rgba(3, 102, 214, 0.4))"',
     );
-    expect(selectionLayerTheme).not.toContain(
+    expect(selectionLayerTheme).toContain(
+      'height: "var(--editor-line-height-px, 23.8px)"',
+    );
+    expect(selectionLayerTheme).toContain(
+      'transform: "translateY(-50%)"',
+    );
+    expect(selectionLayerTheme).toContain(
       'backgroundColor: "transparent !important"',
     );
     expect(editorThemes).not.toContain(".cm-content ::selection");

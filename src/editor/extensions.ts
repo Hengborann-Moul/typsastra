@@ -246,7 +246,7 @@ export function editorMatchQuery(state: EditorState): SearchQuery | null {
   if (length <= 0 || length > MAX_SELECTION_SEARCH_LENGTH) return null;
 
   const selectedText = state.sliceDoc(selection.from, selection.to);
-  if (!selectedText || /[\r\n]/u.test(selectedText)) return null;
+  if (!selectedText.trim() || /[\r\n]/u.test(selectedText)) return null;
   return new SearchQuery({
     search: selectedText,
     caseSensitive: false,
@@ -283,6 +283,11 @@ const caseInsensitiveSelectionMatches = ViewPlugin.fromClass(class {
     for (const visible of view.visibleRanges) {
       const cursor = query.getCursor(view.state, visible.from, visible.to);
       for (let result = cursor.next(); !result.done; result = cursor.next()) {
+        // The native selection layer already paints the selected occurrence.
+        // Decorating it again produces overlapping rectangles where one
+        // logical selection wraps across multiple visual rows.
+        const selection = view.state.selection.main;
+        if (result.value.from < selection.to && result.value.to > selection.from) continue;
         ranges.push({
           from: result.value.from,
           to: result.value.to,
@@ -1051,6 +1056,10 @@ export async function applyUIThemeVariables(themeName: string) {
     document.documentElement.style.setProperty("--ui-hover", colors.hover);
     document.documentElement.style.setProperty("--ui-select", colors.select);
     document.documentElement.style.setProperty("--ui-accent-color", colors.accent ?? colors.functionColor);
+    document.documentElement.style.setProperty(
+        "--ui-search-match-background",
+        `color-mix(in srgb, ${colors.brackets[3]} 30%, ${colors.bg})`
+    );
     document.documentElement.style.setProperty(
         "--autocomplete-select-bg",
         colors.autocompleteSelect ?? (colors.mode === "dark" ? "#3b82f6" : "#0969da")

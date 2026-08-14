@@ -31,9 +31,23 @@ describe("editor search navigation", () => {
   test("does not create selection search queries for cursors or multiline selections", () => {
     const cursor = EditorState.create({ doc: "word", selection: { anchor: 2 } });
     const multiline = EditorState.create({ doc: "one\ntwo", selection: { anchor: 0, head: 7 } });
+    const whitespace = EditorState.create({ doc: "word     word", selection: { anchor: 4, head: 9 } });
 
     expect(editorMatchQuery(cursor)).toBeNull();
     expect(editorMatchQuery(multiline)).toBeNull();
+    expect(editorMatchQuery(whitespace)).toBeNull();
+  });
+
+  test("keeps phrase selection search available across wrapped visual rows", () => {
+    const state = EditorState.create({
+      doc: "approved specifications approved specifications",
+      selection: { anchor: 0, head: 23 }
+    });
+
+    expect(Array.from(editorMatchQuery(state)!.getCursor(state))).toEqual([
+      { from: 0, to: 23, precise: true },
+      { from: 24, to: 47, precise: true }
+    ]);
   });
 
   test("matches diacritics exactly by default", () => {
@@ -134,6 +148,13 @@ describe("editor search navigation", () => {
     expect(css).toContain("height: var(--editor-line-height-px, 23.8px)");
     expect(css).toContain("grid-template-columns:");
     expect(css).toContain("minmax(120px, 1fr)");
+    expect(css).toContain("calc((var(--editor-line-height-px, 23.8px) - 1em - 3px) / 2)");
+    expect(css).toContain(".cm-editor .cm-searchMatch {");
+    expect(css).toContain("--ui-search-match-background: color-mix(in srgb, var(--ui-warning-color) 30%, var(--ui-bg))");
+    expect(css).toContain("background: var(--ui-search-match-background)");
+    expect(css).toContain("outline: none");
+    expect(css).toContain(".cm-editor .cm-searchMatch-selected");
+    expect(css).toContain("background: transparent !important");
     expect(css).toContain("grid-column: 1");
     expect(source).not.toContain('right: 20px');
   });
