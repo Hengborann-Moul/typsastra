@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img" aria-labelledby="title description">
+  <title id="title">Feature demonstration placeholder</title>
+  <desc id="description">Placeholder for a future Typsastra screenshot or video demonstration.</desc>
+  <rect width="1280" height="720" fill="#20252b"/>
+  <rect x="24" y="24" width="1232" height="672" rx="8" fill="none" stroke="#59636e" stroke-width="4" stroke-dasharray="16 12"/>
+  <g fill="#d7dde3" font-family="system-ui, sans-serif" text-anchor="middle">
+    <text x="640" y="340" font-size="42" font-weight="600">Feature demonstration</text>
+    <text x="640" y="400" font-size="26" fill="#9aa5af">Replace this placeholder with a screenshot or video</text>
+  </g>
+</svg>

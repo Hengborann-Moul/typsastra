@@ -1,8 +1,8 @@
 # Typsastra v0.7.0 release notes
 
 Typsastra v0.7.0 builds on v0.6.3 with resource-aware image workflows, secure
-Markdown live preview, stronger editor navigation, clearer compiler errors, and
-more reliable desktop integration.
+Markdown live preview, persistent PDF color modes, stronger editor navigation,
+clearer compiler errors, and more reliable desktop integration.
 
 Released August 13, 2026.
 
@@ -38,6 +38,23 @@ Released August 13, 2026.
 - Added Settings controls to inspect, renew, delete, and clean unused generated
   scaled-font variants while preserving variants referenced by saved workspace
   typography.
+
+## PDF preview modes and compatibility
+
+- Added persistent **Document colors**, hue-preserving **Dark preview**, and
+  experimental **Inverted preview** modes for compiled and standalone PDFs.
+- Preserved detected embedded-image colors in Dark Preview while adapting the
+  surrounding page, text, and line art for a dark workspace.
+- Kept preview color modes viewer-only; exported PDFs retain their authored
+  colors.
+
+- Packaged PDF.js WASM decoders and JavaScript fallbacks in development and
+  release builds.
+- Improved direct viewing of scanner-generated MRC PDFs whose visible text or
+  line art is stored in CCITT or JBIG2 foreground masks over a raster
+  background.
+- Kept this compatibility work inside the viewer. Typsastra does not OCR,
+  rewrite, or modify the original PDF.
 
 ## Editor, search, and diagnostics
 

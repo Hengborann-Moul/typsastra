@@ -5,6 +5,32 @@ PDF files. Only a bounded set of visible and nearby pages receives rendered
 canvases, keeping long-document memory independent of total page count as far as
 practical.
 
+## Preview color modes
+
+Open the preview overflow menu or **Settings → Preview** to choose:
+
+- **Document colors** renders the PDF exactly as authored.
+- **Dark preview** applies a hue-preserving dark transform while restoring
+  PDF.js-reported embedded-image regions in their original colors.
+- **Inverted preview (experimental)** applies a full-page inversion as a
+  compatibility fallback.
+
+The selection applies to compiled and standalone PDF previews and is remembered
+across sessions. It changes only the viewer; exported PDFs keep their authored
+colors.
+
+## Scanner-generated PDFs
+
+Some scanners produce mixed-raster-content (MRC) PDFs. A page may use a
+low-resolution color or grayscale background plus a separate one-bit CCITT or
+JBIG2 foreground mask for text and line art. If a viewer decodes only the
+background, the page can look washed out or appear to be missing most of its
+text.
+
+Typsastra packages the PDF.js decoder resources required to render these layers
+together in direct PDF view. This is a display compatibility feature: it does
+not perform OCR, recompress the document, or change the source PDF.
+
 ## Page navigation
 
 The toolbar shows current page and total page count. Enter a valid page number

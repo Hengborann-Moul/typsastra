@@ -100,6 +100,24 @@ When reporting preview issues, include:
 - Whether the file is `main.typ` or an included file.
 - Any visible messages from the developer log console.
 
+### A scanned PDF is faint or missing text
+
+Scanner-generated MRC PDFs can store visible text and line art in a separate
+CCITT or JBIG2 foreground mask over a lower-resolution background image.
+Typsastra packages the PDF.js decoders for these layers; it does not OCR or
+rewrite the file.
+
+If a scanned PDF still looks incomplete:
+
+1. Confirm the same page renders correctly in an external PDF reader.
+2. Confirm whether the problem occurs while opening the PDF directly or only in
+   a PDF compiled from Typst.
+3. Reopen the file after updating Typsastra so the viewer and packaged decoder
+   assets are loaded from the same release.
+4. Report the operating system, Typsastra version, affected page number, and
+   developer-log output. Do not share the document when it contains restricted
+   material; a redacted sample with the same scanner encoding is sufficient.
+
 ### Tinymist memory remains high after switching to Draft Preview
 
 This is a known limitation. Opening an image-heavy document in Normal Preview

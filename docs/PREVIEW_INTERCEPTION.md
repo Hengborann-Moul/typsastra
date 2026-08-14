@@ -12,6 +12,22 @@ The docked preview path is:
 4. Keep only nearby pages rendered; pages outside the viewport are released.
 5. Use Tinymist's preview source-map data plane for forward and inverse sync through a one-connection native loopback bridge.
 
+The viewer supplies CMaps, standard fonts, and the pinned `pdfjs-dist` decoder
+assets explicitly. `vite.config.ts` serves decoder `.wasm` and JavaScript
+fallback files at `/pdfjs-wasm/` during development and emits them at that same
+path for release builds. `PreviewFrame` sets `useWorkerFetch: false` so PDF.js
+loads those binary resources through its window-side factory instead of
+assuming that a worker can fetch Tauri's application protocol directly. The
+decoder bundle is required for scanner-generated MRC pages whose foreground
+text or line art is encoded as CCITT or JBIG2 masks.
+
+Preview color modes are presentation-only. Document mode displays the original
+PDF.js canvas. Dark mode creates a second canvas, applies the hue-preserving
+pixel transform from `src/preview/darkPreview.ts`, and redraws PDF.js-reported
+embedded-image regions from the original canvas. Experimental inverted mode
+uses a full-canvas CSS inversion. Mode changes do not recompile Typst or modify
+the source/exported PDF.
+
 The native bridge is required because current Tinymist versions validate the
 browser WebSocket `Origin`. A Tauri WebView cannot replace that header, so the
 Rust bridge connects upstream with the expected Tinymist loopback origin while
@@ -155,6 +171,8 @@ Those failures mean Typsastra did not receive a reliable source-map coordinate f
 ## Files involved
 
 - `src/preview/previewFrame.ts`: virtualized PDF viewer, page rendering, PDF click coordinate capture, preview scrolling, and ripple rendering.
+- `src/preview/darkPreview.ts`: hue-preserving page-pixel transformation used by Dark Preview.
+- `vite.config.ts`: development delivery and release emission of PDF.js decoder assets.
 - `src/preview/previewSyncController.ts`: forward sync scheduling, suppression, and duplicate request filtering.
 - `src/compiler/lsp.ts`: Tinymist JSON-RPC bridge and preview/source-map task startup.
 - `src/appController.ts`: preview lifecycle, render-cache mapping, forward sync, inverse sync, and developer logs.

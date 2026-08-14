@@ -45,9 +45,10 @@ Khmer is the first language with deep support, including tailored cursor and del
 
 ## v0.7.0 feature showcase
 
-Typsastra v0.7.0 adds resource-aware image workflows and secure Markdown live
-preview while retaining the Draft Preview, document typography, private-font,
-and source-navigation features introduced throughout v0.6.x.
+Typsastra v0.7.0 adds resource-aware image workflows, secure Markdown live
+preview, and persistent PDF color modes while retaining the Draft Preview,
+document typography, private-font, and source-navigation features introduced
+throughout v0.6.x.
 
 Choose **Open Examples** from the welcome screen and follow
 `07-v0.7-feature-showcase` for Markdown preview guidance, then use
@@ -61,6 +62,24 @@ common GitHub-Flavored Markdown. Local images and workspace links are resolved
 inside the open project, remote resources are not loaded automatically, and
 the existing Typst PDF session remains available when returning to source.
 
+<!-- Replace this placeholder with the Markdown-preview screenshot or video URL. -->
+<p align="center">
+  <img src="./assets/feature-demo-placeholder.svg" alt="Placeholder for the Markdown live preview demonstration" width="800"/>
+</p>
+
+### Dark and inverted PDF preview
+
+Compiled documents and standalone PDFs can use their authored colors, a
+hue-preserving Dark Preview, or an experimental full inversion. Dark Preview
+keeps detected embedded images in their original colors while adapting the rest
+of the page for a dark workspace. The selected mode is remembered, and exported
+PDFs are never altered.
+
+<!-- Replace this placeholder with the dark-preview screenshot or video URL. -->
+<p align="center">
+  <img src="./assets/feature-demo-placeholder.svg" alt="Placeholder for the dark and inverted PDF preview demonstration" width="800"/>
+</p>
+
 ### Image Tools
 
 Image Tools inventories project raster images, reports source and decoded
@@ -68,6 +87,11 @@ sizes, finds static Typst references, and prepares bounded resize or re-encoding
 previews. Optimizations are saved as new copies; source images are not silently
 overwritten. Authors may explicitly update the indexed static references to
 the saved copy.
+
+<!-- Replace this placeholder with the Image Tools screenshot or video URL. -->
+<p align="center">
+  <img src="./assets/feature-demo-placeholder.svg" alt="Placeholder for the Image Tools demonstration" width="800"/>
+</p>
 
 ### Draft Preview
 
@@ -194,6 +218,8 @@ Typsastra also treats a document as a project rather than an isolated file. A re
 - Document-script language routing: each configured script can select one spellcheck and word-completion provider, with no keyboard or same-script guessing.
 - Tinymist diagnostics with validated system or managed toolchain selection.
 - Hardware-accelerated, virtualized PDF preview designed for responsive long-document scrolling and constrained memory use.
+- Persistent document-color, dark, and experimental inverted preview modes for
+  compiled and standalone PDFs.
 - Direct in-app PDF viewing with editable current-page navigation.
 - Sanitized Markdown live preview with workspace-bound local resources.
 - Project Image Tools for raster inspection, optimization previews, optimized
