@@ -681,6 +681,8 @@ export class TypsastraWorkspaceController {
     loadDraftImage: id => this.draftPreviewController.loadImage(id),
     onScrollPositionChanged: scrollTop => {
       this.previewScrollTop = Math.max(0, scrollTop);
+      const activeTab = this.getActiveTab();
+      if (activeTab) activeTab.previewScrollTop = this.previewScrollTop;
       if (!this.workspaceRootPath || !this.workspaceMetadata) return;
       if (this.previewScrollSaveTimer !== null) window.clearTimeout(this.previewScrollSaveTimer);
       this.previewScrollSaveTimer = window.setTimeout(() => {
@@ -1544,6 +1546,7 @@ export class TypsastraWorkspaceController {
     updatePreviewActionsToolbar: path => this.updatePreviewActionsToolbar(path),
     applyPreviewSessionToTab: (tab, session) => this.applyPreviewSessionToTab(tab, session),
     activatePreviewSession: sessionKey => this.previewFrame.activateSession(sessionKey),
+    queuePreviewScrollPosition: scrollTop => this.previewFrame.queueTabScrollPosition(scrollTop),
     renderEditorTabs: () => this.renderEditorTabs(),
     saveWorkspaceState: () => { void this.saveWorkspaceState(); },
     cancelManualForwardSync: () => this.cancelManualForwardSync(),

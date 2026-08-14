@@ -45,6 +45,7 @@ export interface EditorTabActivationDependencies {
   updatePreviewActionsToolbar(path: string | null): void;
   applyPreviewSessionToTab(tab: EditorTab, session: PreviewSessionState): void;
   activatePreviewSession(sessionKey: string): void;
+  queuePreviewScrollPosition(scrollTop?: number): void;
   renderEditorTabs(): void;
   saveWorkspaceState(): void;
   cancelManualForwardSync(): void;
@@ -87,6 +88,7 @@ export class EditorTabActivationController {
     const tab = deps.openTabs().find(candidate => filePathKey(candidate.path) === filePathKey(path));
     const activeFilePath = deps.activeFilePath();
     const sameActivePath = activeFilePath !== null && filePathKey(activeFilePath) === filePathKey(path);
+    if (!sameActivePath) deps.queuePreviewScrollPosition(tab?.previewScrollTop);
     if (tab && !isSupportedInAppPath(tab.path) && await deps.classifyUnknownTextPath(tab.path)) {
       if (!tab.content && !tab.savedContent) tab.contentLoaded = false;
     }

@@ -261,6 +261,12 @@ export class PreviewFrame {
       : 0;
   }
 
+  public queueTabScrollPosition(scrollTop?: number): void {
+    this.pendingRestoredScrollTop = typeof scrollTop === "number" && Number.isFinite(scrollTop)
+      ? Math.max(0, scrollTop)
+      : null;
+  }
+
   public syncTheme(): void {
     const root = this.iframe?.contentDocument?.documentElement;
     if (!root) return;
@@ -487,8 +493,8 @@ export class PreviewFrame {
     const obsoleteLoadingTask = this.pendingPdfLoadingTask;
     this.pendingPdfLoadingTask = null;
     if (obsoleteLoadingTask) void obsoleteLoadingTask.destroy().catch(() => {});
-    const restoringWorkspacePosition = !this.pdfDoc && this.pendingRestoredScrollTop !== null;
-    const previousScrollTop = restoringWorkspacePosition
+    const restoringSavedPosition = this.pendingRestoredScrollTop !== null;
+    const previousScrollTop = restoringSavedPosition
       ? this.pendingRestoredScrollTop!
       : this.captureScrollPosition();
     this.clearErrorOverlay();
@@ -681,7 +687,7 @@ export class PreviewFrame {
         rangeRequests: transportStats.rangeRequests,
         pageCount: pdfDoc.numPages
       });
-      if (restoringWorkspacePosition) this.pendingRestoredScrollTop = null;
+      if (restoringSavedPosition) this.pendingRestoredScrollTop = null;
       this.reportPageStatus(this.visiblePageNumber());
       void this.hydratePageDimensions(pdfDoc, generation).catch(error => {
         if (generation === this.pdfGeneration && this.pdfDoc === pdfDoc) {
@@ -1741,6 +1747,11 @@ export class PreviewFrame {
   public activateSession(sessionKey: string): boolean {
     if (!this.pdfDoc || this.mountedSessionKey !== sessionKey) return false;
     this.clearMessageHost();
+    if (this.pendingRestoredScrollTop !== null) {
+      const scrollTop = this.pendingRestoredScrollTop;
+      this.pendingRestoredScrollTop = null;
+      this.restoreScrollPosition(scrollTop);
+    }
     return true;
   }
 

@@ -45,6 +45,7 @@ describe("workspace state store", () => {
           selectionHead: 5,
           scrollTop: undefined,
           scrollLeft: undefined,
+          previewScrollTop: undefined,
           foldState: null,
           foldRanges: null
         }],
@@ -162,6 +163,20 @@ describe("workspace state store", () => {
 
     expect(stored.workspace.previewScrollTop).toBe(4821.5);
     expect(invalid.workspace.previewScrollTop).toBe(0);
+  });
+
+  test("normalizes independent preview positions for open tabs", () => {
+    const stored = normalizeWorkspaceMetadata({
+      project: null,
+      workspace: {
+        openTabs: [
+          { path: "main.typ", previewScrollTop: 1832.5 },
+          { path: "chapter.typ", previewScrollTop: -20 },
+        ],
+      },
+    });
+
+    expect(stored.workspace.openTabs.map(tab => tab.previewScrollTop)).toEqual([1832.5, 0]);
   });
 
   test("reads and removes legacy absolute-path state for one-time migration", () => {

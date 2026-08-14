@@ -17,6 +17,7 @@ export interface WorkspacePersistenceTab {
   selectionHead: number;
   scrollTop?: number;
   scrollLeft?: number;
+  previewScrollTop?: number;
   foldStateExplicit: boolean;
   foldRanges: EditorFoldRange[] | null;
 }
@@ -106,6 +107,7 @@ export class WorkspaceController {
             selectionHead: tab.selectionHead,
             scrollTop: tab.scrollTop,
             scrollLeft: tab.scrollLeft,
+            previewScrollTop: tab.previewScrollTop,
             foldState: tab.foldStateExplicit ? "user" as const : null,
             foldRanges: tab.foldStateExplicit ? tab.foldRanges : null,
           }] : [];

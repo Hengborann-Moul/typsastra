@@ -22,6 +22,8 @@ export type EditorTab = {
   selectionHead: number;
   scrollTop?: number;
   scrollLeft?: number;
+  /** Last vertical position of the preview while this tab was active. */
+  previewScrollTop?: number;
   scrollSnapshot?: ReturnType<EditorView["scrollSnapshot"]>;
   foldRanges: EditorFoldRange[] | null;
   foldStateExplicit: boolean;

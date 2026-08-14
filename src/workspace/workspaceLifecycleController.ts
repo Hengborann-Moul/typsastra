@@ -231,6 +231,8 @@ export class WorkspaceLifecycleController {
           selectionHead: tabInfo.selectionHead || 0,
           scrollTop: tabInfo.scrollTop,
           scrollLeft: tabInfo.scrollLeft,
+          previewScrollTop: tabInfo.previewScrollTop
+            ?? (tabInfo.path === state.activeFile ? state.previewScrollTop : undefined),
           foldRanges: tabInfo.foldState === "user" && Array.isArray(tabInfo.foldRanges)
             ? tabInfo.foldRanges as EditorFoldRange[]
             : [],
