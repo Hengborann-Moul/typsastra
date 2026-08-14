@@ -73,6 +73,12 @@ struct FileSnapshot {
     sha256: String,
 }
 
+#[derive(Clone, Debug)]
+struct WorkspaceSnapshot {
+    directories: Vec<String>,
+    files: Vec<FileSnapshot>,
+}
+
 pub struct ProjectExport<'a> {
     pub workspace_root: &'a Path,
     pub archive_path: &'a Path,
@@ -395,8 +401,11 @@ pub fn validate_import_destination(
 pub fn export_source_zip(workspace_root: &Path, archive_path: &Path) -> Result<(), String> {
     let root = canonical_workspace_root(workspace_root)?;
     let excluded_output = canonicalize_if_exists(archive_path);
-    let files = collect_workspace_files(&root, excluded_output.as_deref())?;
-    write_archive(archive_path, |writer| write_snapshots(writer, &files))
+    let snapshot = collect_workspace_snapshot(&root, excluded_output.as_deref())?;
+    write_archive(archive_path, |writer| {
+        write_directories(writer, &snapshot.directories)?;
+        write_snapshots(writer, &snapshot.files)
+    })
 }
 
 pub fn export_typsastra_project(options: ProjectExport<'_>) -> Result<ProjectManifest, String> {
@@ -413,7 +422,8 @@ pub fn export_typsastra_project(options: ProjectExport<'_>) -> Result<ProjectMan
     }
     let main_relative = archive_path_for(&root, &main)?;
     let excluded_output = canonicalize_if_exists(options.archive_path);
-    let files = collect_workspace_files(&root, excluded_output.as_deref())?;
+    let snapshot = collect_workspace_snapshot(&root, excluded_output.as_deref())?;
+    let files = &snapshot.files;
     if !files.iter().any(|file| file.archive_path == main_relative) {
         return Err("The project main file was excluded from the archive.".to_string());
     }
@@ -456,7 +466,8 @@ pub fn export_typsastra_project(options: ProjectExport<'_>) -> Result<ProjectMan
 
     write_archive(options.archive_path, |writer| {
         write_entry(writer, PROJECT_MANIFEST_PATH, &manifest_bytes)?;
-        write_snapshots(writer, &files)
+        write_directories(writer, &snapshot.directories)?;
+        write_snapshots(writer, files)
     })?;
     Ok(manifest)
 }
@@ -718,14 +729,24 @@ fn canonicalize_if_exists(path: &Path) -> Option<PathBuf> {
         .flatten()
 }
 
-fn collect_workspace_files(
+fn collect_workspace_snapshot(
     root: &Path,
     excluded_output: Option<&Path>,
-) -> Result<Vec<FileSnapshot>, String> {
+) -> Result<WorkspaceSnapshot, String> {
+    let mut directories = Vec::new();
     let mut files = Vec::new();
-    collect_directory(root, root, excluded_output, &mut files)?;
+    collect_directory(root, root, excluded_output, &mut directories, &mut files)?;
+    directories.sort();
     files.sort_by(|left, right| left.archive_path.cmp(&right.archive_path));
     let mut seen = HashSet::new();
+    for directory in &directories {
+        let comparison_key = directory.to_lowercase();
+        if !seen.insert(comparison_key) {
+            return Err(format!(
+                "The workspace contains archive paths that collide across platforms: '{directory}'."
+            ));
+        }
+    }
     for file in &files {
         let comparison_key = file.archive_path.to_lowercase();
         if !seen.insert(comparison_key) {
@@ -735,13 +756,14 @@ fn collect_workspace_files(
             ));
         }
     }
-    Ok(files)
+    Ok(WorkspaceSnapshot { directories, files })
 }
 
 fn collect_directory(
     root: &Path,
     directory: &Path,
     excluded_output: Option<&Path>,
+    directories: &mut Vec<String>,
     files: &mut Vec<FileSnapshot>,
 ) -> Result<(), String> {
     let mut entries = std::fs::read_dir(directory)
@@ -777,7 +799,10 @@ fn collect_directory(
             if is_excluded_directory(root, &path, name) {
                 continue;
             }
-            collect_directory(root, &path, excluded_output, files)?;
+            let archive_path = archive_path_for(root, &path)?;
+            validate_archive_path(&archive_path)?;
+            directories.push(archive_path);
+            collect_directory(root, &path, excluded_output, directories, files)?;
         } else if file_type.is_file() {
             if excluded_output.is_some_and(|output| path == output) {
                 continue;
@@ -931,6 +956,13 @@ fn deterministic_file_options() -> FileOptions<'static, ()> {
         .unix_permissions(0o644)
 }
 
+fn deterministic_directory_options() -> FileOptions<'static, ()> {
+    FileOptions::default()
+        .compression_method(zip::CompressionMethod::Stored)
+        .last_modified_time(zip::DateTime::default())
+        .unix_permissions(0o755)
+}
+
 fn write_archive(
     archive_path: &Path,
     write_contents: impl FnOnce(&mut zip::ZipWriter<File>) -> Result<(), String>,
@@ -983,6 +1015,21 @@ fn write_snapshots(
     Ok(())
 }
 
+fn write_directories(
+    writer: &mut zip::ZipWriter<File>,
+    directories: &[String],
+) -> Result<(), String> {
+    for directory in directories {
+        let archive_path = format!("{directory}/");
+        writer
+            .add_directory(&archive_path, deterministic_directory_options())
+            .map_err(|error| {
+                format!("Failed to add directory '{directory}' to project archive: {error}")
+            })?;
+    }
+    Ok(())
+}
+
 fn write_entry<W: Write + Seek>(
     writer: &mut zip::ZipWriter<W>,
     path: &str,
@@ -1006,6 +1053,7 @@ mod tests {
         std::fs::write(workspace.path().join("main.typ"), "= Hello\n").unwrap();
         std::fs::create_dir(workspace.path().join("chapters")).unwrap();
         std::fs::write(workspace.path().join("chapters").join("ខ្មែរ.typ"), "= ខ្មែរ\n").unwrap();
+        std::fs::create_dir_all(workspace.path().join("template/sections/optional")).unwrap();
         std::fs::create_dir(workspace.path().join("fonts")).unwrap();
         std::fs::write(workspace.path().join("fonts").join("Example.ttf"), "font").unwrap();
         std::fs::write(workspace.path().join("fonts").join("Example.woff2"), "font").unwrap();
@@ -1215,6 +1263,9 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(names[0], PROJECT_MANIFEST_PATH);
         assert!(names.contains(&"chapters/ខ្មែរ.typ".to_string()));
+        assert!(names.contains(&"template/".to_string()));
+        assert!(names.contains(&"template/sections/".to_string()));
+        assert!(names.contains(&"template/sections/optional/".to_string()));
         assert!(names.contains(&".typsastra/config.json".to_string()));
         assert!(names.contains(&".typsastra/workspace.json".to_string()));
         assert!(!names.contains(&".typsastra/local.json".to_string()));
@@ -1273,7 +1324,9 @@ mod tests {
     #[test]
     fn changed_snapshot_is_rejected_before_archive_publication() {
         let workspace = create_workspace();
-        let files = collect_workspace_files(workspace.path(), None).unwrap();
+        let files = collect_workspace_snapshot(workspace.path(), None)
+            .unwrap()
+            .files;
         std::fs::write(workspace.path().join("main.typ"), "= Changed\n").unwrap();
         let output = tempfile::tempdir().unwrap();
         let archive = output.path().join("changed.zip");
@@ -1295,6 +1348,7 @@ mod tests {
         assert_eq!(Path::new(&imported.workspace_path), destination);
         assert!(destination.join("main.typ").is_file());
         assert!(destination.join("chapters").join("ខ្មែរ.typ").is_file());
+        assert!(destination.join("template/sections/optional").is_dir());
         assert!(destination.join(".typsastra").join("config.json").is_file());
         assert!(destination
             .join(".typsastra")
