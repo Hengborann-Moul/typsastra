@@ -154,9 +154,12 @@ export function graphemePointerSelection(
   onDebug?: (event: GraphemePointerDebugEvent) => void
 ): Extension {
   return EditorView.mouseSelectionStyle.of((view, event) => {
-  if (event.button !== 0 || event.detail !== 1 || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) {
+  if (event.button !== 0 || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) {
     return null;
   }
+
+  if (event.detail === 2) return khmerDoubleClickSelection(view, event);
+  if (event.detail !== 1) return null;
 
   const initial = pointerSelectionAtCoordinates(view, event, onDebug);
   if (!initial) return null;
@@ -175,6 +178,97 @@ export function graphemePointerSelection(
   };
   return style;
   });
+}
+
+function khmerDoubleClickSelection(view: EditorView, event: MouseEvent): MouseSelectionStyle | null {
+  const initial = khmerGraphemeRangeAtCoordinates(view, event);
+  if (!initial) return null;
+  let start = initial;
+
+  return {
+    get(currentEvent) {
+      const current = khmerGraphemeRangeAtCoordinates(view, currentEvent) ?? start;
+      const range = current.from < start.from
+        ? EditorSelection.range(start.to, current.from)
+        : EditorSelection.range(start.from, current.to);
+      return EditorSelection.create([range]);
+    },
+    update(update: ViewUpdate) {
+      if (!update.docChanged) return;
+      start = {
+        from: update.changes.mapPos(start.from, 1),
+        to: update.changes.mapPos(start.to, -1),
+      };
+    },
+  };
+}
+
+function khmerGraphemeRangeAtCoordinates(
+  view: EditorView,
+  event: Pick<MouseEvent, "clientX" | "clientY">,
+): GraphemeBoundary | null {
+  const resolved = view.posAndSideAtCoords({ x: event.clientX, y: event.clientY });
+  if (!resolved) return null;
+  const line = view.state.doc.lineAt(resolved.pos);
+  const local = resolved.pos - line.from;
+  const candidates: Array<GraphemeBoundary & { distance: number }> = [];
+
+  for (const boundary of graphemeBoundaries(line.text)) {
+    const cluster = line.text.slice(boundary.from, boundary.to);
+    if (!/[\u1780-\u17ff]/u.test(cluster)) continue;
+    const from = line.from + boundary.from;
+    const to = line.from + boundary.to;
+    const startCoordinates = view.coordsAtPos(from, 1);
+    const endCoordinates = view.coordsAtPos(to, -1);
+    if (!startCoordinates || !endCoordinates) continue;
+    const left = Math.min(startCoordinates.left, endCoordinates.left);
+    const right = Math.max(startCoordinates.left, endCoordinates.left);
+    const top = Math.min(startCoordinates.top, endCoordinates.top);
+    const bottom = Math.max(startCoordinates.bottom, endCoordinates.bottom);
+    if (event.clientX < left - 2 || event.clientX > right + 2
+      || event.clientY < top - 2 || event.clientY > bottom + 2) continue;
+    candidates.push({
+      from,
+      to,
+      distance: Math.abs(event.clientX - (left + right) / 2),
+    });
+  }
+
+  const visual = candidates.sort((left, right) => left.distance - right.distance)[0];
+  if (visual) return { from: visual.from, to: visual.to };
+  const fallback = khmerGraphemeBoundaryAtOffset(line.text, local, resolved.assoc);
+  return fallback ? { from: line.from + fallback.from, to: line.from + fallback.to } : null;
+}
+
+export function khmerGraphemeBoundaryAtOffset(
+  text: string,
+  offset: number,
+  association = 0,
+): GraphemeBoundary | null {
+  const boundaries = graphemeBoundaries(text)
+    .filter(boundary => /[\u1780-\u17ff]/u.test(text.slice(boundary.from, boundary.to)));
+  const clamped = Math.max(0, Math.min(offset, text.length));
+  const containing = boundaries.find(boundary => boundary.from < clamped && clamped < boundary.to);
+  if (containing) return containing;
+  if (association < 0) {
+    return lastBoundaryEndingAt(boundaries, clamped);
+  }
+  if (association > 0) {
+    return boundaries.find(boundary => boundary.from === clamped) ?? null;
+  }
+  return boundaries.find(boundary => boundary.from === clamped)
+    ?? lastBoundaryEndingAt(boundaries, clamped)
+    ?? null;
+}
+
+function lastBoundaryEndingAt(
+  boundaries: readonly GraphemeBoundary[],
+  position: number,
+): GraphemeBoundary | null {
+  for (let index = boundaries.length - 1; index >= 0; index -= 1) {
+    if (boundaries[index].to === position) return boundaries[index];
+  }
+  return null;
 }
 
 function pointerSelectionAtCoordinates(

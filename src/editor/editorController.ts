@@ -9,7 +9,7 @@ import {
 } from "@codemirror/language";
 import type { PerformanceMetric } from "../performance/diagnostics";
 import { editorDiagnosticsStateField } from "./diagnostics";
-import { editorMatchQuery } from "./extensions";
+import { editorMatchQuery, editorSelectionMatchRangeAllowed } from "./extensions";
 import { imageOptimizationWarningField } from "./imageWarnings";
 import { cursorRowColumn } from "./verticalCursor";
 import { TYPSASTRA_GREEN } from "../ui/brandColors";
@@ -515,6 +515,7 @@ export class EditorController {
           this.updateDiagnosticMarkers();
           return;
         }
+        if (!editorSelectionMatchRangeAllowed(state, result.value.from, result.value.to)) continue;
         addTarget(result.value.from, result.value.to);
       }
       completedFrames += 1;

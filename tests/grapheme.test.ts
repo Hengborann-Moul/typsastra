@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { EditorSelection, EditorState, Text } from "@codemirror/state";
 import { closeBrackets } from "@codemirror/autocomplete";
 import type { EditorView } from "@codemirror/view";
-import { codePointDeletionRange, completeTrailingGraphemeBoundary, deletionRangesForSelection, deletePreviousGraphemeOrPair, graphemeBoundaries, graphemeSelectionBoundaryFilter, moveSelectionByGrapheme, nextGraphemeBoundary, previousGraphemeBoundary, snapPositionToGraphemeBoundary, snapSelectionToGraphemeBoundaries } from "../src/editor/grapheme";
+import { codePointDeletionRange, completeTrailingGraphemeBoundary, deletionRangesForSelection, deletePreviousGraphemeOrPair, graphemeBoundaries, graphemeSelectionBoundaryFilter, khmerGraphemeBoundaryAtOffset, moveSelectionByGrapheme, nextGraphemeBoundary, previousGraphemeBoundary, snapPositionToGraphemeBoundary, snapSelectionToGraphemeBoundaries } from "../src/editor/grapheme";
 import { getTemporaryKhmerBoundary, khmerCompositionBoundaryState } from "../src/editor/editingPolicies/khmer/composition";
 
 describe("editor grapheme navigation", () => {
@@ -54,6 +54,24 @@ describe("editor grapheme navigation", () => {
     const doc = Text.of(["ខ្មែរ"]);
     const selection = snapSelectionToGraphemeBoundaries(doc, EditorSelection.create([EditorSelection.cursor(2)]));
     expect(selection.main.head).toBe(0);
+  });
+
+  test("selects complete Khmer clusters from platform-independent pointer offsets", () => {
+    for (const cluster of ["ន៍", "ន់", "នាំ"]) {
+      expect(khmerGraphemeBoundaryAtOffset(cluster, 0, 1)).toEqual({ from: 0, to: cluster.length });
+      expect(khmerGraphemeBoundaryAtOffset(cluster, 1, -1)).toEqual({ from: 0, to: cluster.length });
+      expect(khmerGraphemeBoundaryAtOffset(cluster, cluster.length, -1)).toEqual({ from: 0, to: cluster.length });
+    }
+    const adjacent = "កន់";
+    expect(khmerGraphemeBoundaryAtOffset(adjacent, 1, -1)).toEqual({ from: 0, to: 1 });
+    expect(khmerGraphemeBoundaryAtOffset(adjacent, 1, 1)).toEqual({ from: 1, to: adjacent.length });
+    expect(khmerGraphemeBoundaryAtOffset("Latin", 0, 1)).toBeNull();
+  });
+
+  test("owns Khmer double-click selection instead of using a platform word boundary", async () => {
+    const source = await Bun.file(new URL("../src/editor/grapheme.ts", import.meta.url)).text();
+    expect(source).toContain("if (event.detail === 2) return khmerDoubleClickSelection(view, event)");
+    expect(source).toContain("khmerGraphemeRangeAtCoordinates(view, currentEvent)");
   });
 
   test("uses the pointer side when placing a caret in a line-leading COENG cluster", () => {

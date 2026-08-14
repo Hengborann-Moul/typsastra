@@ -1,7 +1,7 @@
 import { Extension, Compartment, EditorSelection, EditorState, StateEffect, RangeSetBuilder, Prec } from "@codemirror/state";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { lineNumbers, highlightActiveLineGutter, highlightActiveLine, drawSelection, dropCursor, keymap, EditorView, ViewPlugin, Decoration, DecorationSet, ViewUpdate, tooltips } from "@codemirror/view";
+import { lineNumbers, highlightActiveLineGutter, highlightActiveLine, drawSelection, dropCursor, keymap, EditorView, ViewPlugin, Decoration, DecorationSet, ViewUpdate, RectangleMarker, layer, tooltips } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap, insertNewlineAndIndent, insertTab } from "@codemirror/commands";
 import {
   SearchQuery,
@@ -49,7 +49,7 @@ import { bracketColorizer } from "./bracketColorizer";
 import { createHoverTooltip } from "./hover";
 import type { TinymistLspClient } from "../compiler/lsp";
 import { typstFunctionFoldService } from "./folding";
-import { deleteNextGrapheme, deletePreviousGraphemeOrPair, graphemePointerSelection, graphemeSelectionBoundaryFilter, moveNextGrapheme, movePreviousGrapheme, selectNextGrapheme, selectPreviousGrapheme, type GraphemePointerDebugEvent } from "./grapheme";
+import { deleteNextGrapheme, deletePreviousGraphemeOrPair, graphemeBoundaries, graphemePointerSelection, graphemeSelectionBoundaryFilter, moveNextGrapheme, movePreviousGrapheme, selectNextGrapheme, selectPreviousGrapheme, type GraphemePointerDebugEvent } from "./grapheme";
 import { editingPolicyRegistry } from "./editingPolicies/registry";
 import { showInvisibleCharacters } from "./invisibles";
 import { TYPSASTRA_GREEN, TYPSASTRA_GREEN_GLOW } from "../ui/brandColors";
@@ -254,51 +254,60 @@ export function editorMatchQuery(state: EditorState): SearchQuery | null {
   });
 }
 
-const selectedTextMatchDecoration = Decoration.mark({ class: "cm-selectionMatch" });
+export function editorSelectionMatchRangeAllowed(
+  state: EditorState,
+  from: number,
+  to: number,
+): boolean {
+  if (searchPanelOpen(state)) return true;
+  const selection = state.selection.main;
+  const selectedText = state.sliceDoc(selection.from, selection.to);
+  if (!/[\u1780-\u17ff]/u.test(selectedText)) return true;
+  if (from < 0 || to <= from || to > state.doc.length) return false;
+  const line = state.doc.lineAt(from);
+  if (to > line.to) return false;
+  const localFrom = from - line.from;
+  const localTo = to - line.from;
+  const boundaries = graphemeBoundaries(line.text);
+  return boundaries.some(boundary => boundary.from === localFrom)
+    && boundaries.some(boundary => boundary.to === localTo);
+}
 
-const caseInsensitiveSelectionMatches = ViewPlugin.fromClass(class {
-  decorations: DecorationSet;
-
-  constructor(view: EditorView) {
-    this.decorations = this.build(view);
-  }
-
-  update(update: ViewUpdate): void {
-    if (
-      update.docChanged
+const caseInsensitiveSelectionMatches = layer({
+  above: false,
+  class: "cm-selectionMatchLayer",
+  update(update): boolean {
+    return update.docChanged
       || update.selectionSet
       || update.viewportChanged
-      || searchPanelOpen(update.state) !== searchPanelOpen(update.startState)
-    ) {
-      this.decorations = this.build(update.view);
-    }
-  }
-
-  private build(view: EditorView): DecorationSet {
-    if (searchPanelOpen(view.state)) return Decoration.none;
+      || update.geometryChanged
+      || searchPanelOpen(update.state) !== searchPanelOpen(update.startState);
+  },
+  markers(view) {
+    if (searchPanelOpen(view.state)) return [];
     const query = editorMatchQuery(view.state);
-    if (!query) return Decoration.none;
+    if (!query) return [];
 
-    const ranges: Array<{ from: number; to: number; value: Decoration }> = [];
+    const markers: RectangleMarker[] = [];
     for (const visible of view.visibleRanges) {
       const cursor = query.getCursor(view.state, visible.from, visible.to);
       for (let result = cursor.next(); !result.done; result = cursor.next()) {
+        const { from, to } = result.value;
+        if (!editorSelectionMatchRangeAllowed(view.state, from, to)) continue;
         // The native selection layer already paints the selected occurrence.
-        // Decorating it again produces overlapping rectangles where one
-        // logical selection wraps across multiple visual rows.
+        // Drawing matches in a view layer keeps Khmer text in a single DOM text
+        // run, preserving its shaping and line wrapping across every platform.
         const selection = view.state.selection.main;
-        if (result.value.from < selection.to && result.value.to > selection.from) continue;
-        ranges.push({
-          from: result.value.from,
-          to: result.value.to,
-          value: selectedTextMatchDecoration
-        });
+        if (from < selection.to && to > selection.from) continue;
+        markers.push(...RectangleMarker.forRange(
+          view,
+          "cm-selectionMatch",
+          EditorSelection.range(from, to),
+        ));
       }
     }
-    return Decoration.set(ranges, true);
+    return markers;
   }
-}, {
-  decorations: value => value.decorations
 });
 
 export function foldedRangeForSearchMatch(

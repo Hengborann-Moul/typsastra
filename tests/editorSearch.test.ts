@@ -4,6 +4,7 @@ import { SearchQuery, getSearchQuery, search, setSearchQuery } from "@codemirror
 import { codeFolding, foldEffect } from "@codemirror/language";
 import {
   editorMatchQuery,
+  editorSelectionMatchRangeAllowed,
   firstSearchMatch,
   firstVisibleSearchMatch,
   foldedRangeForSearchMatch,
@@ -48,6 +49,30 @@ describe("editor search navigation", () => {
       { from: 0, to: 23, precise: true },
       { from: 24, to: 47, precise: true }
     ]);
+  });
+
+  test("matches a selected Khmer consonant only at complete grapheme boundaries", () => {
+    const state = EditorState.create({
+      doc: "ន ន៍ ន់ នាំ កន",
+      selection: { anchor: 0, head: 1 },
+    });
+    const rawMatches = Array.from(editorMatchQuery(state)!.getCursor(state));
+    const matches = rawMatches.filter(match =>
+      editorSelectionMatchRangeAllowed(state, match.from, match.to)
+    );
+
+    expect(rawMatches.length).toBeGreaterThan(matches.length);
+    expect(matches.map(match => state.sliceDoc(match.from, match.to))).toEqual(["ន", "ន"]);
+    expect(matches.map(match => match.from)).toEqual([0, 13]);
+  });
+
+  test("keeps explicit Find queries substring-based for Khmer", () => {
+    let state = EditorState.create({
+      doc: "ន ន៍ ន់ នាំ",
+      extensions: [search()],
+    });
+    state = state.update({ effects: setSearchQuery.of(new SearchQuery({ search: "ន" })) }).state;
+    expect(editorSelectionMatchRangeAllowed(state, 2, 3)).toBe(true);
   });
 
   test("matches diacritics exactly by default", () => {
@@ -176,6 +201,14 @@ describe("editor search navigation", () => {
 
     expect(source).toContain('scrollToMatch: range => EditorView.scrollIntoView(range, { y: "center" })');
     expect(source).toContain('EditorView.scrollIntoView(selection.main, { y: "center" })');
+  });
+
+  test("draws selection matches without splitting shaped text into DOM spans", async () => {
+    const source = await Bun.file(new URL("../src/editor/extensions.ts", import.meta.url)).text();
+
+    expect(source).toContain('class: "cm-selectionMatchLayer"');
+    expect(source).toContain("RectangleMarker.forRange(");
+    expect(source).not.toContain('Decoration.mark({ class: "cm-selectionMatch" })');
   });
 
   test("recognizes a match in the visible editor range", () => {
