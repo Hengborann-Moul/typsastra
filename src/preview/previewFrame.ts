@@ -64,6 +64,11 @@ import { pageDimensionsChanged, pagesToEvict, visiblePageIndexes } from "./virtu
 import { PreviewMotionController } from "./previewMotion";
 import { applyDarkPreviewPixels } from "./darkPreview";
 import {
+  capturePreviewViewportAnchor,
+  previewViewportAnchorDelta,
+  type PreviewViewportAnchor,
+} from "./previewViewportAnchor";
+import {
   PreviewRenderScheduler,
   type PreviewRenderReason,
   type PreviewRenderRequest
@@ -104,11 +109,6 @@ type PageDimensions = {
   height: number;
 };
 
-type ScrollAnchor = {
-  pageNo: number;
-  offset: number;
-};
-
 type ActivePageRender = {
   generation: number;
   renderKey: string;
@@ -140,7 +140,7 @@ export class PreviewFrame {
   private resizeObserver: ResizeObserver | null = null;
   private resizeLayoutSuspended = false;
   private resizeLayoutPending = false;
-  private resizeScrollAnchor: ScrollAnchor | null = null;
+  private resizeScrollAnchor: PreviewViewportAnchor | null = null;
   private pdfCleanupQueue: Promise<void> = Promise.resolve();
   private lastInteractionStatusKey = "";
   private pdfJsPromise: Promise<PdfJsModule> | null = null;
@@ -378,8 +378,12 @@ export class PreviewFrame {
   }
 
   public zoomIn(): number {
+    const anchor = this.captureScrollAnchor();
     this.isFitToWidth = false;
-    return this.setZoom(ZOOM_LEVELS.find(level => level > this.previewZoomPercent) ?? this.previewZoomPercent);
+    return this.setZoom(
+      ZOOM_LEVELS.find(level => level > this.previewZoomPercent) ?? this.previewZoomPercent,
+      anchor,
+    );
   }
 
   public memorySnapshot(): PreviewMemorySnapshot {
@@ -405,14 +409,19 @@ export class PreviewFrame {
   }
 
   public zoomOut(): number {
+    const anchor = this.captureScrollAnchor();
     this.isFitToWidth = false;
-    return this.setZoom([...ZOOM_LEVELS].reverse().find(level => level < this.previewZoomPercent) ?? this.previewZoomPercent);
+    return this.setZoom(
+      [...ZOOM_LEVELS].reverse().find(level => level < this.previewZoomPercent) ?? this.previewZoomPercent,
+      anchor,
+    );
   }
 
   public zoomToFit(): void {
+    const anchor = this.captureScrollAnchor();
     this.isFitToWidth = true;
     this.updateHorizontalOverflow();
-    this.applyFitToWidth();
+    this.applyFitToWidth(anchor);
   }
 
   private computeFitToWidthPercent(): number {
@@ -427,7 +436,7 @@ export class PreviewFrame {
     return Math.max(10, Math.floor((availableWidth / maxPageWidth) * 100));
   }
 
-  private applyFitToWidth(anchor?: ScrollAnchor | null): void {
+  private applyFitToWidth(anchor?: PreviewViewportAnchor | null): void {
     const percent = this.computeFitToWidthPercent();
     if (percent === this.previewZoomPercent) {
       if (anchor) this.restoreScrollAnchor(anchor, true);
@@ -436,12 +445,12 @@ export class PreviewFrame {
     this.setZoom(percent, anchor);
   }
 
-  private setZoom(percent: number, preservedAnchor?: ScrollAnchor | null): number {
+  private setZoom(percent: number, preservedAnchor?: PreviewViewportAnchor | null): number {
     this.hideDraftImagePopover();
-    this.updateHorizontalOverflow();
     if (percent === this.previewZoomPercent) return percent;
     this.zoomStartedAt = performance.now();
     const anchor = preservedAnchor ?? this.captureScrollAnchor();
+    this.updateHorizontalOverflow();
     this.previewZoomPercent = percent;
     this.onZoomChanged?.(percent);
     this.cancelAllPageRenders();
@@ -1485,13 +1494,23 @@ export class PreviewFrame {
     }, 1000);
   }
 
-  private captureScrollAnchor(): ScrollAnchor | null {
+  private captureScrollAnchor(): PreviewViewportAnchor | null {
     const doc = this.iframe?.contentDocument;
-    if (!doc) return null;
-    const slots = [...doc.querySelectorAll<HTMLElement>(".pdf-page-container")];
-    const anchor = slots.find(slot => slot.getBoundingClientRect().bottom > 0) ?? slots[0];
-    if (!anchor) return null;
-    return { pageNo: Number(anchor.dataset.pageNo), offset: anchor.getBoundingClientRect().top };
+    const view = this.iframe?.contentWindow;
+    if (!doc || !view) return null;
+    const pages = [...doc.querySelectorAll<HTMLElement>(".pdf-page-container")]
+      .map(slot => {
+        const rect = slot.getBoundingClientRect();
+        return {
+          pageNo: Number(slot.dataset.pageNo),
+          left: rect.left,
+          top: rect.top,
+          width: rect.width,
+          height: rect.height,
+        };
+      })
+      .filter(page => Number.isFinite(page.pageNo));
+    return capturePreviewViewportAnchor(pages, view.innerWidth, view.innerHeight);
   }
 
   private captureScrollPosition(): number {
@@ -1519,14 +1538,22 @@ export class PreviewFrame {
     });
   }
 
-  private restoreScrollAnchor(anchor: ScrollAnchor | null, afterLayout = false): void {
+  private restoreScrollAnchor(anchor: PreviewViewportAnchor | null, afterLayout = false): void {
     if (!anchor) return;
     const restore = () => {
       const slot = this.iframe?.contentDocument
         ?.querySelector<HTMLElement>(`.pdf-page-container[data-page-no="${anchor.pageNo}"]`);
       const view = this.iframe?.contentWindow;
       if (!slot || !view) return;
-      view.scrollBy(0, slot.getBoundingClientRect().top - anchor.offset);
+      const rect = slot.getBoundingClientRect();
+      const delta = previewViewportAnchorDelta(anchor, {
+        pageNo: anchor.pageNo,
+        left: rect.left,
+        top: rect.top,
+        width: rect.width,
+        height: rect.height,
+      }, view.innerWidth, view.innerHeight);
+      view.scrollBy({ left: delta.left, top: delta.top, behavior: "auto" });
     };
     requestAnimationFrame(() => {
       if (afterLayout) requestAnimationFrame(restore);
