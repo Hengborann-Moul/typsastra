@@ -1,6 +1,46 @@
-import { defineConfig } from "vite";
+import { readFileSync, readdirSync } from "node:fs";
+import { resolve } from "node:path";
+import { defineConfig, type Plugin } from "vite";
+
+const PDFJS_WASM_ROUTE = "/pdfjs-wasm/";
+const PDFJS_WASM_DIRECTORY = resolve("node_modules/pdfjs-dist/wasm");
+
+function pdfjsWasmAssets(): Plugin {
+  const assetNames = readdirSync(PDFJS_WASM_DIRECTORY).filter((name) =>
+    /\.(?:js|wasm)$/u.test(name)
+  );
+
+  return {
+    name: "typsastra-pdfjs-wasm-assets",
+    configureServer(server) {
+      server.middlewares.use(PDFJS_WASM_ROUTE, (request, response, next) => {
+        const requestedName = decodeURIComponent((request.url ?? "").split(/[?#]/u, 1)[0])
+          .replace(/^\/+|\/+$/gu, "");
+        if (!assetNames.includes(requestedName)) {
+          next();
+          return;
+        }
+        response.setHeader(
+          "Content-Type",
+          requestedName.endsWith(".wasm") ? "application/wasm" : "text/javascript"
+        );
+        response.end(readFileSync(resolve(PDFJS_WASM_DIRECTORY, requestedName)));
+      });
+    },
+    generateBundle() {
+      for (const assetName of assetNames) {
+        this.emitFile({
+          type: "asset",
+          fileName: `pdfjs-wasm/${assetName}`,
+          source: readFileSync(resolve(PDFJS_WASM_DIRECTORY, assetName))
+        });
+      }
+    }
+  };
+}
 
 export default defineConfig({
+  plugins: [pdfjsWasmAssets()],
   clearScreen: false,
   server: {
     host: "127.0.0.1",

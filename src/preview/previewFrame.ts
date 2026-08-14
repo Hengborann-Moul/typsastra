@@ -622,7 +622,16 @@ export class PreviewFrame {
         enableHWA: true,
         cMapUrl: "/cmaps/",
         cMapPacked: true,
-        standardFontDataUrl: "/standard_fonts/"
+        standardFontDataUrl: "/standard_fonts/",
+        // PDF.js decodes JBIG2 and CCITT Fax image layers through the same
+        // packaged decoder. Scanner-generated MRC PDFs commonly store their
+        // text as a CCITT foreground mask over a low-resolution background;
+        // without these assets PDF.js can display only the washed-out base.
+        wasmUrl: "/pdfjs-wasm/",
+        // Keep binary asset loading on the window side of the worker bridge.
+        // Besides matching the previous CMap/font behavior, this avoids making
+        // Tauri's custom application protocol directly fetchable by a worker.
+        useWorkerFetch: false
       });
       nextLoadingTask = pdfLoadingHandle(
         loadingTask as unknown as PdfLoadingHandle,
