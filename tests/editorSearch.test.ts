@@ -131,6 +131,7 @@ describe("editor search navigation", () => {
 
   test("uses compact accessible app icons for search actions and toggles", async () => {
     const source = await Bun.file(new URL("../src/editor/search.ts", import.meta.url)).text();
+    const caretSource = await Bun.file(new URL("../src/ui/editorCaretInput.ts", import.meta.url)).text();
     const css = await Bun.file(new URL("../src/style.css", import.meta.url)).text();
 
     expect(source).toContain('createAppIcon(icon, { size: 16 })');
@@ -143,6 +144,12 @@ describe("editor search navigation", () => {
     expect(css).toContain("height: calc(var(--editor-line-height-px, 23.8px) + 10px) !important");
     expect(source).toContain("editorCaretInput(this.searchField)");
     expect(source).toContain("editorCaretInput(this.replaceField)");
+    expect(caretSource).toContain('field.addEventListener("keydown"');
+    expect(caretSource).toContain("CARET_MOVEMENT_KEYS.has(event.key)");
+    expect(caretSource).toContain("scheduleCaretUpdate()");
+    expect(caretSource).toContain('field.addEventListener("pointermove"');
+    expect(css).toContain(".typsastra-caret-input-shell:focus-within.typsastra-caret-input-active");
+    expect(css).toContain("animation: none");
     expect(css).toContain(".cm-panel.cm-search .cm-search-editor-caret");
     expect(css).toContain("border-left: 2px solid var(--editor-cursor-color, #3db489)");
     expect(css).toContain("height: var(--editor-line-height-px, 23.8px)");

@@ -3947,6 +3947,11 @@ button.welcome-item:disabled {
   animation: typsastra-search-caret-pulse 1.05s steps(1) infinite;
 }
 
+.typsastra-caret-input-shell:focus-within.typsastra-caret-input-active .typsastra-input-caret {
+  animation: none;
+  opacity: 1;
+}
+
 @keyframes typsastra-search-caret-pulse {
   0%, 45% { opacity: 1; }
   46%, 100% { opacity: 0; }

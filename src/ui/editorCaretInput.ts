@@ -4,6 +4,17 @@ export type EditorCaretInputOptions = {
   caretClass?: string;
 };
 
+const CARET_MOVEMENT_KEYS = new Set([
+  "ArrowLeft",
+  "ArrowRight",
+  "ArrowUp",
+  "ArrowDown",
+  "Home",
+  "End",
+  "PageUp",
+  "PageDown",
+]);
+
 /** Wrap an input with the same full-height caret used by the editor. */
 export function wrapEditorCaretInput(
   field: HTMLInputElement,
@@ -23,6 +34,9 @@ export function wrapEditorCaretInput(
     .join(" ");
   shell.append(field, measure, caret);
 
+  let updateFrame: number | null = null;
+  let steadyCaretTimer: number | null = null;
+
   const updateCaret = () => {
     const selection = field.selectionStart ?? 0;
     const selectionEnd = field.selectionEnd ?? selection;
@@ -31,10 +45,53 @@ export function wrapEditorCaretInput(
     const measuredWidth = selection === 0 ? 0 : measure.getBoundingClientRect().width;
     caret.style.left = `calc(var(--editor-input-horizontal-inset, 10px) + ${measuredWidth - field.scrollLeft}px)`;
   };
+
+  const scheduleCaretUpdate = () => {
+    if (updateFrame !== null) return;
+    updateFrame = requestAnimationFrame(() => {
+      updateFrame = null;
+      updateCaret();
+    });
+  };
+
+  const keepCaretSteady = () => {
+    shell.classList.add("typsastra-caret-input-active");
+    if (steadyCaretTimer !== null) window.clearTimeout(steadyCaretTimer);
+    steadyCaretTimer = window.setTimeout(() => {
+      steadyCaretTimer = null;
+      shell.classList.remove("typsastra-caret-input-active");
+    }, 500);
+  };
+
   for (const event of ["focus", "input", "click", "keyup", "select", "scroll"]) {
-    field.addEventListener(event, updateCaret);
+    field.addEventListener(event, scheduleCaretUpdate);
   }
-  field.addEventListener("focus", () => requestAnimationFrame(updateCaret));
+  field.addEventListener("keydown", event => {
+    if (!CARET_MOVEMENT_KEYS.has(event.key)) return;
+    keepCaretSteady();
+    // Keyboard defaults update selectionStart after keydown listeners run.
+    // Repaint on the next frame so held/repeated navigation remains visible.
+    scheduleCaretUpdate();
+  });
+  field.addEventListener("beforeinput", () => {
+    keepCaretSteady();
+    scheduleCaretUpdate();
+  });
+  field.addEventListener("pointerdown", () => {
+    keepCaretSteady();
+    scheduleCaretUpdate();
+  });
+  field.addEventListener("pointermove", event => {
+    if (event.buttons === 0) return;
+    keepCaretSteady();
+    scheduleCaretUpdate();
+  });
+  field.addEventListener("blur", () => {
+    if (steadyCaretTimer !== null) window.clearTimeout(steadyCaretTimer);
+    steadyCaretTimer = null;
+    shell.classList.remove("typsastra-caret-input-active");
+  });
+  field.addEventListener("focus", scheduleCaretUpdate);
   updateCaret();
   return shell;
 }
