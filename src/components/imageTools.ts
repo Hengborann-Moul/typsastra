@@ -623,8 +623,8 @@ export class ImageToolsController {
           sourcePath: image.path,
           width: Math.max(1, Math.round(image.width * scale)),
           height: Math.max(1, Math.round(image.height * scale)),
-          format: image.format === "JPEG" ? "jpeg" : "png",
-          quality: 88,
+          format: "auto",
+          quality: 84,
         },
       });
       if (this.committed?.path !== image.path) return;

@@ -2559,6 +2559,9 @@ fn image_tool_generate_preview_blocking(
     };
     use std::hash::{Hash, Hasher};
     use std::io::BufWriter;
+    use std::time::UNIX_EPOCH;
+
+    const IMAGE_TOOL_PREVIEW_PIPELINE_VERSION: &str = "image-tool-preview-v2";
 
     let root = normalized_existing_path(std::path::Path::new(&request.workspace_root_path));
     let source = normalized_existing_path(std::path::Path::new(&request.source_path));
@@ -2575,9 +2578,12 @@ fn image_tool_generate_preview_blocking(
     if u64::from(request.width).saturating_mul(u64::from(request.height)) > 64 * 1024 * 1024 {
         return Err("Target dimensions exceed the 64-megapixel optimization limit".into());
     }
-    let format = request.format.to_ascii_lowercase();
-    if !matches!(format.as_str(), "png" | "jpeg" | "jpg" | "webp") {
-        return Err("Target format must be PNG, JPEG, or WebP".into());
+    let requested_format = request.format.to_ascii_lowercase();
+    if !matches!(
+        requested_format.as_str(),
+        "auto" | "png" | "jpeg" | "jpg" | "webp"
+    ) {
+        return Err("Target format must be automatic, PNG, JPEG, or WebP".into());
     }
     let reader = ImageReader::open(&source)
         .map_err(|error| format!("Could not open {}: {error}", source.display()))?
@@ -2587,35 +2593,75 @@ fn image_tool_generate_preview_blocking(
         .into_decoder()
         .map_err(|error| format!("Could not initialize {}: {error}", source.display()))?;
     let orientation = decoder.orientation().unwrap_or(Orientation::NoTransforms);
-    let mut decoded = DynamicImage::from_decoder(decoder)
-        .map_err(|error| format!("Could not decode {}: {error}", source.display()))?;
-    decoded.apply_orientation(orientation);
-    let resized = decoded.resize_exact(request.width, request.height, FilterType::Lanczos3);
+    let inspection_proxy = requested_format == "auto";
+    let format = if inspection_proxy {
+        if decoder.color_type().has_alpha() {
+            "png"
+        } else {
+            "jpeg"
+        }
+    } else if requested_format == "jpg" {
+        "jpeg"
+    } else {
+        requested_format.as_str()
+    };
+    let extension = format;
+    let source_metadata = std::fs::metadata(&source)
+        .map_err(|error| format!("Could not inspect {}: {error}", source.display()))?;
+    let modified = source_metadata
+        .modified()
+        .ok()
+        .and_then(|timestamp| timestamp.duration_since(UNIX_EPOCH).ok());
     let cache = root.join(".typsastra").join("cache").join("image-tool");
     std::fs::create_dir_all(&cache)
         .map_err(|error| format!("Could not prepare image-tool cache: {error}"))?;
-    let extension = if format == "jpg" {
-        "jpeg"
-    } else {
-        format.as_str()
-    };
     let mut identity = std::collections::hash_map::DefaultHasher::new();
+    IMAGE_TOOL_PREVIEW_PIPELINE_VERSION.hash(&mut identity);
     source.hash(&mut identity);
+    source_metadata.len().hash(&mut identity);
+    modified
+        .map(|duration| duration.as_secs())
+        .hash(&mut identity);
+    modified
+        .map(|duration| duration.subsec_nanos())
+        .hash(&mut identity);
     request.width.hash(&mut identity);
     request.height.hash(&mut identity);
     format.hash(&mut identity);
     request.quality.hash(&mut identity);
+    inspection_proxy.hash(&mut identity);
     let destination = cache.join(format!(
         "preview-{identity:016x}-{request_width}x{request_height}.{extension}",
         identity = identity.finish(),
         request_width = request.width,
         request_height = request.height
     ));
+    if let Ok(metadata) = std::fs::metadata(&destination) {
+        if metadata.is_file() && metadata.len() > 0 && image::image_dimensions(&destination).is_ok()
+        {
+            return Ok(ImageToolPreviewResult {
+                path: destination.to_string_lossy().to_string(),
+                mime_type: format!("image/{extension}"),
+                width: request.width,
+                height: request.height,
+                output_bytes: metadata.len(),
+            });
+        }
+    }
+    let mut decoded = DynamicImage::from_decoder(decoder)
+        .map_err(|error| format!("Could not decode {}: {error}", source.display()))?;
+    decoded.apply_orientation(orientation);
+    let filter = if inspection_proxy {
+        FilterType::Triangle
+    } else {
+        FilterType::Lanczos3
+    };
+    let resized = decoded.resize_exact(request.width, request.height, filter);
     let file = std::fs::File::create(&destination)
         .map_err(|error| format!("Could not create optimization preview: {error}"))?;
     let mut writer = BufWriter::new(file);
-    match format.as_str() {
-        "jpeg" | "jpg" => {
+    match format {
+        "jpeg" => {
             let rgb = resized.to_rgb8();
             JpegEncoder::new_with_quality(&mut writer, request.quality.clamp(1, 100))
                 .encode(
@@ -2840,6 +2886,32 @@ mod image_tool_tests {
         assert_eq!((result.width, result.height), (10, 5));
         assert!(std::path::Path::new(&result.path).starts_with(workspace.path().join(".typsastra")));
         assert!(result.output_bytes > 0);
+    }
+
+    #[test]
+    fn reuses_an_unchanged_bounded_image_preview() {
+        let workspace = tempfile::tempdir().expect("create workspace");
+        let source = workspace.path().join("source.png");
+        write_png(&source, 20, 10);
+        let request = || super::ImageToolPreviewRequest {
+            workspace_root_path: workspace.path().to_string_lossy().to_string(),
+            source_path: source.to_string_lossy().to_string(),
+            width: 10,
+            height: 5,
+            format: "auto".into(),
+            quality: 84,
+        };
+
+        let first = image_tool_generate_preview_blocking(request()).expect("generate preview");
+        let original_permissions = std::fs::metadata(&first.path).unwrap().permissions();
+        let mut readonly_permissions = original_permissions.clone();
+        readonly_permissions.set_readonly(true);
+        std::fs::set_permissions(&first.path, readonly_permissions).unwrap();
+        let second = image_tool_generate_preview_blocking(request()).expect("reuse preview");
+        std::fs::set_permissions(&first.path, original_permissions).unwrap();
+
+        assert_eq!(second.path, first.path);
+        assert_eq!(second.output_bytes, first.output_bytes);
     }
 
     #[test]

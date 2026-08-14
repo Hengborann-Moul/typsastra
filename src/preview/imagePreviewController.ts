@@ -5,6 +5,18 @@ export interface ImagePreviewControllerPort {
   updateZoomLabel(scale: number): void;
 }
 
+export function imagePreviewFitScale(
+  containerWidth: number,
+  containerHeight: number,
+  imageWidth: number,
+  imageHeight: number,
+): number | null {
+  if (containerWidth <= 0 || containerHeight <= 0 || imageWidth <= 0 || imageHeight <= 0) {
+    return null;
+  }
+  return Math.min(containerWidth / imageWidth, containerHeight / imageHeight, 20);
+}
+
 /** Owns the interactive image preview's transient zoom, pan, and fit state. */
 export class ImagePreviewController {
   private zoomInAction: (() => void) | null = null;
@@ -12,10 +24,13 @@ export class ImagePreviewController {
   private zoomToFitAction: (() => void) | null = null;
   private zoomPercentAction: (() => number) | null = null;
   private fitStateAction: (() => boolean) | null = null;
+  private cleanupAction: (() => void) | null = null;
 
   constructor(private readonly port: ImagePreviewControllerPort) {}
 
   clear(): void {
+    this.cleanupAction?.();
+    this.cleanupAction = null;
     this.zoomInAction = null;
     this.zoomOutAction = null;
     this.zoomToFitAction = null;
@@ -50,6 +65,7 @@ export class ImagePreviewController {
   }
 
   render(src: string, previewPath: string): void {
+    this.clear();
     this.port.updateToolbar(previewPath);
     this.port.setMessage(
       `<div id="interactive-image-container" style="position:relative;width:100%;height:100%;background:var(--ui-bg);overflow:hidden;display:flex;align-items:center;justify-content:center;user-select:none;box-sizing:border-box;">` +
@@ -72,28 +88,36 @@ export class ImagePreviewController {
     let startX = 0;
     let startY = 0;
     let fit = true;
+    let resizeFrame: number | null = null;
 
     const updateTransform = () => {
       image.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
     };
     const resetToFit = () => {
-      if (
-        container.clientWidth <= 0
-        || container.clientHeight <= 0
-        || image.naturalWidth <= 0
-        || image.naturalHeight <= 0
-      ) return;
-      scale = Math.min(
-        container.clientWidth / image.naturalWidth,
-        container.clientHeight / image.naturalHeight,
-        1,
+      const nextScale = imagePreviewFitScale(
+        container.clientWidth,
+        container.clientHeight,
+        image.naturalWidth,
+        image.naturalHeight,
       );
+      if (nextScale === null) return;
+      scale = nextScale;
       x = 0;
       y = 0;
       updateTransform();
       image.style.visibility = "visible";
     };
     const updateZoom = () => this.port.updateZoomLabel(scale);
+    const refitAfterResize = () => {
+      if (!fit || !image.complete || image.naturalWidth <= 0) return;
+      if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
+      resizeFrame = requestAnimationFrame(() => {
+        resizeFrame = null;
+        if (!fit) return;
+        resetToFit();
+        updateZoom();
+      });
+    };
 
     this.zoomInAction = () => {
       scale = Math.min(scale * 1.2, 20);
@@ -132,7 +156,7 @@ export class ImagePreviewController {
     };
     image.src = src;
 
-    container.addEventListener("wheel", event => {
+    const handleWheel = (event: WheelEvent) => {
       event.preventDefault();
       const rect = container.getBoundingClientRect();
       const mouseX = event.clientX - rect.left - rect.width / 2;
@@ -146,26 +170,43 @@ export class ImagePreviewController {
       fit = false;
       updateTransform();
       updateZoom();
-    }, { passive: false });
+    };
 
-    container.addEventListener("mousedown", event => {
+    const handleMouseDown = (event: MouseEvent) => {
       if (event.button !== 0) return;
       dragging = true;
       image.style.cursor = "grabbing";
       startX = event.clientX - x;
       startY = event.clientY - y;
       event.preventDefault();
-    });
-    window.addEventListener("mousemove", event => {
+    };
+    const handleMouseMove = (event: MouseEvent) => {
       if (!dragging) return;
       x = event.clientX - startX;
       y = event.clientY - startY;
       updateTransform();
-    });
-    window.addEventListener("mouseup", () => {
+    };
+    const handleMouseUp = () => {
       if (!dragging) return;
       dragging = false;
       image.style.cursor = "grab";
-    });
+    };
+    container.addEventListener("wheel", handleWheel, { passive: false });
+    container.addEventListener("mousedown", handleMouseDown);
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+
+    const resizeObserver = new ResizeObserver(refitAfterResize);
+    resizeObserver.observe(container);
+    this.cleanupAction = () => {
+      resizeObserver.disconnect();
+      if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
+      container.removeEventListener("wheel", handleWheel);
+      container.removeEventListener("mousedown", handleMouseDown);
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+      image.onload = null;
+      image.onerror = null;
+    };
   }
 }
