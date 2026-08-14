@@ -186,27 +186,17 @@ describe("theme-aware application accents", () => {
       '"&.cm-focused .cm-selectionLayer .cm-selectionBackground"',
     );
     expect(editorThemes).toContain(
-      '"& .cm-selectionLayer .cm-selectionBackground::before"',
-    );
-    expect(editorThemes).toContain(
-      '"--typsastra-selection-background": "var(--ui-word-selection-focus-background, rgba(3, 102, 214, 0.52))"',
+      'backgroundColor: "var(--ui-word-selection-focus-background, rgba(3, 102, 214, 0.52)) !important"',
     );
     const selectionLayerTheme = editorThemes.slice(
       editorThemes.indexOf('"& .cm-selectionLayer .cm-selectionBackground"'),
       editorThemes.indexOf('"& .cm-content .cm-line::selection'),
     );
     expect(selectionLayerTheme).toContain(
-      '"--typsastra-selection-background": "var(--ui-word-selection-background, rgba(3, 102, 214, 0.4))"',
+      'backgroundColor: "var(--ui-word-selection-background, rgba(3, 102, 214, 0.4)) !important"',
     );
-    expect(selectionLayerTheme).toContain(
-      'height: "var(--editor-line-height-px, 23.8px)"',
-    );
-    expect(selectionLayerTheme).toContain(
-      'transform: "translateY(-50%)"',
-    );
-    expect(selectionLayerTheme).toContain(
-      'backgroundColor: "transparent !important"',
-    );
+    expect(selectionLayerTheme).not.toContain("::before");
+    expect(selectionLayerTheme).not.toContain("translateY(-50%)");
     expect(editorThemes).not.toContain(".cm-content ::selection");
     expect(editorThemes).not.toContain("ui-word-selection-outline");
     expect(editorThemes).not.toContain('".typsastra-text-selection::before"');

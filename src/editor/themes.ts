@@ -115,23 +115,11 @@ export const baseEditorLayoutTheme = EditorView.theme({
       }
   },
   "& .cm-selectionLayer .cm-selectionBackground": {
-      "--typsastra-selection-background": "var(--ui-word-selection-background, rgba(3, 102, 214, 0.4))",
-      backgroundColor: "transparent !important",
+      backgroundColor: "var(--ui-word-selection-background, rgba(3, 102, 214, 0.4)) !important",
       outline: "none !important"
   },
   "&.cm-focused .cm-selectionLayer .cm-selectionBackground": {
-      "--typsastra-selection-background": "var(--ui-word-selection-focus-background, rgba(3, 102, 214, 0.52))"
-  },
-  "& .cm-selectionLayer .cm-selectionBackground::before": {
-      content: '""',
-      position: "absolute",
-      left: "0",
-      right: "0",
-      top: "50%",
-      height: "var(--editor-line-height-px, 23.8px)",
-      transform: "translateY(-50%)",
-      backgroundColor: "var(--typsastra-selection-background) !important",
-      pointerEvents: "none"
+      backgroundColor: "var(--ui-word-selection-focus-background, rgba(3, 102, 214, 0.52)) !important"
   },
   "& .cm-content .cm-line::selection, & .cm-content .cm-line *::selection": {
       backgroundColor: "transparent !important"

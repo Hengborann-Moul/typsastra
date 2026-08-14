@@ -155,11 +155,16 @@ describe("editor search navigation", () => {
     expect(css).toContain("height: var(--editor-line-height-px, 23.8px)");
     expect(css).toContain("grid-template-columns:");
     expect(css).toContain("minmax(120px, 1fr)");
-    expect(css).toContain("calc((var(--editor-line-height-px, 23.8px) - 1em - 3px) / 2)");
     expect(css).toContain(".cm-editor .cm-searchMatch {");
     expect(css).toContain("--ui-search-match-background: color-mix(in srgb, var(--ui-warning-color) 30%, var(--ui-bg))");
     expect(css).toContain("background: var(--ui-search-match-background)");
     expect(css).toContain("outline: none");
+    const matchHighlightCss = css.slice(
+      css.indexOf(".cm-editor .cm-selectionMatch"),
+      css.indexOf(".cm-editor .cm-searchMatch-selected"),
+    );
+    expect(matchHighlightCss).not.toContain("padding-block");
+    expect(matchHighlightCss).not.toContain("box-decoration-break");
     expect(css).toContain(".cm-editor .cm-searchMatch-selected");
     expect(css).toContain("background: transparent !important");
     expect(css).toContain("grid-column: 1");

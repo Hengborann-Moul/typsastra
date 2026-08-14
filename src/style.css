@@ -3465,9 +3465,6 @@ body.image-tools-active .image-tools-inspector:has(> .image-tool-inspector-empty
 .cm-editor .cm-searchMatch {
   background: var(--ui-search-match-background);
   outline: none;
-  padding-block: max(0px, calc((var(--editor-line-height-px, 23.8px) - 1em - 3px) / 2));
-  -webkit-box-decoration-break: clone;
-  box-decoration-break: clone;
 }
 
 /* The native selection layer already identifies the active search result. */
