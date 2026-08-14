@@ -579,6 +579,12 @@ export class ContextMenuController {
       return;
     }
     if (target.closest(".cm-editor") || target.closest("#code-render-pane")) {
+      // Cancel WebKitGTK's browser-owned spelling menu before any asynchronous
+      // suggestion lookup. Calling preventDefault after the await is too late
+      // in release builds and allows both menus to appear.
+      event.preventDefault();
+      const menuX = event.clientX;
+      const menuY = event.clientY;
       const editor = this.dependencies.getEditor();
       closeCompletion(editor);
       editor.dispatch({ effects: closeHoverTooltips });
@@ -594,8 +600,7 @@ export class ContextMenuController {
       this.spellingSuggestions = this.spellingIssue
         ? await this.dependencies.getSpellingSuggestions(this.spellingIssue)
         : [];
-      event.preventDefault();
-      this.show(this.editorItems(), event.clientX, event.clientY);
+      this.show(this.editorItems(), menuX, menuY);
       return;
     }
 

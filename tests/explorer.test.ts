@@ -122,4 +122,19 @@ describe("workspace explorer", () => {
     expect(backgroundMenu).toContain("ctx-open-project");
     expect(backgroundMenu).toContain("ctx-restart-workspace");
   });
+
+  test("suppresses the browser editor menu before loading spelling suggestions", async () => {
+    const source = await Bun.file(
+      new URL("../src/components/contextMenuController.ts", import.meta.url),
+    ).text();
+    const editorBranch = source.slice(
+      source.indexOf('if (target.closest(".cm-editor")'),
+      source.indexOf("const selection = window.getSelection();"),
+    );
+
+    expect(editorBranch.indexOf("event.preventDefault();")).toBeGreaterThanOrEqual(0);
+    expect(editorBranch.indexOf("event.preventDefault();")).toBeLessThan(
+      editorBranch.indexOf("await this.dependencies.getSpellingSuggestions"),
+    );
+  });
 });
