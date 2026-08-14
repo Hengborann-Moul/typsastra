@@ -162,8 +162,8 @@ export class PdfPreviewPreparationController {
     // Every live preview compiles from Typsastra's private render mirror.
     // Tinymist normally honors PREVIEW_OUTPUT_PATH, but older or incompatible
     // versions can fall back to writing beside their compilation root. Keeping
-    // that root under .typsastra guarantees that even the fallback output
-    // cannot create main.pdf or another generated file beside user sources.
+    // that root under Typsastra's machine-local cache guarantees that even the
+    // fallback output cannot create a generated file beside user sources.
     const workspaceRootPath = this.deps.getWorkspaceRootPath();
     if (!workspaceRootPath) return null;
     const cacheRoot = this.deps.getCacheRootPath();

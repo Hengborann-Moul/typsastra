@@ -65,9 +65,9 @@ latest revision and the tab is no longer marked dirty.
 
 ## Project-local workspace state
 
-Workspace-specific state lives under the project’s `.typsastra/` directory. `config.json` is portable and stores project identity, the relative main document, and the recommended toolchain. `workspace.json` stores the local editing session using relative paths, including tabs, cursor/scroll state, explicitly user-created folds, explorer expansion, layout, sidebar visibility, the selected toolchain override, and the preview refresh/content modes. Files open fully unfolded until the user folds them; legacy automatic fold ranges are discarded because they cannot be distinguished safely from manual folds. The session file and preview cache are ignored by the managed `.gitignore`; `config.json` may be committed. Generated fonts never reside in this directory. `.typsastra/project.json` remains reserved for the signed Typsastra project-archive manifest.
+Workspace-specific state lives under the project’s `.typsastra/` directory. `config.json` is portable and stores project identity, the relative main document, and the recommended toolchain. `workspace.json` stores the local editing session using relative paths, including tabs, cursor/scroll state, explicitly user-created folds, explorer expansion, layout, sidebar visibility, the selected toolchain override, and the preview refresh/content modes. Files open fully unfolded until the user folds them; legacy automatic fold ranges are discarded because they cannot be distinguished safely from manual folds. The session file is ignored by the managed `.gitignore`; `config.json` may be committed. Generated fonts and preview caches never reside in this directory. `.typsastra/project.json` remains reserved for the signed Typsastra project-archive manifest.
 
-Typsastra project exports include `config.json` and `workspace.json` only from this directory. Every live-preview mirror, generated preview PDF, source map, and temporary compiler artifact is confined to `.typsastra/cache`; none is created beside user sources. Non-Typst cache assets use regular hard links when supported, avoiding duplicate storage while retaining a copy fallback and never introducing symbolic links. If a workspace is copied or moved together with `.typsastra/cache`, Typsastra detects that the cache belongs to another path and discards it before starting Tinymist; portable workspace settings remain intact and the cache is rebuilt on demand. A user-facing PDF is written into the workspace only after explicit confirmation through **Export PDF**. Render caches, generated PDFs, maps, generated fonts, and other internal metadata are never included in project exports. Font binaries are excluded everywhere in project and source ZIP exports regardless of location or license; recipients install required fonts separately.
+Typsastra project exports include `config.json` and `workspace.json` only from this directory. Every live-preview mirror, generated preview PDF, source map, and temporary compiler artifact is stored in Typsastra's machine-local application-data cache, keyed to the project path; none is created beside user sources or synchronized by cloud-storage tools watching the project. Non-Typst cache assets use regular hard links when the cache and project share a filesystem, avoiding duplicate storage while retaining a guarded copy fallback and never introducing symbolic links. Older project-local `.typsastra/cache` directories are validated and removed during migration. A user-facing PDF is written into the workspace only after explicit confirmation through **Export PDF**. Render caches, generated PDFs, maps, generated fonts, and other internal metadata are never included in project exports. Font binaries are excluded everywhere in project and source ZIP exports regardless of location or license; recipients install required fonts separately.
 
 ## Toolchain
 
@@ -96,8 +96,9 @@ On-type keeps editor changes in memory and starts a PDF update after
 `syncDebounceMs`; on-save updates only after a successful save. The selection
 is restored independently for each workspace. The global `renderMode` value in
 `settings.json` is used only as the initial default when a workspace has no
-saved selection. Both modes compile from a private mirror under
-`.typsastra/cache`, so live preview never creates `main.pdf` beside the source.
+saved selection. Both modes compile from a private mirror in Typsastra's
+machine-local application-data cache, so live preview never creates `main.pdf`
+beside the source.
 Use on-save for long or resource-intensive documents.
 
 The live-preview toolbar also offers **Normal** and **Draft** content modes.
@@ -264,6 +265,14 @@ Typsastra performs the first full scan after the workspace UI is ready, refreshe
 disposable-cache measurements after idle periods, and retains at most 32
 aggregate local samples. Use **Settings → Storage → Scan now** for an immediate
 full scan or **Reveal folder** to inspect the resolved storage location.
+
+The same **Storage** panel also lists every machine-local workspace render cache
+that Typsastra has prepared. Each entry shows the project path, cache size,
+file count, and whether referenced assets are hard-linked or genuinely copied.
+Hard-linked files appear in the cache directory but share the source file's
+storage. Use **Reveal** beside an entry to open that cache directory in the
+system file explorer. This view is informational: it does not delete a cache
+or modify project files.
 
 On Linux, WebKitGTK shares Typsastra's application-local data root. Monitoring
 therefore counts only allowlisted WebKit-owned categories. Managed Typst and

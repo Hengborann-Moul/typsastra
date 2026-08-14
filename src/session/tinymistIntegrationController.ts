@@ -13,6 +13,7 @@ export interface PreviewStartupFailureContext {
 
 export interface TinymistIntegrationDependencies {
   workspaceRootPath(): string | null;
+  cacheRootPath(): string | null;
   editor(): EditorView;
   setLspStatus(status: LspStatus): void;
   handleInverseSync(uri: string | undefined, position: LspSourcePosition): Promise<LspInverseSyncResult>;
@@ -54,6 +55,12 @@ export class TinymistIntegrationController {
       entry => this.deps.appendLspLog(entry),
       items => this.deps.updateOutlinePreviewPositions(items),
       context => this.handlePreviewStartupFailure(context),
+      () => {
+        const cacheRoot = this.deps.cacheRootPath();
+        return cacheRoot
+          ? `${cacheRoot.replace(/\\/g, "/").replace(/\/$/, "")}/preview/$name`
+          : "$root/.typsastra/cache/preview/$name";
+      },
     );
     client.setEditorView(this.deps.editor());
     return client;

@@ -342,6 +342,7 @@ export class TypsastraWorkspaceController {
   private get mainDocumentScripts(): DocumentTypography["fonts"] { return this.documentLanguageController.mainDocumentScripts; }
   private set mainDocumentScripts(value: DocumentTypography["fonts"]) { this.documentLanguageController.mainDocumentScripts = value; }
   private workspaceRootPath: string | null = null;
+  private renderCacheRootPath: string | null = null;
   private workspaceMetadata: WorkspaceMetadata | null = null;
   private workspaceLoading = false;
   private workspaceServicesDeferredForLargeFile = false;
@@ -557,6 +558,7 @@ export class TypsastraWorkspaceController {
   }
   private readonly sourceLocationController = new SourceLocationController({
     workspaceRootPath: () => this.workspaceRootPath,
+    cacheRootPath: () => this.renderCacheRootPath,
     activeFilePath: () => this.activeFilePath,
     editor: () => this.editorInstance,
     lspClient: () => this.documentSessionController.hasClient ? this.lspClient : undefined,
@@ -1373,6 +1375,7 @@ export class TypsastraWorkspaceController {
   });
   private readonly tinymistIntegrationController = new TinymistIntegrationController({
     workspaceRootPath: () => this.workspaceRootPath,
+    cacheRootPath: () => this.renderCacheRootPath,
     editor: () => this.editorInstance,
     setLspStatus: status => this.setLspStatus(status),
     handleInverseSync: (uri, position) => this.handleInverseSync(uri, position),

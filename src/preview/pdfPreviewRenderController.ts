@@ -410,6 +410,7 @@ export class PdfPreviewRenderController {
       this.sourceMapTaskIdValue = sourceMapTaskId;
       const stagedPdfPath = await invoke<string>("stage_pdf_preview_generation", {
         path: pdfPath,
+        cacheRootPath: cacheRoot,
         generation,
       });
       this.managedPdfPathKeysValue.add(filePathKey(stagedPdfPath));
@@ -700,7 +701,10 @@ export class PdfPreviewRenderController {
     const byteLength = bytes.byteLength;
     await this.deps.previewFrame.loadPdfBytes(bytes, identity, sessionKey, surface);
     if (deleteOnClose) {
-      await invoke("remove_preview_generation_file", { path }).catch(() => {});
+      const cacheRootPath = this.deps.getCacheRootPath();
+      if (cacheRootPath) {
+        await invoke("remove_preview_generation_file", { path, cacheRootPath }).catch(() => {});
+      }
     }
     if (this.deps.previewFrame.currentUrl === identity) {
       this.lastPdfPathValue = path;

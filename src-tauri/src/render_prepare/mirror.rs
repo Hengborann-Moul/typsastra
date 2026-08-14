@@ -22,12 +22,46 @@ const RENDER_CACHE_STORAGE_REPORT_FILE: &str = "render-storage.json";
 const LARGE_COPY_FALLBACK_THRESHOLD_BYTES: u64 = 64 * 1024 * 1024;
 const LARGE_COPY_FALLBACK_ERROR_PREFIX: &str = "TYPSASTRA_LARGE_ASSET_COPY_FALLBACK:";
 
+pub fn workspace_render_cache_root(app_local_data_dir: &Path, project_root: &Path) -> PathBuf {
+    let canonical = project_root
+        .canonicalize()
+        .unwrap_or_else(|_| project_root.to_path_buf());
+    let mut identity = canonical.to_string_lossy().replace('\\', "/");
+    if cfg!(windows) {
+        identity.make_ascii_lowercase();
+    }
+    let digest = Sha256::digest(identity.as_bytes());
+    let workspace_key = digest[..16]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    app_local_data_dir
+        .join("workspace-cache")
+        .join(workspace_key)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct RenderCacheStorageReport {
     pub version: u32,
     pub project_root: PathBuf,
     pub cache_root: PathBuf,
+    pub recorded_at_ms: u64,
+    pub hard_linked_bytes: u64,
+    pub copied_bytes: u64,
+    pub hard_linked_files: usize,
+    pub copied_files: usize,
+}
+
+/// A machine-local render cache belonging to one project. The cache path is
+/// intentionally separate from the project's cloud-synced source directory.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceRenderCacheStorageEntry {
+    pub project_root: Option<PathBuf>,
+    pub cache_root: PathBuf,
+    pub total_bytes: u64,
+    pub file_count: usize,
     pub recorded_at_ms: u64,
     pub hard_linked_bytes: u64,
     pub copied_bytes: u64,
@@ -869,6 +903,93 @@ pub fn inspect_render_cache_storage(cache_root: &Path) -> RenderCacheStorageRepo
         })
 }
 
+pub fn inspect_workspace_render_caches(
+    app_local_data_dir: &Path,
+) -> Vec<WorkspaceRenderCacheStorageEntry> {
+    let root = app_local_data_dir.join("workspace-cache");
+    let mut entries = fs::read_dir(root)
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let cache_root = entry.path();
+            if !cache_root.is_dir() {
+                return None;
+            }
+            let report = inspect_render_cache_storage(&cache_root);
+            let project_root = if report.project_root.as_os_str().is_empty() {
+                read_render_cache_owner(&cache_root)
+                    .map(|owner| display_workspace_identity(&owner.workspace_root))
+            } else {
+                Some(report.project_root)
+            };
+            let (total_bytes, file_count) = directory_size(&cache_root);
+            Some(WorkspaceRenderCacheStorageEntry {
+                project_root,
+                cache_root,
+                total_bytes,
+                file_count,
+                recorded_at_ms: report.recorded_at_ms,
+                hard_linked_bytes: report.hard_linked_bytes,
+                copied_bytes: report.copied_bytes,
+                hard_linked_files: report.hard_linked_files,
+                copied_files: report.copied_files,
+            })
+        })
+        .collect::<Vec<_>>();
+    entries.sort_by(|left, right| {
+        right
+            .total_bytes
+            .cmp(&left.total_bytes)
+            .then_with(|| left.cache_root.cmp(&right.cache_root))
+    });
+    entries
+}
+
+fn display_workspace_identity(identity: &str) -> PathBuf {
+    #[cfg(windows)]
+    {
+        PathBuf::from(
+            identity
+                .strip_prefix("//?/")
+                .unwrap_or(identity)
+                .replace('/', "\\"),
+        )
+    }
+    #[cfg(not(windows))]
+    {
+        PathBuf::from(identity)
+    }
+}
+
+fn directory_size(path: &Path) -> (u64, usize) {
+    let mut bytes = 0u64;
+    let mut files = 0usize;
+    let mut pending = vec![path.to_path_buf()];
+    while let Some(directory) = pending.pop() {
+        for entry in fs::read_dir(directory)
+            .into_iter()
+            .flatten()
+            .filter_map(Result::ok)
+        {
+            let path = entry.path();
+            let Ok(metadata) = fs::symlink_metadata(&path) else {
+                continue;
+            };
+            if metadata.file_type().is_symlink() {
+                continue;
+            }
+            if metadata.is_dir() {
+                pending.push(path);
+            } else if metadata.is_file() {
+                bytes = bytes.saturating_add(metadata.len());
+                files += 1;
+            }
+        }
+    }
+    (bytes, files)
+}
+
 struct ProcessedTypFile {
     changed: bool,
     draft: DraftPreparation,
@@ -1261,6 +1382,76 @@ fn merge_draft_assets(target: &mut Vec<DraftImageAsset>, assets: Vec<DraftImageA
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn workspace_cache_roots_are_stable_and_outside_projects() {
+        let app_data = tempfile::tempdir().unwrap();
+        let projects = tempfile::tempdir().unwrap();
+        let first = projects.path().join("first");
+        let second = projects.path().join("second");
+        fs::create_dir_all(&first).unwrap();
+        fs::create_dir_all(&second).unwrap();
+
+        let first_cache = workspace_render_cache_root(app_data.path(), &first);
+        let repeated = workspace_render_cache_root(app_data.path(), &first);
+        let second_cache = workspace_render_cache_root(app_data.path(), &second);
+
+        assert_eq!(first_cache, repeated);
+        assert_ne!(first_cache, second_cache);
+        assert!(first_cache.starts_with(app_data.path().join("workspace-cache")));
+        assert!(!first_cache.starts_with(&first));
+    }
+
+    #[test]
+    fn workspace_cache_monitor_reports_all_machine_local_projects() {
+        let app_data = tempfile::tempdir().unwrap();
+        let projects = tempfile::tempdir().unwrap();
+        let first_project = projects.path().join("first");
+        let second_project = projects.path().join("second");
+        fs::create_dir_all(&first_project).unwrap();
+        fs::create_dir_all(&second_project).unwrap();
+        let first_cache = workspace_render_cache_root(app_data.path(), &first_project);
+        let second_cache = workspace_render_cache_root(app_data.path(), &second_project);
+
+        write_render_cache_owner(&first_project, &first_cache).unwrap();
+        write_render_cache_owner(&second_project, &second_cache).unwrap();
+        write_render_cache_storage_report(
+            &first_cache,
+            &RenderCacheStorageReport {
+                version: RENDER_CACHE_STORAGE_REPORT_VERSION,
+                project_root: first_project.clone(),
+                cache_root: first_cache.clone(),
+                ..RenderCacheStorageReport::default()
+            },
+        )
+        .unwrap();
+        write_render_cache_storage_report(
+            &second_cache,
+            &RenderCacheStorageReport {
+                version: RENDER_CACHE_STORAGE_REPORT_VERSION,
+                project_root: second_project.clone(),
+                cache_root: second_cache.clone(),
+                ..RenderCacheStorageReport::default()
+            },
+        )
+        .unwrap();
+        fs::write(first_cache.join("first.bin"), vec![0u8; 20]).unwrap();
+        fs::write(second_cache.join("second.bin"), vec![0u8; 40]).unwrap();
+
+        let entries = inspect_workspace_render_caches(app_data.path());
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].cache_root, second_cache);
+        assert!(entries[0].total_bytes >= 40);
+        assert_eq!(
+            entries[0].project_root.as_deref(),
+            Some(second_project.as_path())
+        );
+        assert_eq!(entries[1].cache_root, first_cache);
+        assert_eq!(
+            entries[1].project_root.as_deref(),
+            Some(first_project.as_path())
+        );
+    }
 
     #[test]
     fn rejects_reachable_typst_dependencies_outside_the_workspace() {

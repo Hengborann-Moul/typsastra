@@ -32,6 +32,7 @@ export interface WorkspaceLifecycleSessionState {
   pinnedLspMainPath: string | null;
   mainDocumentScripts: DocumentTypography["fonts"];
   workspaceRootPath: string | null;
+  renderCacheRootPath: string | null;
   workspaceMetadata: WorkspaceMetadata | null;
   workspaceLoading: boolean;
   workspaceServicesDeferredForLargeFile: boolean;
@@ -311,7 +312,9 @@ export class WorkspaceLifecycleController {
     app.updateWorkspaceViewportVisibility();
     app.workspaceRootPath = selected;
     try {
-      await invoke("cleanup_workspace_preview_files", { workspaceRootPath: selected });
+      app.renderCacheRootPath = await invoke<string>("cleanup_workspace_preview_files", {
+        workspaceRootPath: selected,
+      });
       app.lspReady = false;
       app.workspaceMetadata = await app.workspaceController.loadMetadata(selected);
       app.workspaceMetadata.workspace.previewRenderMode ??= app.settingsController.value.preview.renderMode;
@@ -358,6 +361,7 @@ export class WorkspaceLifecycleController {
     } catch (error) {
       app.workspaceController.stopWatching();
       app.workspaceRootPath = null;
+      app.renderCacheRootPath = null;
       app.workspaceMetadata = null;
       app.activeFilePath = null;
       app.pinnedMainFilePath = null;
@@ -639,6 +643,7 @@ export class WorkspaceLifecycleController {
     app.previewSyncController.cancelManual();
 
     app.workspaceRootPath = null;
+    app.renderCacheRootPath = null;
     app.sidebarController.reset();
     document.body.classList.remove("image-tools-active");
     void app.imageToolsController.setWorkspace(null, null);

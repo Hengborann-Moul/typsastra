@@ -2007,6 +2007,43 @@ body.typsastra-resizing #input-container-wrapper::after {
 }
 .settings-storage-category small { color: var(--ui-header-text); font-size: 10px; }
 .settings-storage-category strong { font-size: 11px; }
+.settings-workspace-render-caches {
+  border: 1px solid var(--ui-border);
+  max-height: 280px;
+  overflow-y: auto;
+}
+.settings-workspace-render-cache {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 9px;
+  border-bottom: 1px solid var(--ui-border);
+}
+.settings-workspace-render-cache:last-child { border-bottom: 0; }
+.settings-workspace-render-cache > div { min-width: 0; }
+.settings-workspace-render-cache strong,
+.settings-workspace-render-cache small,
+.settings-workspace-render-cache code {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.settings-workspace-render-cache strong {
+  font-size: 11px;
+  font-weight: 600;
+}
+.settings-workspace-render-cache small {
+  margin-top: 3px;
+  color: var(--ui-header-text);
+  font-size: 10px;
+}
+.settings-workspace-render-cache code {
+  margin-top: 3px;
+  color: var(--ui-text-muted, var(--ui-header-text));
+  font: 10px/1.4 var(--font-family-mono);
+}
 .settings-storage-actions {
   display: flex;
   justify-content: flex-end;

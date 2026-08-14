@@ -7,6 +7,7 @@ import { decodeRustUnicodeEscapes } from "../compiler/previewError";
 
 export interface SourceLocationDependencies {
   workspaceRootPath(): string | null;
+  cacheRootPath(): string | null;
   activeFilePath(): string | null;
   editor(): EditorView;
   lspClient(): TinymistLspClient | undefined;
@@ -27,15 +28,15 @@ export class SourceLocationController {
   }
 
   cacheRootPath(): string | null {
-    const workspaceRootPath = this.deps.workspaceRootPath();
-    if (!workspaceRootPath) return null;
-    return `${workspaceRootPath}/.typsastra/cache`.replace(/\\/g, "/");
+    return this.deps.cacheRootPath()?.replace(/\\/g, "/") ?? null;
   }
 
   mapToOriginalPath(cachePath: string): string {
     const workspaceRootPath = this.deps.workspaceRootPath();
     if (!workspaceRootPath) return cachePath;
-    const prefix = `${normalizePathForComparison(workspaceRootPath)}/.typsastra/cache/render/`;
+    const cacheRootPath = this.cacheRootPath();
+    if (!cacheRootPath) return cachePath;
+    const prefix = `${normalizePathForComparison(cacheRootPath)}/render/`;
     const decodedCachePath = decodeRustUnicodeEscapes(cachePath);
     const displayCachePath = decodedCachePath.replace(/\\/g, "/").replace(/\/{2,}/g, "/");
     const cleanCache = displayCachePath.toLowerCase();
@@ -47,9 +48,9 @@ export class SourceLocationController {
   }
 
   isRenderCachePath(path: string): boolean {
-    const workspaceRootPath = this.deps.workspaceRootPath();
-    if (!workspaceRootPath) return false;
-    const prefix = `${normalizePathForComparison(workspaceRootPath)}/.typsastra/cache/render/`;
+    const cacheRootPath = this.cacheRootPath();
+    if (!cacheRootPath) return false;
+    const prefix = `${normalizePathForComparison(cacheRootPath)}/render/`;
     return normalizePathForComparison(decodeRustUnicodeEscapes(path)).startsWith(prefix);
   }
 
