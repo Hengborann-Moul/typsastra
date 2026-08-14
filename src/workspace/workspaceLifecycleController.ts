@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { confirm, message } from "@tauri-apps/plugin-dialog";
 import { filePathKey } from "../platform/paths";
-import { isSupportedInAppPath } from "../platform/fileTypes";
+import { fileExtension, isBinaryImagePath, isSupportedInAppPath } from "../platform/fileTypes";
 import { createTabEditorState } from "../editor/tabHistory";
 import type { EditorFoldRange } from "../editor/folding";
 import { parseDocumentScripts } from "../editor/documentTypography";
@@ -153,6 +153,7 @@ export interface WorkspaceLifecycleOperations {
   applyFoldRanges(ranges: EditorFoldRange[]): void;
   mapMarkupToWysiwym(markup: string): void;
   finishEditorTextPresentation(path: string): void;
+  restoreActiveNonTextPreview(): Promise<void>;
 }
 
 /**
@@ -389,6 +390,14 @@ export class WorkspaceLifecycleController {
           `path=${activePath}; savedScroll=${(activeTab.scrollTop ?? 0).toFixed(1)}:` +
           `${(activeTab.scrollLeft ?? 0).toFixed(1)}.`,
       });
+      return;
+    }
+    // Workspace restoration activates tabs with preview work suppressed so
+    // stale content from the previous project cannot leak into the new one.
+    // Once the workspace is visible, replay standalone non-text previews that
+    // have no compiler-service startup phase of their own.
+    if (isBinaryImagePath(activePath) || fileExtension(activePath) === "pdf") {
+      await app.restoreActiveNonTextPreview();
       return;
     }
     const targetScrollTop = activeTab.scrollTop ?? 0;

@@ -141,6 +141,7 @@ export class TypsastraWorkspaceController {
     void this.inspectedPreviewRoots;
     void this.lastPreviewRenderMode;
     void this.finishEditorTextPresentation;
+    void this.restoreActiveNonTextPreview;
     const root = this;
     return new Proxy({} as WorkspaceLifecycleDependencies, {
       get(_target, property) {
@@ -151,6 +152,10 @@ export class TypsastraWorkspaceController {
         return Reflect.set(root, property, value, root);
       },
     });
+  }
+
+  private async restoreActiveNonTextPreview(): Promise<void> {
+    await this.refreshActivePreviewRoot(true);
   }
 
   private readonly startupStart = performance.now();

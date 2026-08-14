@@ -40,6 +40,25 @@ function lifecycleHarness(
 }
 
 describe("WorkspaceLifecycleController behavior", () => {
+  test("replays a restored image preview after workspace loading finishes", async () => {
+    const imageTab = {
+      path: "C:/project/photo.png",
+      content: "base64-image",
+      contentLoaded: true,
+    } as WorkspaceLifecycleDependencies["openTabs"][number];
+    const { controller, calls } = lifecycleHarness({
+      activeFilePath: imageTab.path,
+      openTabs: [imageTab],
+      getActiveTab: () => imageTab,
+      restoreActiveNonTextPreview: async () => { calls.push("restore-image-preview"); },
+    });
+
+    await (controller as unknown as { restoreStartupViewport(): Promise<void> })
+      .restoreStartupViewport();
+
+    expect(calls).toEqual(["restore-image-preview"]);
+  });
+
   test("reopening the active project only refreshes its recent-project entry", async () => {
     const { controller, calls } = lifecycleHarness();
 
