@@ -75,10 +75,11 @@ keeps detected embedded images in their original colors while adapting the rest
 of the page for a dark workspace. The selected mode is remembered, and exported
 PDFs are never altered.
 
-<!-- Replace this placeholder with the dark-preview screenshot or video URL. -->
-<p align="center">
-  <img src="./assets/feature-demo-placeholder.svg" alt="Placeholder for the dark and inverted PDF preview demonstration" width="800"/>
-</p>
+
+
+https://github.com/user-attachments/assets/23ddb50f-a6a6-44f8-a8d9-31ec205e2dca
+
+
 
 ### Image Tools
 
@@ -90,10 +91,11 @@ the saved copy. Bounded preview results are cached and reused across editor and
 Image Tools views, so inspecting unusually large images does not repeatedly
 decode the full source asset.
 
-<!-- Replace this placeholder with the Image Tools screenshot or video URL. -->
-<p align="center">
-  <img src="./assets/feature-demo-placeholder.svg" alt="Placeholder for the Image Tools demonstration" width="800"/>
-</p>
+
+
+https://github.com/user-attachments/assets/0cfdb910-6f15-4a3a-8904-a5ee0c26416b
+
+
 
 ### Machine-local project caches
 
@@ -116,10 +118,11 @@ distinct scrollbar markers that navigate to their exact ranges. Search and
 selection highlights use the active theme, remain aligned across wrapped visual
 lines, and preserve complex-script grapheme boundaries.
 
-<!-- Replace this placeholder with the search panel and scrollbar-marker demonstration. -->
-<p align="center">
-  <img src="./assets/feature-demo-placeholder.svg" alt="Placeholder for search highlighting and scrollbar navigation" width="800"/>
-</p>
+
+
+https://github.com/user-attachments/assets/19dd9943-6ce8-470e-bcf6-36b6252de3bf
+
+
 
 ### Draft Preview
 
