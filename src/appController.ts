@@ -830,6 +830,18 @@ export class TypsastraWorkspaceController {
     renderMode: () => this.effectivePreviewRenderMode,
     editorText: () => this.editorInstance.state.doc.toString(),
     previewFrame: () => this.previewFrame,
+    previewRenderPending: () => this.pdfPreviewRenderController.pending,
+    previewRenderQueued: () => this.pdfPreviewRenderController.queued,
+    navigateToCompilerLocation: (filePath, line, column) => {
+      void this.navigateToLogEntry({
+        kind: "error",
+        source: "typst(lsp)",
+        message: "LSP source location",
+        filePath,
+        line,
+        column,
+      });
+    },
     renderPdfPreview: contents => { void this.renderPdfPreview(contents); },
     log: message => this.appendDeveloperLog({ kind: "info", source: "preview scheduler", message }),
   });

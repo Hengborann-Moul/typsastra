@@ -188,7 +188,8 @@ describe("compiled PDF transport", () => {
     expect(renderMethod).toContain('this.deps.setLspStatus({ kind: "preview-error", message: "PDF compile failed" });');
     expect(diagnosticsMethod).toContain("this.diagnosticsController.handleLspDiagnostics");
     expect(source).toContain("this.previewDiagnosticsRecoveryController.recoverAfterAcceptedDiagnostics(diagnostics)");
-    expect(recoverySource).toContain('this.deps.previewFrame().setError(');
+    expect(recoverySource).toContain('this.deps.previewFrame().setCompilerError(');
+    expect(recoverySource).toContain("navigateToCompilerLocation(");
     expect(recoverySource).toContain('"Preview Render Failed"');
     expect(recoverySource).toContain("this.deps.previewFrame().clearErrorOverlay()");
     expect(recoverySource).toContain("this.failedContents === null");

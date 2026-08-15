@@ -110,6 +110,9 @@ export class PdfPreviewRenderController {
   public get generation(): number { return this.generationValue; }
   public get preparationRevision(): number { return this.preparationRevisionValue; }
   public get running(): boolean { return this.runningValue; }
+  public get pending(): boolean {
+    return this.runningValue || this.timer !== null || this.queuedContents !== null;
+  }
   public get queued(): boolean { return this.queuedContents !== null; }
   public get sourceMapRootPath(): string | null { return this.sourceMapRootPathValue; }
   public get sourceMapTaskId(): string | null { return this.sourceMapTaskIdValue; }
