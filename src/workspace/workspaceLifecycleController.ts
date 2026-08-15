@@ -23,6 +23,15 @@ type ExamplesWorkspace = {
 
 type WorkspaceToolchain = { tinymistVersion: string; typstVersion: string };
 type DeveloperLog = { kind: "log" | "info" | "warning" | "error"; source: string; message: string };
+type LegacyWorkspaceCacheInfo = { path: string; totalBytes: number; fileCount: number };
+
+function formatCacheBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+  const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  const value = bytes / 1024 ** index;
+  return `${value >= 10 || index === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[index]}`;
+}
 
 /** Mutable session state currently owned by the application composition root. */
 export interface WorkspaceLifecycleSessionState {
@@ -308,6 +317,26 @@ export class WorkspaceLifecycleController {
           error,
         );
       }
+    }
+    const legacyCache = await invoke<LegacyWorkspaceCacheInfo | null>(
+      "inspect_legacy_workspace_cache",
+      { workspaceRootPath: selected },
+    );
+    if (legacyCache) {
+      const approved = await confirm(
+        `This project contains an older Typsastra cache inside the workspace:\n\n${legacyCache.path}\n\n` +
+        `${legacyCache.fileCount.toLocaleString()} generated file${legacyCache.fileCount === 1 ? "" : "s"} use ${formatCacheBytes(legacyCache.totalBytes)}. ` +
+        "Typsastra now stores generated render caches in machine-local application data so they are not synchronized, searched, or copied with the project.\n\n" +
+        "Continue to remove the old workspace cache and use the machine-local cache?",
+        {
+          title: "Migrate Typsastra Cache",
+          kind: "warning",
+          okLabel: "Migrate and Open",
+          cancelLabel: "Cancel",
+        },
+      );
+      if (!approved) return;
+      await invoke("remove_legacy_workspace_cache", { workspaceRootPath: selected });
     }
     app.workspaceLoading = true;
     app.updateWorkspaceViewportVisibility();

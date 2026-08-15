@@ -1468,6 +1468,94 @@ fn remove_cache_symlinks(dir: &std::path::Path) {
     }
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LegacyWorkspaceCacheInfo {
+    path: String,
+    total_bytes: u64,
+    file_count: usize,
+}
+
+fn legacy_workspace_cache_info_at(
+    workspace_root_path: &str,
+) -> Result<Option<LegacyWorkspaceCacheInfo>, String> {
+    let root = std::path::PathBuf::from(workspace_root_path);
+    if !root.is_dir() {
+        return Err("The project directory no longer exists.".to_string());
+    }
+    let legacy_cache_root = root.join(".typsastra").join("cache");
+    let Ok(metadata) = std::fs::symlink_metadata(&legacy_cache_root) else {
+        return Ok(None);
+    };
+    let (total_bytes, file_count) = if metadata.file_type().is_symlink() {
+        (0, 0)
+    } else {
+        legacy_cache_directory_size(&legacy_cache_root)
+    };
+    Ok(Some(LegacyWorkspaceCacheInfo {
+        path: legacy_cache_root.to_string_lossy().into_owned(),
+        total_bytes,
+        file_count,
+    }))
+}
+
+fn legacy_cache_directory_size(path: &std::path::Path) -> (u64, usize) {
+    let mut bytes = 0u64;
+    let mut files = 0usize;
+    let mut pending = vec![path.to_path_buf()];
+    while let Some(directory) = pending.pop() {
+        let Ok(entries) = std::fs::read_dir(directory) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Ok(metadata) = std::fs::symlink_metadata(&path) else {
+                continue;
+            };
+            if metadata.file_type().is_symlink() {
+                continue;
+            }
+            if metadata.is_dir() {
+                pending.push(path);
+            } else if metadata.is_file() {
+                bytes = bytes.saturating_add(metadata.len());
+                files = files.saturating_add(1);
+            }
+        }
+    }
+    (bytes, files)
+}
+
+fn remove_legacy_workspace_cache_at(workspace_root_path: &str) -> Result<(), String> {
+    let root = std::path::PathBuf::from(workspace_root_path);
+    if !root.is_dir() {
+        return Err("The project directory no longer exists.".to_string());
+    }
+    let legacy_cache_root = root.join(".typsastra").join("cache");
+    let Ok(metadata) = std::fs::symlink_metadata(&legacy_cache_root) else {
+        return Ok(());
+    };
+    if metadata.file_type().is_symlink() {
+        std::fs::remove_file(&legacy_cache_root)
+            .or_else(|_| std::fs::remove_dir(&legacy_cache_root))
+    } else {
+        std::fs::remove_dir_all(&legacy_cache_root)
+    }
+    .map_err(|error| format!("Failed to remove the legacy project cache: {error}"))
+}
+
+#[tauri::command]
+fn inspect_legacy_workspace_cache(
+    workspace_root_path: String,
+) -> Result<Option<LegacyWorkspaceCacheInfo>, String> {
+    legacy_workspace_cache_info_at(&workspace_root_path)
+}
+
+#[tauri::command]
+fn remove_legacy_workspace_cache(workspace_root_path: String) -> Result<(), String> {
+    remove_legacy_workspace_cache_at(&workspace_root_path)
+}
+
 fn cleanup_workspace_preview_files_at(
     app_local_data_dir: &std::path::Path,
     workspace_root_path: String,
@@ -1489,19 +1577,6 @@ fn cleanup_workspace_preview_files_at(
     // instead of allowing one orphaned file to accumulate per app session.
     prune_preview_generation_cache(&cache_root.join("preview").join("generations"), None)?;
 
-    // Versions before the machine-local cache stored generated mirrors inside
-    // the project. Remove that disposable cache only after verifying its owner
-    // so copied or moved project data can never be mistaken for user content.
-    let legacy_cache_root = root.join(".typsastra").join("cache");
-    if legacy_cache_root != cache_root && legacy_cache_root.exists() {
-        validate_existing_render_cache_owner(&root, &legacy_cache_root).map_err(|error| {
-            format!("Failed to validate the legacy project cache before migration: {error}")
-        })?;
-        if legacy_cache_root.exists() {
-            std::fs::remove_dir_all(&legacy_cache_root)
-                .map_err(|error| format!("Failed to remove the legacy project cache: {error}"))?;
-        }
-    }
     Ok(cache_root)
 }
 
@@ -3799,8 +3874,9 @@ async fn compile_typst_pdf_preview(
 mod preview_main_tests {
     use super::{
         cleanup_workspace_preview_files_at, collect_preview_image_profile_with_override,
-        collect_typst_preview_source_stats, local_typst_images, read_raster_dimensions,
-        resolve_preview_target, TypstPreviewSourceStats,
+        collect_typst_preview_source_stats, legacy_workspace_cache_info_at, local_typst_images,
+        read_raster_dimensions, remove_legacy_workspace_cache_at, resolve_preview_target,
+        TypstPreviewSourceStats,
     };
 
     #[test]
@@ -3948,6 +4024,32 @@ mod preview_main_tests {
         assert!(document.exists());
         assert!(cache_root.starts_with(app_data.path().join("workspace-cache")));
         assert!(!cache_root.starts_with(workspace.path()));
+    }
+
+    #[test]
+    fn legacy_workspace_cache_requires_explicit_removal() {
+        let workspace = tempfile::tempdir().expect("create workspace");
+        let app_data = tempfile::tempdir().expect("create app data");
+        let legacy = workspace.path().join(".typsastra/cache/render");
+        std::fs::create_dir_all(&legacy).expect("create legacy cache");
+        std::fs::write(legacy.join("main.pdf"), b"cached pdf").expect("write legacy cache");
+
+        let info = legacy_workspace_cache_info_at(&workspace.path().to_string_lossy())
+            .expect("inspect legacy cache")
+            .expect("legacy cache exists");
+        assert_eq!(info.file_count, 1);
+        assert_eq!(info.total_bytes, 10);
+
+        cleanup_workspace_preview_files_at(
+            app_data.path(),
+            workspace.path().to_string_lossy().into_owned(),
+        )
+        .expect("initialize machine-local cache");
+        assert!(workspace.path().join(".typsastra/cache").exists());
+
+        remove_legacy_workspace_cache_at(&workspace.path().to_string_lossy())
+            .expect("remove approved legacy cache");
+        assert!(!workspace.path().join(".typsastra/cache").exists());
     }
 
     #[cfg(windows)]
@@ -5124,6 +5226,8 @@ pub fn run() {
             open_file_externally,
             read_workspace_file_as_base64,
             workspace_path_exists,
+            inspect_legacy_workspace_cache,
+            remove_legacy_workspace_cache,
             cleanup_workspace_preview_files,
             export_source_zip,
             export_typsastra_project,
