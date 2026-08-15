@@ -64,6 +64,9 @@ Released August 13, 2026.
 - Redesigned the search panel with compact accessible controls and added
   selected-text, search-result, diagnostic, image-warning, and caret markers to
   the editor scrollbar.
+- Made search and selection feedback theme-aware, aligned it across wrapped
+  visual lines and Khmer grapheme boundaries, and navigated scrollbar markers
+  to their exact source ranges.
 - Preserved each tab's scroll position, undo history, parsed syntax tree, folds,
   selection, diagnostics, and bracket colors across tab switches and Tinymist
   restarts.
@@ -96,13 +99,29 @@ Released August 13, 2026.
   preview.
 - Improved workspace close, replacement, resume, sidebar restoration, preview
   loading, and diagnostic recovery across the extracted controller lifecycle.
+- Moved generated render mirrors, PDFs, source maps, and compiler artifacts out
+  of projects into machine-local application data. The Storage panel reports
+  each project cache, separates hard-linked bytes from genuinely copied bytes,
+  and reveals the selected cache directory.
+- Added consent-based migration for legacy project-local `.typsastra/cache`
+  directories. Typsastra reports the path, file count, and size before removing
+  the disposable cache; cancelling leaves it untouched and stops project open.
+- Kept one preview page position and large-document approval across the main
+  document and its included source tabs.
 - Added universal frontend and Rust CI checks and standardized local Tauri
   commands as `bun run tauri:dev` and `bun run tauri:build`.
+- Added an automatic Rust CLI fallback for development and release builds when
+  the bundled Tauri CLI is missing, has an incompatible executable format, or
+  crashes at the native CLI level. Normal compilation failures and Ctrl+C are
+  not retried.
 
 ## Compatibility and deferred work
 
 v0.7.0 does not change the `.typsastra` project archive schema. Existing v0.6.x
-projects open without migration. The release installs a new writable
+projects remain compatible. A project that still contains the former
+project-local `.typsastra/cache` receives a separate confirmation before that
+disposable cache is removed in favor of machine-local storage; this does not
+rewrite project source or configuration. The release installs a new writable
 `Typsastra Examples v0.7.0` folder and does not overwrite earlier example
 workspaces.
 

@@ -19,6 +19,16 @@ bun run tauri:dev
 
 The first launch requires internet access to retrieve the selected stable Tinymist binary from GitHub. Later launches use the managed copy in the platform application-data directory.
 
+### Tauri CLI fallback
+
+`bun run tauri:dev` and `bun run tauri:build` normally use the bundled
+`@tauri-apps/cli`. If that native CLI executable is missing, has an incompatible
+format, or crashes, the launcher reads the locked CLI version, installs the
+matching Rust `tauri-cli` through Cargo when necessary, and retries the same
+command with `cargo tauri`. It does not retry ordinary frontend/Rust build
+failures or a development session stopped with Ctrl+C. Rust and Cargo must be
+available on `PATH` for the fallback.
+
 ## Dependency lockfiles
 
 `bun.lock` is committed and is the reproducible dependency source for local development and CI. After changing `package.json`, run `bun install` and commit both files. Routine setup and CI should keep using:
@@ -72,3 +82,11 @@ bun run tauri:build
 ```
 
 Build on each target operating system. Cross-platform installer output is not produced by a normal local Tauri build.
+
+To bypass the bundled CLI explicitly, install the version resolved in
+`bun.lock` and run Cargo directly. For the current lockfile:
+
+```bash
+cargo install tauri-cli --version 2.11.3 --locked
+cargo tauri build
+```

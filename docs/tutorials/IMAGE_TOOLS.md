@@ -18,8 +18,9 @@ resized or re-encoded; animated GIFs remain inspection-only.
    deliberate stretch is required.
 2. Choose PNG, JPEG, or WebP. JPEG exposes a quality control; PNG and WebP use
    the currently supported lossless encoding path.
-3. Select **Preview Changes** to generate a bounded comparison in
-   `.typsastra/cache` and review encoded and decoded size estimates.
+3. Select **Preview Changes** to generate a bounded comparison in Typsastra's
+   machine-local application-data cache and review encoded and decoded size
+   estimates.
 4. Select **Save Optimized Copy** and choose a destination.
 5. Optionally enable replacement of indexed static Typst paths with the saved
    copy.
@@ -33,6 +34,12 @@ Renaming an image through the project explorer updates its indexed static Typst
 paths. The replacement-image action can likewise point those static references
 at another existing project image. Review source control or backups before
 large reference changes.
+
+Image inspection uses bounded cached previews in both the editor image viewer
+and Image Tools. Once prepared, the same bounded result can be reused instead
+of decoding a pathological source image again. Reopening a project restores the
+active image only after its preview source is ready, so an old image is not
+mistaken for the selected asset while loading.
 
 Use the bundled `06-v0.6-feature-showcase/01-draft-preview-and-image-guidance`
 project to exercise Image Tools with local raster files. Draft Preview remains

@@ -37,6 +37,11 @@ The toolbar shows current page and total page count. Enter a valid page number
 to jump immediately. Forward sync also uses an immediate jump; it does not run a
 long scroll animation through intermediate pages.
 
+Zooming retains the current document viewport anchor where practical instead of
+resetting to the top of the page. The configured main document and every source
+file included by it also share one PDF page position, so switching between
+chapters does not restore competing per-tab preview positions.
+
 ## Forward and inverse sync
 
 Use **Reveal Cursor in Preview** or `Alt+Enter` (`Option+Enter` on macOS) for

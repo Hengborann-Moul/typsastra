@@ -27,7 +27,7 @@ This file serves as a consolidated reference for the architectural decisions, pa
 
 ## 1. Core Architecture
 - **Tech Stack**: Tauri v2 (Rust backend for system/file operations and Tinymist LSP lifecycle) + Bun/Vite (Frontend) + CodeMirror 6 (Editor).
-- **Run Commands**: `bun install`, `bun run tauri:dev`, `bun run tauri:build`; frontend build is `tsc && vite build`. Commit `bun.lock`; use `bun install --frozen-lockfile` for clean setup and CI, and regenerate it with `bun install` whenever `package.json` changes.
+- **Run Commands**: `bun install`, `bun run tauri:dev`, `bun run tauri:build`; frontend build is `tsc && vite build`. The Tauri scripts run `scripts/run-tauri-with-fallback.ts`: they try the bundled CLI first and retry native CLI launch/runtime failures with the exact Rust `tauri-cli` version locked by the project, while ordinary compiler errors and user cancellation are not retried. Commit `bun.lock`; use `bun install --frozen-lockfile` for clean setup and CI, and regenerate it with `bun install` whenever `package.json` changes.
 - **TypeScript Mode**: `strict`, `noUnusedLocals`, `noUnusedParameters`, `noFallthroughCasesInSwitch`; unused imports/params fail build.
 - **Core Files**:
   - `index.html`: Single-page DOM scaffold. Feature controllers bind hardcoded element IDs, so DOM ID changes must be paired with the controller that owns that element.

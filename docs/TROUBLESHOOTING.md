@@ -30,6 +30,31 @@ Enable **VBSCRIPT** under Windows Optional Features. This is needed only for MSI
 
 Install the WebKitGTK 4.1 packages for your distribution. See [INSTALL.md](./INSTALL.md).
 
+### Bundled Tauri CLI exits with a segmentation fault
+
+Run the standard command again through `bun run tauri:dev` or
+`bun run tauri:build`. The project launcher recognizes a native CLI crash,
+installs the `tauri-cli` version locked by the repository when needed, and
+retries through `cargo tauri`. Ensure Cargo is on `PATH` and that the machine can
+reach crates.io during the first fallback installation.
+
+The fallback intentionally does not run for TypeScript, Vite, Rust, Tauri
+configuration, or application compilation errors. Fix those reported errors
+directly rather than installing another CLI.
+
+## Legacy project cache migration
+
+Older projects may contain generated data under `.typsastra/cache`. Current
+Typsastra stores these artifacts in machine-local application data so cloud
+sync, project search, and copied project folders do not see duplicate cache
+paths.
+
+When prompted, verify the displayed project path, generated-file count, and
+size. **Migrate and Open** removes only the old `.typsastra/cache` and opens the
+project using machine-local storage. **Cancel** leaves the directory unchanged
+and stops opening that project. Source files, `.typsastra/config.json`, and
+`.typsastra/workspace.json` are not part of this removal.
+
 ## macOS reports that Typsastra is damaged
 
 The experimental macOS release is intentionally distributed without Apple

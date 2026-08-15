@@ -4,7 +4,8 @@
 
 The workspace directory identifies the project. The configured main `.typ` file
 identifies its document. An included chapter is source within that document, so
-opening it changes the editor tab but not preview ownership.
+opening it changes the editor tab but not preview ownership or the current PDF
+page position. Main and included tabs share one document-preview viewport.
 
 Set the main file from the Explorer or tab context menu. Renaming the main file
 updates the project relationship and restarts the owned Tinymist sessions rather
@@ -35,6 +36,18 @@ links when the workspace filesystem supports them and fall back to ordinary
 copies otherwise. Typsastra never uses symbolic links for render-cache assets.
 Removing the cache link does not remove the original project asset.
 
+Open **Settings → Storage** to inspect every machine-local project cache. Each
+entry reports cache size, file count, hard-linked bytes, and genuinely copied
+bytes, and provides an explicit action to reveal the directory. A hard-linked
+asset has multiple paths but shares its underlying storage allocation with the
+project source.
+
+Projects created by older Typsastra versions may still contain
+`.typsastra/cache`. On open, Typsastra displays its exact path, file count, and
+size before doing anything. Choose **Migrate and Open** to remove the disposable
+legacy cache and use machine-local storage, or **Cancel** to leave it untouched
+and stop opening the project.
+
 The **Export PDF** command is separate from live preview. It asks for
 confirmation before creating or replacing the user-facing PDF in the project.
 Globally cached scaled-font variants remain in Typsastra's application-data
@@ -47,5 +60,9 @@ PDF merely because it appears in the tab bar. Activating a large Typst source
 shows an editor-pane confirmation before either editor initialization or
 preview compilation begins. A directly opened large PDF asks for confirmation
 in the preview pane before decoding.
+
+Large-file approval belongs to the configured document. After approving its
+main preview, included Typst files reuse that approval and keep the same preview
+page position instead of prompting or restoring independent PDF positions.
 
 Try the bundled `05-project-portability/01-main-and-included-files` example.

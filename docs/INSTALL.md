@@ -163,6 +163,13 @@ Start the complete desktop development environment:
 bun run tauri:dev
 ```
 
+This command first uses the bundled `@tauri-apps/cli`. If that native CLI is
+unavailable or crashes—for example, on an affected ARM Linux host—the launcher
+installs the matching Rust `tauri-cli` version through Cargo and retries with
+`cargo tauri dev`. Compilation errors and Ctrl+C remain normal terminal exits
+and do not trigger the fallback. The initial fallback installation requires
+network access and can take several minutes because Cargo compiles the CLI.
+
 `bun run dev` starts only Vite in a browser. It is useful for isolated styling work, but native filesystem access, dialogs, settings persistence, Tinymist, and Tauri IPC will not work there.
 
 ### Native release build
@@ -172,6 +179,9 @@ Build on each target operating system; a normal local Tauri build does not produ
 ```bash
 bun run tauri:build
 ```
+
+The same fallback applies to release builds. To choose the Rust CLI explicitly,
+install the version recorded in `bun.lock` and run `cargo tauri build`.
 
 The native executable is written under `src-tauri/target/release/`. Installers and application bundles are written under `src-tauri/target/release/bundle/`, with platform-specific subdirectories such as `nsis`/`msi`, `deb`/`rpm`/`appimage`, or `dmg`/`macos`.
 

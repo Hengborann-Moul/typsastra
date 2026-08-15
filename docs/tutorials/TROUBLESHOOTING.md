@@ -40,6 +40,20 @@ Open **Settings → Toolchain** and check whether a validated system Tinymist is
 available. Managed downloads show received-byte progress and retry stalled or
 transient transfers within bounded limits. Verify GitHub access before retrying.
 
+## An older project contains `.typsastra/cache`
+
+Typsastra now keeps generated render data in machine-local application storage.
+When an older workspace cache is detected, review the reported path, file count,
+and size before choosing **Migrate and Open**. Typsastra does not delete that
+cache silently; cancelling preserves it and stops the project from opening.
+
+## The bundled Tauri CLI crashes during a Linux build
+
+Use `bun run tauri:dev` or `bun run tauri:build`. The wrapper retries native
+CLI launch/runtime failures through Cargo using the project's locked Tauri CLI
+version. It deliberately does not retry ordinary Rust, frontend, or packaging
+errors. See the [development guide](../DEVELOPMENT.md#tauri-cli-fallback).
+
 ## Preview is white on Linux
 
 Use the Linux DMA-BUF compatibility setting described in

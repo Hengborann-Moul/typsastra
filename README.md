@@ -46,9 +46,10 @@ Khmer is the first language with deep support, including tailored cursor and del
 ## v0.7.0 feature showcase
 
 Typsastra v0.7.0 adds resource-aware image workflows, secure Markdown live
-preview, and persistent PDF color modes while retaining the Draft Preview,
-document typography, private-font, and source-navigation features introduced
-throughout v0.6.x.
+preview, persistent PDF color modes, machine-local render-cache management,
+and clearer search navigation while retaining the Draft Preview, document
+typography, private-font, and source-navigation features introduced throughout
+v0.6.x.
 
 Choose **Open Examples** from the welcome screen and follow
 `07-v0.7-feature-showcase` for Markdown preview guidance, then use
@@ -86,11 +87,40 @@ Image Tools inventories project raster images, reports source and decoded
 sizes, finds static Typst references, and prepares bounded resize or re-encoding
 previews. Optimizations are saved as new copies; source images are not silently
 overwritten. Authors may explicitly update the indexed static references to
-the saved copy.
+the saved copy. Bounded preview results are cached and reused across editor and
+Image Tools views, so inspecting unusually large images does not repeatedly
+decode the full source asset.
 
 <!-- Replace this placeholder with the Image Tools screenshot or video URL. -->
 <p align="center">
   <img src="./assets/feature-demo-placeholder.svg" alt="Placeholder for the Image Tools demonstration" width="800"/>
+</p>
+
+### Machine-local project caches
+
+Live-preview mirrors, generated PDFs, source maps, and temporary compiler files
+are stored in Typsastra's machine-local application data rather than inside the
+project. The Storage panel lists prepared project caches, distinguishes
+hard-linked asset bytes from genuine copies, and can reveal each cache in the
+system file explorer. When an older project-local `.typsastra/cache` is found,
+Typsastra reports its path, file count, and size and asks before removing it and
+switching the project to machine-local storage.
+
+<!-- Replace this placeholder with the Storage panel and legacy-cache migration demonstration. -->
+<p align="center">
+  <img src="./assets/feature-demo-placeholder.svg" alt="Placeholder for machine-local cache monitoring and migration" width="800"/>
+</p>
+
+### Search and editor navigation
+
+Search results, selected-text matches, diagnostics, and image guidance appear as
+distinct scrollbar markers that navigate to their exact ranges. Search and
+selection highlights use the active theme, remain aligned across wrapped visual
+lines, and preserve complex-script grapheme boundaries.
+
+<!-- Replace this placeholder with the search panel and scrollbar-marker demonstration. -->
+<p align="center">
+  <img src="./assets/feature-demo-placeholder.svg" alt="Placeholder for search highlighting and scrollbar navigation" width="800"/>
 </p>
 
 ### Draft Preview
@@ -224,6 +254,8 @@ Typsastra also treats a document as a project rather than an isolated file. A re
 - Sanitized Markdown live preview with workspace-bound local resources.
 - Project Image Tools for raster inspection, optimization previews, optimized
   copies, and explicit static-reference updates.
+- Machine-local project render caches with hard-link/copy accounting,
+  reveal-in-explorer actions, and consent-based migration from legacy caches.
 - Main-document preview workflows for multi-file projects.
 - Explicit source-to-preview navigation through the preview toolbar or keyboard shortcut.
 - Portable `.typsastra` workspace state, lazy restored tabs, and confirmation before loading large files.
@@ -243,7 +275,7 @@ Each language entry in Settings shows its support level, stability status, and w
 
 ## Research-document workflow
 
-Typsastra is designed around one project identity and one configured main document. Opening an included chapter keeps the full-document preview, scroll context, and source relationships intact instead of treating every active file as a separate document.
+Typsastra is designed around one project identity and one configured main document. Opening an included chapter keeps the full-document preview, shared page position, and source relationships intact instead of treating every active file as a separate document. Once a guarded large document is approved, its included source files reuse that project-level approval rather than repeatedly interrupting the author.
 
 The scalable workflow covers:
 
@@ -351,6 +383,12 @@ cd typsastra
 bun install --frozen-lockfile
 bun run tauri:dev
 ```
+
+The development and release launchers first use the bundled Tauri CLI. If its
+native executable is unavailable or crashes at the CLI runtime level, Typsastra
+detects the failure, installs the matching Rust `tauri-cli` version when needed,
+and retries through `cargo tauri`. Ordinary frontend or Rust compilation errors
+are returned directly and do not trigger a redundant retry.
 
 ### Validation commands
 
