@@ -664,11 +664,9 @@ fn thumbnail_document_namespace(
     let relative = document_root_path
         .strip_prefix(&workspace_root)
         .map_err(|_| "The Draft thumbnail document root is outside the active workspace.")?;
-    let mut identity = relative.to_string_lossy().replace('\\', "/");
+    let identity = relative.to_string_lossy().replace('\\', "/");
     #[cfg(windows)]
-    {
-        identity = identity.to_lowercase();
-    }
+    let identity = identity.to_lowercase();
     let mut digest = Sha256::new();
     digest.update(identity.as_bytes());
     Ok(format!("{:x}", digest.finalize())[..24].to_string())
