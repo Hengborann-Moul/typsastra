@@ -115,7 +115,8 @@ describe("compiled PDF transport", () => {
     expect(source).toContain("...preparedPreview.changedPaths");
     expect(preparationSource).toContain("changedPaths: result.changedFiles");
     expect(source).not.toContain("syncPreparedPreviewDocuments");
-    expect(diagnosticsSource).toContain("if (this.port.isRenderCachePath(rawPath))");
+    expect(diagnosticsSource).toContain("const fromRenderCache = this.port.isRenderCachePath(rawPath)");
+    expect(diagnosticsSource).toContain("if (fromRenderCache && diagnostics.length > 0)");
     expect(source).toContain("Tinymist's watched-file invalidation can complete");
   });
 
@@ -151,7 +152,8 @@ describe("compiled PDF transport", () => {
     const saveMethod = persistenceSource.slice(saveStart, saveEnd);
     expect(contentSource).toContain("await this.deps.updatePinnedMain(previewLspMainPath(target))");
     expect(source).not.toContain("cachedPreviewCompilerPath");
-    expect(diagnosticsSource).toContain("if (this.port.isRenderCachePath(rawPath))");
+    expect(diagnosticsSource).toContain("const fromRenderCache = this.port.isRenderCachePath(rawPath)");
+    expect(diagnosticsSource).toContain("if (fromRenderCache && diagnostics.length > 0)");
     expect(saveMethod).toContain("void this.deps.renderPdfPreview(content)");
     expect(saveMethod).not.toContain('effectivePreviewRenderMode === "on-save"');
   });

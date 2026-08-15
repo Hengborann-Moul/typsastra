@@ -51,7 +51,8 @@ export class DiagnosticsController {
 
   async handleLspDiagnostics(uri: string, diagnostics: LspDiagnostic[], version?: number): Promise<void> {
     const rawPath = filePathFromUri(uri);
-    if (this.port.isRenderCachePath(rawPath)) {
+    const fromRenderCache = this.port.isRenderCachePath(rawPath);
+    if (fromRenderCache && diagnostics.length > 0) {
       this.port.logDeveloper(
         "info",
         "preview diagnostics",
@@ -77,6 +78,14 @@ export class DiagnosticsController {
     }
 
     if (isActive && !this.shouldAcceptLspDiagnostics(originalPath, version)) return;
+
+    if (fromRenderCache) {
+      this.port.logDeveloper(
+        "info",
+        "preview diagnostics",
+        `Accepted an empty diagnostic publication from the private render mirror for ${originalPath}.`,
+      );
+    }
 
     const cacheableDiagnostics = diagnostics.filter(diagnostic =>
       !diagnostic.message.includes("cannot export multiple images without a page number template")

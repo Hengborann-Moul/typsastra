@@ -63,9 +63,8 @@ common GitHub-Flavored Markdown. Local images and workspace links are resolved
 inside the open project, remote resources are not loaded automatically, and
 the existing Typst PDF session remains available when returning to source.
 
-<!-- Replace this placeholder with the Markdown-preview screenshot or video URL. -->
 <p align="center">
-  <img src="./assets/feature-demo-placeholder.svg" alt="Placeholder for the Markdown live preview demonstration" width="800"/>
+  <img src="./assets/screenshot-markdown-preview.png" alt="Markdown live preview demonstration" width="800"/>
 </p>
 
 ### Dark and inverted PDF preview
@@ -106,9 +105,8 @@ system file explorer. When an older project-local `.typsastra/cache` is found,
 Typsastra reports its path, file count, and size and asks before removing it and
 switching the project to machine-local storage.
 
-<!-- Replace this placeholder with the Storage panel and legacy-cache migration demonstration. -->
 <p align="center">
-  <img src="./assets/feature-demo-placeholder.svg" alt="Placeholder for machine-local cache monitoring and migration" width="800"/>
+  <img src="./assets/screenshot-machine-local-cache-monitor.png" alt="Machine-local monitor found in storage setting" width="800"/>
 </p>
 
 ### Search and editor navigation

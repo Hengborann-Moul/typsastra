@@ -7,6 +7,9 @@ import {
   persistentLogsAfterManualClear,
   spellcheckConsoleGroupKey
 } from "../src/diagnostics/logConsoleController";
+import { DiagnosticsController } from "../src/diagnostics/diagnosticsController";
+import type { EditorView } from "@codemirror/view";
+import type { LogConsoleController } from "../src/diagnostics/logConsoleController";
 
 describe("editor diagnostics", () => {
   test("rejects stale LSP diagnostics for a boolean literal prefix", () => {
@@ -74,6 +77,53 @@ describe("diagnostic log deduplication", () => {
       { channel: "dev", message: "file not found" },
       diagnostics
     )).toBe(false);
+  });
+});
+
+describe("private render mirror diagnostics", () => {
+  test("accepts an empty mirror publication to clear a corrected workspace error", async () => {
+    const originalPath = String.raw`C:\project\lib.typ`;
+    const accepted: unknown[] = [];
+    const loggedDiagnostics: unknown[] = [];
+    let editorDispatches = 0;
+    const editor = {
+      dispatch() {
+        editorDispatches += 1;
+      },
+    } as unknown as EditorView;
+    const logConsole = {
+      setDiagnostics(path: string, diagnostics: unknown[]) {
+        loggedDiagnostics.push({ path, diagnostics });
+      },
+    } as unknown as LogConsoleController;
+    const controller = new DiagnosticsController(logConsole, {
+      editor: () => editor,
+      client: () => undefined,
+      activeFilePath: () => originalPath,
+      pathKey: path => path.toLowerCase(),
+      mapToOriginalPath: () => originalPath,
+      isRenderCachePath: path => path.includes(".typsastra"),
+      previewImported: () => true,
+      previewStandalone: () => false,
+      latestDocumentVersion: () => 1,
+      hasPendingSync: () => false,
+      spellcheck: () => ({}) as never,
+      recordFirstDiagnostics: () => {},
+      logDeveloper: () => {},
+      acceptedDiagnosticsChanged: diagnostics => accepted.push(diagnostics),
+      openDiagnosticFile: async () => {},
+      activeTabContentLoaded: () => true,
+      editorPositionFromSourceLocation: () => 0,
+    });
+
+    await controller.handleLspDiagnostics(
+      "file:///C:/project/.typsastra/cache/render/lib.typ",
+      [],
+    );
+
+    expect(editorDispatches).toBe(1);
+    expect(loggedDiagnostics).toEqual([{ path: originalPath, diagnostics: [] }]);
+    expect(accepted).toEqual([[]]);
   });
 });
 
