@@ -43,4 +43,7 @@ The `07-v0.7-feature-showcase` section provides exercises for:
 - sanitized Markdown live preview, GFM content, workspace links, mixed scripts,
   local images, and blocked remote resources;
 - Image Tools inspection and Save Optimized Copy using the bundled v0.6 raster
-  assets.
+  assets;
+- theme-aware search matches and exact scrollbar-marker navigation;
+- shared preview position across main and included source tabs;
+- machine-local cache accounting and reveal actions in the Storage panel.

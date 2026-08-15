@@ -13,6 +13,7 @@
 
 This `main.typ` owns the complete document preview.
 
+#pagebreak()
 #include "chapters/included.typ"
 
 Open the included chapter in Explorer. Its editor tab changes, but the preview

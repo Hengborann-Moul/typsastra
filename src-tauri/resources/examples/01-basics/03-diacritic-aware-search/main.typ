@@ -84,6 +84,22 @@ those marks can be part of a meaningful orthographic sequence.
 Try searching for a complete marked form, such as `កំ` or `عَلَم`, with the
 option disabled. Typsastra should still require those script-specific marks.
 
+== Wrapped matches and scrollbar navigation
+
+Search for `navigation` in this deliberately long sentence and narrow the
+editor until it wraps across several visual lines: navigation markers should
+remain aligned with the text even when navigation appears near a wrap boundary.
+
+Select one occurrence of `navigation` directly in the editor. Typsastra should
+find the other exact occurrences without treating whitespace-only selections as
+queries. Blue information markers appear in the editor scrollbar for every
+match. Select a marker and confirm that the editor reveals its exact source
+range rather than only the containing line.
+
+The active result uses a distinct theme-aware highlight. Moving with **Next** or
+**Previous** changes that active result without adding a second highlight over
+the currently selected text.
+
 == Regular-expression searches
 
 Enable _Regexp_. The _Match diacritics_ option becomes unavailable because a
@@ -97,4 +113,3 @@ on the sample `façade`. The complete accented word should be replaced without
 leaving a combining mark behind. Undo afterward to restore the fixture.
 
 #quote(block: true)[façade]
-

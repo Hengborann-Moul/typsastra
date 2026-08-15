@@ -74,6 +74,12 @@ English and Khmer are bundled. Optional providers are installed from Settings
 - Open `06-v0.6-feature-showcase/01-draft-preview-and-image-guidance/main.typ`,
   then choose Image Tools to inspect its bundled raster assets and preview an
   optimized copy.
+- Revisit `01-basics/03-diacritic-aware-search` for wrapped search highlights
+  and exact scrollbar-marker navigation.
+- Open `05-project-portability/01-main-and-included-files` to verify one shared
+  preview page across the main document and included chapter.
+- After compiling an example, open Settings and inspect its machine-local cache
+  under Storage.
 
 Open a `main.typ` file from Explorer. Set it as the project main file when the
 example contains included files. Your installed examples are writable. Each
