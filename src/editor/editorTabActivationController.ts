@@ -45,6 +45,7 @@ export interface EditorTabActivationDependencies {
   updatePreviewActionsToolbar(path: string | null): void;
   applyPreviewSessionToTab(tab: EditorTab, session: PreviewSessionState): void;
   activatePreviewSession(sessionKey: string): void;
+  previewScrollTopForTab(tab: EditorTab): number | undefined;
   queuePreviewScrollPosition(scrollTop?: number): void;
   renderEditorTabs(): void;
   saveWorkspaceState(): void;
@@ -88,7 +89,6 @@ export class EditorTabActivationController {
     const tab = deps.openTabs().find(candidate => filePathKey(candidate.path) === filePathKey(path));
     const activeFilePath = deps.activeFilePath();
     const sameActivePath = activeFilePath !== null && filePathKey(activeFilePath) === filePathKey(path);
-    if (!sameActivePath) deps.queuePreviewScrollPosition(tab?.previewScrollTop);
     if (tab && !isSupportedInAppPath(tab.path) && await deps.classifyUnknownTextPath(tab.path)) {
       if (!tab.content && !tab.savedContent) tab.contentLoaded = false;
     }
@@ -164,6 +164,7 @@ export class EditorTabActivationController {
       const unsupportedFile = !deps.isInternallySupportedPath(path);
       const isPdf = fileExtension(path) === "pdf";
       if (unsupportedFile || isBinaryImagePath(path) || isPdf) {
+        if (!sameActivePath) deps.queuePreviewScrollPosition(deps.previewScrollTopForTab(tab));
         deps.presentation.presentNonText(
           tab,
           path,
@@ -204,6 +205,17 @@ export class EditorTabActivationController {
 
     if (path.toLowerCase().endsWith(".typ")) deps.setDiagnosticWaitStartedAt(performance.now());
     const previewActivation = await deps.previewActivation.prepare(tab, path, isTypstDocument, options);
+    // Included files share the main document's preview session. Resolve that
+    // relationship before restoring the offset so a newly opened include
+    // cannot reset the mounted PDF to its own stale or empty tab position.
+    // Reusing the mounted main-document session must leave its live viewport
+    // untouched. Queuing a saved chapter offset after activateSession() has
+    // already run defers that offset until the *next* tab activation, causing
+    // include tabs to appear one position behind each other. Only seed an
+    // offset when this activation is going to mount a different PDF session.
+    if (!sameActivePath && !previewActivation.presentationReused) {
+      deps.queuePreviewScrollPosition(deps.previewScrollTopForTab(tab));
+    }
     deps.activateSpellcheckDocument(isMarkdownDocument ? null : path);
     deps.clearPendingLspSync();
     deps.previewSync.clearForward();

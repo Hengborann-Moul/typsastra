@@ -26,10 +26,10 @@ the workspace UI appears. PDF compilation may continue asynchronously.
 ## Generated data
 
 All live-preview mirrors, generated PDFs, source maps, and other temporary
-artifacts stay under `.typsastra/cache`. Typsastra does not create generated
-files beside project sources unless the user explicitly confirms an export or
-file operation. Cache content is disposable: do not copy, commit, or share it.
-It can be rebuilt from source, and project export filters it automatically.
+artifacts stay in Typsastra's machine-local application-data cache, outside the
+project. Typsastra does not create generated files beside project sources unless
+the user explicitly confirms an export or file operation. Cache content is
+disposable and can be rebuilt from source.
 To avoid duplicating large image collections, non-Typst assets use regular hard
 links when the workspace filesystem supports them and fall back to ordinary
 copies otherwise. Typsastra never uses symbolic links for render-cache assets.

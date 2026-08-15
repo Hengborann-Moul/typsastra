@@ -17,11 +17,7 @@ export type TinymistPdfExport = {
   data: string | null;
 };
 
-// Preview sources already live under .typsastra/cache/render. Including
-// Tinymist's $dir token here would repeat that internal source path below the
-// preview directory (preview/.typsastra/cache/render/...). A workspace has one
-// configured preview root at a time, so the document name is sufficient.
-const PREVIEW_OUTPUT_PATH = "$root/.typsastra/cache/preview/$name";
+const LEGACY_PREVIEW_OUTPUT_PATH = "$root/.typsastra/cache/preview/$name";
 
 export type LspStatusKind = "starting" | "running" | "initializing" | "ready" | "preview-starting" | "preview-ready" | "preview-error" | "sync-pending" | "syncing" | "stopped" | "error";
 
@@ -175,7 +171,8 @@ export class TinymistLspClient {
       refreshStyle: "on-type" | "on-save";
       partialRendering: boolean;
       message: string;
-    }) => void = () => {}
+    }) => void = () => {},
+    private getPreviewOutputPath: () => string = () => LEGACY_PREVIEW_OUTPUT_PATH,
   ) {}
 
   public setEditorView(view: EditorView) {
@@ -422,6 +419,7 @@ export class TinymistLspClient {
       name: "Workspace"
     }] : null;
 
+    const previewOutputPath = this.getPreviewOutputPath();
     const result = await this.request<unknown>("initialize", {
         processId: null,
         capabilities: {
@@ -456,14 +454,14 @@ export class TinymistLspClient {
           exportPdf: "never",
           exportSvg: "never",
           exportPng: "never",
-          outputPath: PREVIEW_OUTPUT_PATH,
+          outputPath: previewOutputPath,
           formatterMode: "typstyle",
           preview: { background: { enabled: false } },
           tinymist: {
             exportPdf: "never",
             exportSvg: "never",
             exportPng: "never",
-            outputPath: PREVIEW_OUTPUT_PATH,
+            outputPath: previewOutputPath,
             formatterMode: "typstyle",
             preview: { background: { enabled: false } }
           }
@@ -746,13 +744,13 @@ export class TinymistLspClient {
             if (section === "tinymist.exportSvg") return "never";
             if (section === "tinymist.exportPng") return "never";
             if (section === "tinymist.formatterMode") return "typstyle";
-            if (section === "tinymist.outputPath") return PREVIEW_OUTPUT_PATH;
+            if (section === "tinymist.outputPath") return this.getPreviewOutputPath();
             if (section === "tinymist") return {
               exportPdf: "never",
               exportSvg: "never",
               exportPng: "never",
               formatterMode: "typstyle",
-              outputPath: PREVIEW_OUTPUT_PATH,
+              outputPath: this.getPreviewOutputPath(),
             };
             return null;
         });

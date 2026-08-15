@@ -53,6 +53,18 @@ type RenderCacheStorageReport = {
   copiedFiles: number;
 };
 
+type WorkspaceRenderCacheStorageEntry = {
+  projectRoot: string | null;
+  cacheRoot: string;
+  totalBytes: number;
+  fileCount: number;
+  recordedAtMs: number;
+  hardLinkedBytes: number;
+  copiedBytes: number;
+  hardLinkedFiles: number;
+  copiedFiles: number;
+};
+
 const INITIAL_SCAN_DELAY_MS = 60_000;
 const PERIODIC_SCAN_INTERVAL_MS = 30 * 60_000;
 const FULL_SCAN_INTERVAL_MS = 24 * 60 * 60_000;
@@ -66,6 +78,7 @@ const DISMISSED_WARNING_KEY = "typsastra:webview-storage-warning";
 export class WebviewStorageController {
   private report: WebviewStorageReport | null = null;
   private renderCacheReport: RenderCacheStorageReport | null = null;
+  private workspaceRenderCaches: WorkspaceRenderCacheStorageEntry[] = [];
   private scanInProgress = false;
   private lastActivityAt = Date.now();
   private retryTimer: number | null = null;
@@ -85,6 +98,11 @@ export class WebviewStorageController {
         void invoke("reveal_in_explorer", { path: this.report.profilePath });
       }
     });
+    document.getElementById("settings-workspace-render-caches")?.addEventListener("click", event => {
+      const button = (event.target as Element | null)?.closest<HTMLButtonElement>("[data-render-cache-reveal]");
+      const path = button?.dataset.renderCacheReveal;
+      if (path) void invoke("reveal_in_explorer", { path });
+    });
     document.getElementById("webview-storage-review")?.addEventListener("click", () => {
       document.getElementById("webview-storage-notification")?.classList.add("hidden");
       document.dispatchEvent(new CustomEvent("typsastra:open-settings", { detail: { panel: "storage" } }));
@@ -95,9 +113,11 @@ export class WebviewStorageController {
     document.querySelector('[data-settings-panel="storage"]')?.addEventListener("click", () => {
       this.render();
       void this.loadRenderCacheStatus();
+      void this.loadWorkspaceRenderCaches();
     });
     document.addEventListener("typsastra:render-cache-storage-updated", () => {
       void this.loadRenderCacheStatus();
+      void this.loadWorkspaceRenderCaches();
     });
 
     void this.loadStatus();
@@ -121,6 +141,7 @@ export class WebviewStorageController {
     try {
       this.report = await invoke<WebviewStorageReport>("get_webview_storage_status");
       await this.loadRenderCacheStatus();
+      await this.loadWorkspaceRenderCaches();
       this.render();
       await this.refreshWarning();
     } catch (error) {
@@ -165,6 +186,55 @@ export class WebviewStorageController {
       : "All recorded project assets share source storage through hard links.";
     linked.textContent = `${formatBytes(report.hardLinkedBytes)} · ${report.hardLinkedFiles.toLocaleString()} file${report.hardLinkedFiles === 1 ? "" : "s"}`;
     copied.textContent = `${formatBytes(report.copiedBytes)} · ${report.copiedFiles.toLocaleString()} file${report.copiedFiles === 1 ? "" : "s"}`;
+  }
+
+  private async loadWorkspaceRenderCaches(): Promise<void> {
+    try {
+      this.workspaceRenderCaches = await invoke<WorkspaceRenderCacheStorageEntry[]>("inspect_workspace_render_caches");
+    } catch (error) {
+      console.warn("Workspace render-cache status unavailable.", error);
+      this.workspaceRenderCaches = [];
+    }
+    this.renderWorkspaceRenderCaches();
+  }
+
+  private renderWorkspaceRenderCaches(): void {
+    const status = document.getElementById("settings-workspace-render-cache-status");
+    const list = document.getElementById("settings-workspace-render-caches");
+    if (!status || !list) return;
+    const entries = this.workspaceRenderCaches;
+    if (entries.length === 0) {
+      status.textContent = "No machine-local project render caches have been prepared yet.";
+      list.replaceChildren();
+      return;
+    }
+    const totalBytes = entries.reduce((total, entry) => total + entry.totalBytes, 0);
+    const copiedBytes = entries.reduce((total, entry) => total + entry.copiedBytes, 0);
+    status.textContent = `${entries.length.toLocaleString()} cached project${entries.length === 1 ? "" : "s"} use ${formatBytes(totalBytes)} in the machine-local cache${copiedBytes > 0 ? `; ${formatBytes(copiedBytes)} is real copied asset data.` : "."}`;
+    list.replaceChildren(...entries.map(entry => {
+      const row = document.createElement("div");
+      row.className = "settings-workspace-render-cache";
+      const details = document.createElement("div");
+      const project = document.createElement("strong");
+      project.textContent = entry.projectRoot || "Project path unavailable";
+      project.title = entry.projectRoot || "Project path unavailable";
+      const summary = document.createElement("small");
+      const extra = entry.copiedBytes > 0
+        ? ` · ${formatBytes(entry.copiedBytes)} copied`
+        : " · hard links share source storage";
+      summary.textContent = `${formatBytes(entry.totalBytes)} · ${entry.fileCount.toLocaleString()} file${entry.fileCount === 1 ? "" : "s"}${extra}`;
+      const cache = document.createElement("code");
+      cache.textContent = entry.cacheRoot;
+      cache.title = entry.cacheRoot;
+      details.append(project, summary, cache);
+      const reveal = document.createElement("button");
+      reveal.type = "button";
+      reveal.className = "settings-secondary-button";
+      reveal.textContent = "Reveal";
+      reveal.dataset.renderCacheReveal = entry.cacheRoot;
+      row.append(details, reveal);
+      return row;
+    }));
   }
 
   private needsFullScan(): boolean {

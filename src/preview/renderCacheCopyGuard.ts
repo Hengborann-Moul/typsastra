@@ -37,7 +37,7 @@ export async function prepareRenderProjectWithCopyGuard<T>(
     const notice = parseCopyFallbackNotice(error);
     if (!notice || approved) throw error;
     const accepted = await confirm(
-      `Typsastra cannot create hard links for ${notice.files.toLocaleString()} asset file${notice.files === 1 ? "" : "s"} (${formatBytes(notice.bytes)}).\n\nContinuing will create real copies in the private .typsastra preview cache and consume additional disk space.`,
+      `Typsastra cannot create hard links for ${notice.files.toLocaleString()} asset file${notice.files === 1 ? "" : "s"} (${formatBytes(notice.bytes)}). This usually means the project and Typsastra's machine-local cache are on different filesystems.\n\nContinuing will create real copies in the private application cache and consume additional disk space.`,
       {
         title: "Copy Assets Into Preview Cache?",
         kind: "warning",

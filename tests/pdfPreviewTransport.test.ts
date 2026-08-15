@@ -3,9 +3,9 @@ import { describe, expect, test } from "bun:test";
 describe("compiled PDF transport", () => {
   test("exports previews to a private cache instead of returning Base64 through LSP", async () => {
     const source = await Bun.file(new URL("../src/compiler/lsp.ts", import.meta.url)).text();
-    expect(source).toContain('$root/.typsastra/cache/preview/$name');
+    expect(source).toContain("this.getPreviewOutputPath()");
     expect(source).not.toContain('cache/preview/$dir/$name');
-    expect(source).toContain("outputPath: PREVIEW_OUTPUT_PATH");
+    expect(source).toContain("outputPath: previewOutputPath");
     expect(source).toContain("arguments: [path, {}, { write: true, open: false }]");
     expect(source).not.toContain("exportPdfToMemory");
   });
@@ -47,6 +47,7 @@ describe("compiled PDF transport", () => {
     expect(update).toBeGreaterThan(staging);
     expect(payload).toContain("path: stagedPdfPath");
     expect(payload).not.toContain("path: pdfPath");
+    expect(source).toContain("cacheRootPath: cacheRoot");
   });
 
   test("does not run workspace memory diagnostics from the preview-only window", async () => {
@@ -249,7 +250,7 @@ describe("compiled PDF transport", () => {
       new URL("../src/workspace/workspaceLifecycleController.ts", import.meta.url),
     ).text();
     const validation = source.indexOf(
-      'await invoke("cleanup_workspace_preview_files", { workspaceRootPath: selected })'
+      'app.renderCacheRootPath = await invoke<string>("cleanup_workspace_preview_files", {'
     );
     const startup = source.indexOf(
       'await app.restartTinymistSession("Connecting to new project...")'

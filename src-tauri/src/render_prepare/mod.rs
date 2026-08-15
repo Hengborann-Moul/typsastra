@@ -12,9 +12,10 @@ pub use draft_thumbnail::{
     cancel_draft_thumbnail_generation, get_draft_thumbnail_status, start_draft_thumbnail_generation,
 };
 pub use mirror::{
-    inspect_render_cache_storage, mirror_project_cancellable, prepare_single_in_memory_file,
-    validate_existing_render_cache_owner, RenderCacheStorageReport, RenderPrepareOptions,
-    RenderPrepareResult, RenderPrepareWarning,
+    inspect_render_cache_storage, inspect_workspace_render_caches, mirror_project_cancellable,
+    prepare_single_in_memory_file, validate_existing_render_cache_owner,
+    workspace_render_cache_root, RenderCacheStorageReport, RenderPrepareOptions,
+    RenderPrepareResult, RenderPrepareWarning, WorkspaceRenderCacheStorageEntry,
 };
 pub use segment::KhmerTextSegmenter;
 pub use sourcemap::SourceMap;

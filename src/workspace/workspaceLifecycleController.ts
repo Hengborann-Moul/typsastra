@@ -23,6 +23,15 @@ type ExamplesWorkspace = {
 
 type WorkspaceToolchain = { tinymistVersion: string; typstVersion: string };
 type DeveloperLog = { kind: "log" | "info" | "warning" | "error"; source: string; message: string };
+type LegacyWorkspaceCacheInfo = { path: string; totalBytes: number; fileCount: number };
+
+function formatCacheBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+  const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  const value = bytes / 1024 ** index;
+  return `${value >= 10 || index === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[index]}`;
+}
 
 /** Mutable session state currently owned by the application composition root. */
 export interface WorkspaceLifecycleSessionState {
@@ -32,6 +41,7 @@ export interface WorkspaceLifecycleSessionState {
   pinnedLspMainPath: string | null;
   mainDocumentScripts: DocumentTypography["fonts"];
   workspaceRootPath: string | null;
+  renderCacheRootPath: string | null;
   workspaceMetadata: WorkspaceMetadata | null;
   workspaceLoading: boolean;
   workspaceServicesDeferredForLargeFile: boolean;
@@ -136,6 +146,7 @@ export interface WorkspaceLifecycleOperations {
   ensureLargePreviewApproved(path: string): Promise<boolean>;
   preparePinnedMainTypography(path: string): Promise<DocumentTypography | null | false>;
   prepareRenderProjectIfNeeded(): Promise<void>;
+  invalidatePreviewWork(reason: string): void;
   restartTinymistSession(message: string): Promise<void>;
   stopTinymistSession(message: string): Promise<void>;
   restoreActiveDocumentAfterTinymistRestart(): Promise<void>;
@@ -307,11 +318,33 @@ export class WorkspaceLifecycleController {
         );
       }
     }
+    const legacyCache = await invoke<LegacyWorkspaceCacheInfo | null>(
+      "inspect_legacy_workspace_cache",
+      { workspaceRootPath: selected },
+    );
+    if (legacyCache) {
+      const approved = await confirm(
+        `This project contains an older Typsastra cache inside the workspace:\n\n${legacyCache.path}\n\n` +
+        `${legacyCache.fileCount.toLocaleString()} generated file${legacyCache.fileCount === 1 ? "" : "s"} use ${formatCacheBytes(legacyCache.totalBytes)}. ` +
+        "Typsastra now stores generated render caches in machine-local application data so they are not synchronized, searched, or copied with the project.\n\n" +
+        "Continue to remove the old workspace cache and use the machine-local cache?",
+        {
+          title: "Migrate Typsastra Cache",
+          kind: "warning",
+          okLabel: "Migrate and Open",
+          cancelLabel: "Cancel",
+        },
+      );
+      if (!approved) return;
+      await invoke("remove_legacy_workspace_cache", { workspaceRootPath: selected });
+    }
     app.workspaceLoading = true;
     app.updateWorkspaceViewportVisibility();
     app.workspaceRootPath = selected;
     try {
-      await invoke("cleanup_workspace_preview_files", { workspaceRootPath: selected });
+      app.renderCacheRootPath = await invoke<string>("cleanup_workspace_preview_files", {
+        workspaceRootPath: selected,
+      });
       app.lspReady = false;
       app.workspaceMetadata = await app.workspaceController.loadMetadata(selected);
       app.workspaceMetadata.workspace.previewRenderMode ??= app.settingsController.value.preview.renderMode;
@@ -358,6 +391,7 @@ export class WorkspaceLifecycleController {
     } catch (error) {
       app.workspaceController.stopWatching();
       app.workspaceRootPath = null;
+      app.renderCacheRootPath = null;
       app.workspaceMetadata = null;
       app.activeFilePath = null;
       app.pinnedMainFilePath = null;
@@ -495,6 +529,12 @@ export class WorkspaceLifecycleController {
       if (app.workspaceRootPath !== selected) return;
       if (app.lspClient) {
         try {
+          // A restored include tab can resolve its main-document preview while
+          // workspace services are still coming online. Retire that provisional
+          // render before restarting Tinymist so the restart rejection cannot
+          // surface as a compiler error. The active document restoration below
+          // will schedule the authoritative main-document generation.
+          app.invalidatePreviewWork("workspace Tinymist session is restarting");
           await app.restartTinymistSession("Connecting to new project...");
           if (app.workspaceRootPath !== selected) return;
         } catch (error) {
@@ -639,6 +679,7 @@ export class WorkspaceLifecycleController {
     app.previewSyncController.cancelManual();
 
     app.workspaceRootPath = null;
+    app.renderCacheRootPath = null;
     app.sidebarController.reset();
     document.body.classList.remove("image-tools-active");
     void app.imageToolsController.setWorkspace(null, null);

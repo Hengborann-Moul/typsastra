@@ -30,6 +30,7 @@ use render_prepare::{
     cancel_draft_thumbnail_generation, cancel_render_preparation, get_draft_thumbnail_status,
     map_generated_to_source, map_source_to_generated, prepare_render_file, prepare_render_project,
     start_draft_thumbnail_generation, validate_existing_render_cache_owner,
+    workspace_render_cache_root,
 };
 use segmentation::{
     analyze_language_ranges, complete_language_word, get_provider_capabilities,
@@ -654,6 +655,18 @@ fn inspect_render_cache_storage(cache_root: String) -> render_prepare::RenderCac
 }
 
 #[tauri::command]
+fn inspect_workspace_render_caches(
+    app_handle: tauri::AppHandle,
+) -> Result<Vec<render_prepare::WorkspaceRenderCacheStorageEntry>, String> {
+    let app_local_data_dir = app_handle.path().app_local_data_dir().map_err(|error| {
+        format!("Failed to resolve the local application data directory: {error}")
+    })?;
+    Ok(render_prepare::inspect_workspace_render_caches(
+        &app_local_data_dir,
+    ))
+}
+
+#[tauri::command]
 async fn scan_webview_storage(
     app_handle: tauri::AppHandle,
     full: bool,
@@ -1076,23 +1089,17 @@ fn close_pdf_range_source(state: tauri::State<'_, PdfRangeSources>, source_id: u
     }
 }
 
-fn is_preview_generation_path(path: &Path) -> bool {
+fn is_preview_generation_path(path: &Path, cache_root: &Path) -> bool {
+    let cache_root = std::fs::canonicalize(cache_root).unwrap_or_else(|_| cache_root.to_path_buf());
     let Some(generations) = path.parent() else {
         return false;
     };
     let Some(preview) = generations.parent() else {
         return false;
     };
-    let Some(cache) = preview.parent() else {
-        return false;
-    };
-    let Some(typsastra) = cache.parent() else {
-        return false;
-    };
     generations.file_name().and_then(|name| name.to_str()) == Some("generations")
         && preview.file_name().and_then(|name| name.to_str()) == Some("preview")
-        && cache.file_name().and_then(|name| name.to_str()) == Some("cache")
-        && typsastra.file_name().and_then(|name| name.to_str()) == Some(".typsastra")
+        && preview.parent() == Some(cache_root.as_path())
 }
 
 const MAX_RETAINED_PREVIEW_GENERATIONS: usize = 3;
@@ -1157,25 +1164,23 @@ fn prune_preview_generation_cache(
     Ok(())
 }
 
-#[tauri::command]
-fn stage_pdf_preview_generation(path: String, generation: u64) -> Result<String, String> {
+fn stage_pdf_preview_generation_at(
+    path: String,
+    cache_root_path: String,
+    generation: u64,
+) -> Result<String, String> {
     let source = std::fs::canonicalize(&path).unwrap_or_else(|_| PathBuf::from(&path));
+    let cache_root =
+        std::fs::canonicalize(&cache_root_path).unwrap_or_else(|_| PathBuf::from(&cache_root_path));
+    let allowed_preview_dir = cache_root.join("preview");
     let parent = source
         .parent()
         .ok_or_else(|| "The generated PDF has no parent directory.".to_string())?;
-    let cache = parent.parent();
-    let typsastra = cache.and_then(Path::parent);
-    if parent.file_name().and_then(|name| name.to_str()) != Some("preview")
-        || cache
-            .and_then(Path::file_name)
-            .and_then(|name| name.to_str())
-            != Some("cache")
-        || typsastra
-            .and_then(Path::file_name)
-            .and_then(|name| name.to_str())
-            != Some(".typsastra")
-    {
-        return Err("Only generated PDFs in .typsastra/cache/preview can be staged.".to_string());
+    if parent != allowed_preview_dir {
+        return Err(
+            "Only generated PDFs in the active workspace's machine-local preview cache can be staged."
+                .to_string(),
+        );
     }
     let generations = parent.join("generations");
     std::fs::create_dir_all(&generations)
@@ -1199,9 +1204,19 @@ fn stage_pdf_preview_generation(path: String, generation: u64) -> Result<String,
 }
 
 #[tauri::command]
-fn remove_preview_generation_file(path: String) -> Result<(), String> {
+fn stage_pdf_preview_generation(
+    path: String,
+    cache_root_path: String,
+    generation: u64,
+) -> Result<String, String> {
+    stage_pdf_preview_generation_at(path, cache_root_path, generation)
+}
+
+fn remove_preview_generation_file_at(path: String, cache_root_path: String) -> Result<(), String> {
     let path = PathBuf::from(path);
-    if !is_preview_generation_path(&path) {
+    let cache_root =
+        std::fs::canonicalize(&cache_root_path).unwrap_or_else(|_| PathBuf::from(&cache_root_path));
+    if !is_preview_generation_path(&path, &cache_root) {
         return Err("Only staged PDF preview generations can be removed.".to_string());
     }
     match std::fs::remove_file(&path) {
@@ -1211,35 +1226,49 @@ fn remove_preview_generation_file(path: String) -> Result<(), String> {
     }
 }
 
+#[tauri::command]
+fn remove_preview_generation_file(path: String, cache_root_path: String) -> Result<(), String> {
+    remove_preview_generation_file_at(path, cache_root_path)
+}
+
 #[cfg(test)]
 mod pdf_preview_generation_tests {
     use super::{
-        is_preview_generation_path, prune_preview_generation_cache, remove_preview_generation_file,
-        stage_pdf_preview_generation, MAX_RETAINED_PREVIEW_GENERATIONS,
+        is_preview_generation_path, prune_preview_generation_cache,
+        remove_preview_generation_file_at, stage_pdf_preview_generation_at,
+        MAX_RETAINED_PREVIEW_GENERATIONS,
     };
 
     #[test]
     fn stages_and_removes_compiled_pdf_inside_preview_cache() {
         let workspace = tempfile::tempdir().unwrap();
-        let preview = workspace.path().join(".typsastra/cache/preview");
+        let cache_root = workspace.path().join("workspace-cache/example");
+        let preview = cache_root.join("preview");
         std::fs::create_dir_all(&preview).unwrap();
         let compiled = preview.join("main.pdf");
         std::fs::write(&compiled, b"%PDF-1.7\n").unwrap();
 
-        let staged = stage_pdf_preview_generation(compiled.to_string_lossy().into_owned(), 7)
-            .expect("stage compiled preview");
+        let staged = stage_pdf_preview_generation_at(
+            compiled.to_string_lossy().into_owned(),
+            cache_root.to_string_lossy().into_owned(),
+            7,
+        )
+        .expect("stage compiled preview");
         let staged = std::path::PathBuf::from(staged);
 
         assert!(!compiled.exists());
         assert!(staged.is_file());
-        assert!(is_preview_generation_path(&staged));
+        assert!(is_preview_generation_path(&staged, &cache_root));
         assert_eq!(
             std::fs::canonicalize(staged.parent().unwrap()).unwrap(),
             std::fs::canonicalize(preview.join("generations")).unwrap()
         );
 
-        remove_preview_generation_file(staged.to_string_lossy().into_owned())
-            .expect("remove staged preview");
+        remove_preview_generation_file_at(
+            staged.to_string_lossy().into_owned(),
+            cache_root.to_string_lossy().into_owned(),
+        )
+        .expect("remove staged preview");
         assert!(!staged.exists());
     }
 
@@ -1249,8 +1278,18 @@ mod pdf_preview_generation_tests {
         let external = workspace.path().join("document.pdf");
         std::fs::write(&external, b"%PDF-1.7\n").unwrap();
 
-        assert!(stage_pdf_preview_generation(external.to_string_lossy().into_owned(), 1).is_err());
-        assert!(remove_preview_generation_file(external.to_string_lossy().into_owned()).is_err());
+        let cache_root = workspace.path().join("workspace-cache/example");
+        assert!(stage_pdf_preview_generation_at(
+            external.to_string_lossy().into_owned(),
+            cache_root.to_string_lossy().into_owned(),
+            1,
+        )
+        .is_err());
+        assert!(remove_preview_generation_file_at(
+            external.to_string_lossy().into_owned(),
+            cache_root.to_string_lossy().into_owned(),
+        )
+        .is_err());
         assert!(external.exists());
     }
 
@@ -1259,7 +1298,7 @@ mod pdf_preview_generation_tests {
         let workspace = tempfile::tempdir().unwrap();
         let generations = workspace
             .path()
-            .join(".typsastra/cache/preview/generations");
+            .join("workspace-cache/example/preview/generations");
         std::fs::create_dir_all(&generations).unwrap();
         for index in 0..12 {
             std::fs::write(
@@ -1429,13 +1468,103 @@ fn remove_cache_symlinks(dir: &std::path::Path) {
     }
 }
 
-#[tauri::command]
-fn cleanup_workspace_preview_files(workspace_root_path: String) -> Result<(), String> {
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LegacyWorkspaceCacheInfo {
+    path: String,
+    total_bytes: u64,
+    file_count: usize,
+}
+
+fn legacy_workspace_cache_info_at(
+    workspace_root_path: &str,
+) -> Result<Option<LegacyWorkspaceCacheInfo>, String> {
     let root = std::path::PathBuf::from(workspace_root_path);
     if !root.is_dir() {
-        return Ok(());
+        return Err("The project directory no longer exists.".to_string());
     }
-    let cache_root = root.join(".typsastra").join("cache");
+    let legacy_cache_root = root.join(".typsastra").join("cache");
+    let Ok(metadata) = std::fs::symlink_metadata(&legacy_cache_root) else {
+        return Ok(None);
+    };
+    let (total_bytes, file_count) = if metadata.file_type().is_symlink() {
+        (0, 0)
+    } else {
+        legacy_cache_directory_size(&legacy_cache_root)
+    };
+    Ok(Some(LegacyWorkspaceCacheInfo {
+        path: legacy_cache_root.to_string_lossy().into_owned(),
+        total_bytes,
+        file_count,
+    }))
+}
+
+fn legacy_cache_directory_size(path: &std::path::Path) -> (u64, usize) {
+    let mut bytes = 0u64;
+    let mut files = 0usize;
+    let mut pending = vec![path.to_path_buf()];
+    while let Some(directory) = pending.pop() {
+        let Ok(entries) = std::fs::read_dir(directory) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Ok(metadata) = std::fs::symlink_metadata(&path) else {
+                continue;
+            };
+            if metadata.file_type().is_symlink() {
+                continue;
+            }
+            if metadata.is_dir() {
+                pending.push(path);
+            } else if metadata.is_file() {
+                bytes = bytes.saturating_add(metadata.len());
+                files = files.saturating_add(1);
+            }
+        }
+    }
+    (bytes, files)
+}
+
+fn remove_legacy_workspace_cache_at(workspace_root_path: &str) -> Result<(), String> {
+    let root = std::path::PathBuf::from(workspace_root_path);
+    if !root.is_dir() {
+        return Err("The project directory no longer exists.".to_string());
+    }
+    let legacy_cache_root = root.join(".typsastra").join("cache");
+    let Ok(metadata) = std::fs::symlink_metadata(&legacy_cache_root) else {
+        return Ok(());
+    };
+    if metadata.file_type().is_symlink() {
+        std::fs::remove_file(&legacy_cache_root)
+            .or_else(|_| std::fs::remove_dir(&legacy_cache_root))
+    } else {
+        std::fs::remove_dir_all(&legacy_cache_root)
+    }
+    .map_err(|error| format!("Failed to remove the legacy project cache: {error}"))
+}
+
+#[tauri::command]
+fn inspect_legacy_workspace_cache(
+    workspace_root_path: String,
+) -> Result<Option<LegacyWorkspaceCacheInfo>, String> {
+    legacy_workspace_cache_info_at(&workspace_root_path)
+}
+
+#[tauri::command]
+fn remove_legacy_workspace_cache(workspace_root_path: String) -> Result<(), String> {
+    remove_legacy_workspace_cache_at(&workspace_root_path)
+}
+
+fn cleanup_workspace_preview_files_at(
+    app_local_data_dir: &std::path::Path,
+    workspace_root_path: String,
+) -> Result<std::path::PathBuf, String> {
+    let root = std::path::PathBuf::from(workspace_root_path);
+    if !root.is_dir() {
+        return Err("The project directory no longer exists.".to_string());
+    }
+    let cache_root = workspace_render_cache_root(app_local_data_dir, &root);
     validate_existing_render_cache_owner(&root, &cache_root).map_err(|error| {
         format!("Failed to validate preview cache ownership before starting Tinymist: {error}")
     })?;
@@ -1447,7 +1576,20 @@ fn cleanup_workspace_preview_files(workspace_root_path: String) -> Result<(), St
     // closes. Retain a small recovery window for crashes and forced shutdowns
     // instead of allowing one orphaned file to accumulate per app session.
     prune_preview_generation_cache(&cache_root.join("preview").join("generations"), None)?;
-    Ok(())
+
+    Ok(cache_root)
+}
+
+#[tauri::command]
+fn cleanup_workspace_preview_files(
+    app_handle: tauri::AppHandle,
+    workspace_root_path: String,
+) -> Result<String, String> {
+    let app_local_data_dir = app_handle.path().app_local_data_dir().map_err(|error| {
+        format!("Failed to resolve the local application data directory: {error}")
+    })?;
+    cleanup_workspace_preview_files_at(&app_local_data_dir, workspace_root_path)
+        .map(|path| path.to_string_lossy().to_string())
 }
 
 #[tauri::command]
@@ -3731,9 +3873,10 @@ async fn compile_typst_pdf_preview(
 #[cfg(test)]
 mod preview_main_tests {
     use super::{
-        cleanup_workspace_preview_files, collect_preview_image_profile_with_override,
-        collect_typst_preview_source_stats, local_typst_images, read_raster_dimensions,
-        resolve_preview_target, TypstPreviewSourceStats,
+        cleanup_workspace_preview_files_at, collect_preview_image_profile_with_override,
+        collect_typst_preview_source_stats, legacy_workspace_cache_info_at, local_typst_images,
+        read_raster_dimensions, remove_legacy_workspace_cache_at, resolve_preview_target,
+        TypstPreviewSourceStats,
     };
 
     #[test]
@@ -3865,16 +4008,48 @@ mod preview_main_tests {
     #[test]
     fn cleanup_only_removes_managed_preview_entries() {
         let workspace = tempfile::tempdir().expect("create workspace");
+        let app_data = tempfile::tempdir().expect("create app data");
         let preview = workspace.path().join(".chapter.typ.typsastra-preview.typ");
         let document = workspace.path().join("chapter.typ");
         std::fs::write(&preview, "preview").expect("write preview");
         std::fs::write(&document, "chapter").expect("write chapter");
 
-        cleanup_workspace_preview_files(workspace.path().to_string_lossy().to_string())
-            .expect("cleanup previews");
+        let cache_root = cleanup_workspace_preview_files_at(
+            app_data.path(),
+            workspace.path().to_string_lossy().to_string(),
+        )
+        .expect("cleanup previews");
 
         assert!(!preview.exists());
         assert!(document.exists());
+        assert!(cache_root.starts_with(app_data.path().join("workspace-cache")));
+        assert!(!cache_root.starts_with(workspace.path()));
+    }
+
+    #[test]
+    fn legacy_workspace_cache_requires_explicit_removal() {
+        let workspace = tempfile::tempdir().expect("create workspace");
+        let app_data = tempfile::tempdir().expect("create app data");
+        let legacy = workspace.path().join(".typsastra/cache/render");
+        std::fs::create_dir_all(&legacy).expect("create legacy cache");
+        std::fs::write(legacy.join("main.pdf"), b"cached pdf").expect("write legacy cache");
+
+        let info = legacy_workspace_cache_info_at(&workspace.path().to_string_lossy())
+            .expect("inspect legacy cache")
+            .expect("legacy cache exists");
+        assert_eq!(info.file_count, 1);
+        assert_eq!(info.total_bytes, 10);
+
+        cleanup_workspace_preview_files_at(
+            app_data.path(),
+            workspace.path().to_string_lossy().into_owned(),
+        )
+        .expect("initialize machine-local cache");
+        assert!(workspace.path().join(".typsastra/cache").exists());
+
+        remove_legacy_workspace_cache_at(&workspace.path().to_string_lossy())
+            .expect("remove approved legacy cache");
+        assert!(!workspace.path().join(".typsastra/cache").exists());
     }
 
     #[cfg(windows)]
@@ -5051,6 +5226,8 @@ pub fn run() {
             open_file_externally,
             read_workspace_file_as_base64,
             workspace_path_exists,
+            inspect_legacy_workspace_cache,
+            remove_legacy_workspace_cache,
             cleanup_workspace_preview_files,
             export_source_zip,
             export_typsastra_project,
@@ -5112,6 +5289,7 @@ pub fn run() {
             send_lsp_message,
             prepare_render_project,
             inspect_render_cache_storage,
+            inspect_workspace_render_caches,
             prepare_render_file,
             cancel_render_preparation,
             start_draft_thumbnail_generation,
