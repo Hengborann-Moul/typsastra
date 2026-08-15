@@ -108,6 +108,9 @@ describe("large file opening notice", () => {
     const noticeSource = previewGuard.slice(noticeStart, noticeEnd);
     expect(noticeSource).toContain("this.previewTargetForUnloadedTab(tab)");
     expect(noticeSource).toContain("this.noticeForRoot(target.rootPath)");
+    expect(noticeSource).toContain("this.hasWorkspaceApproval()");
+    expect(previewGuard).toContain("this.approvedRoots.add(workspaceKey)");
+    expect(previewGuard).toContain("this.isApproved(rootPath)");
 
     const guard = await Bun.file(
       new URL("../src/editor/editorFileGuardController.ts", import.meta.url),

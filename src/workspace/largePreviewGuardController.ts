@@ -35,6 +35,20 @@ export class LargePreviewGuardController {
   get blockedRoot(): string | null { return this.blockedRootValue; }
   set blockedRoot(value: string | null) { this.blockedRootValue = value; }
 
+  private workspaceApprovalKey(): string | null {
+    const workspaceRoot = this.deps.workspaceRootPath();
+    return workspaceRoot ? `workspace:${filePathKey(workspaceRoot)}` : null;
+  }
+
+  private hasWorkspaceApproval(): boolean {
+    const key = this.workspaceApprovalKey();
+    return key !== null && this.approvedRoots.has(key);
+  }
+
+  isApproved(rootPath: string): boolean {
+    return this.hasWorkspaceApproval() || this.approvedRoots.has(filePathKey(rootPath));
+  }
+
   async noticeForTab(tab: EditorTab): Promise<LargeFileOpeningNotice | null> {
     if (tab.sizeBytes === undefined) {
       try {
@@ -61,11 +75,21 @@ export class LargePreviewGuardController {
       }
     }
     const textNotice = sizeNotice ?? largeFileOpeningNotice(tab.path, sizeBytes, tab.lineCount);
-    if (textNotice || !isTypstDocumentPath(tab.path)) return textNotice;
+    if (!isTypstDocumentPath(tab.path)) return textNotice;
+
+    // Large Typst approval is project-scoped for the current workspace
+    // session. Once the user accepts the cost for one project source, opening
+    // another main/include file must not interrupt them with the same warning.
+    if (this.hasWorkspaceApproval()) return null;
 
     const target = await this.previewTargetForUnloadedTab(tab);
-    if (!target?.rootPath || target.disabled) return null;
-    return this.noticeForRoot(target.rootPath);
+    if (target?.rootPath && !target.disabled) {
+      if (this.isApproved(target.rootPath)) return null;
+      const rootNotice = await this.noticeForRoot(target.rootPath);
+      if (rootNotice) return rootNotice;
+    }
+
+    return textNotice;
   }
 
   async previewTargetForUnloadedTab(tab: EditorTab): Promise<PreviewTarget | null> {
@@ -90,6 +114,8 @@ export class LargePreviewGuardController {
     if (!rootPath) return;
     const rootKey = filePathKey(rootPath);
     this.approvedRoots.add(rootKey);
+    const workspaceKey = this.workspaceApprovalKey();
+    if (workspaceKey) this.approvedRoots.add(workspaceKey);
     this.inspectedRoots.add(rootKey);
     if (!this.blockedRootValue) return;
     const blockedKey = filePathKey(this.blockedRootValue);
@@ -137,7 +163,7 @@ export class LargePreviewGuardController {
   async ensureApproved(rootPath: string | null): Promise<boolean> {
     if (!rootPath || this.activeCompilerPreviewMatchesRoot(rootPath)) return true;
     const rootKey = filePathKey(rootPath);
-    if (this.approvedRoots.has(rootKey) || this.inspectedRoots.has(rootKey)) return true;
+    if (this.isApproved(rootPath) || this.inspectedRoots.has(rootKey)) return true;
     if (this.blockedRootValue && filePathKey(this.blockedRootValue) === rootKey) return false;
     const notice = await this.noticeForRoot(rootPath);
     if (!notice) {

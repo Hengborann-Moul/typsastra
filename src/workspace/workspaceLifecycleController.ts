@@ -137,6 +137,7 @@ export interface WorkspaceLifecycleOperations {
   ensureLargePreviewApproved(path: string): Promise<boolean>;
   preparePinnedMainTypography(path: string): Promise<DocumentTypography | null | false>;
   prepareRenderProjectIfNeeded(): Promise<void>;
+  invalidatePreviewWork(reason: string): void;
   restartTinymistSession(message: string): Promise<void>;
   stopTinymistSession(message: string): Promise<void>;
   restoreActiveDocumentAfterTinymistRestart(): Promise<void>;
@@ -499,6 +500,12 @@ export class WorkspaceLifecycleController {
       if (app.workspaceRootPath !== selected) return;
       if (app.lspClient) {
         try {
+          // A restored include tab can resolve its main-document preview while
+          // workspace services are still coming online. Retire that provisional
+          // render before restarting Tinymist so the restart rejection cannot
+          // surface as a compiler error. The active document restoration below
+          // will schedule the authoritative main-document generation.
+          app.invalidatePreviewWork("workspace Tinymist session is restarting");
           await app.restartTinymistSession("Connecting to new project...");
           if (app.workspaceRootPath !== selected) return;
         } catch (error) {

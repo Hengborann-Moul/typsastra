@@ -138,6 +138,7 @@ export class TypsastraWorkspaceController {
    */
   private createWorkspaceLifecycleDependencies(): WorkspaceLifecycleDependencies {
     // This property is consumed dynamically by the temporary lifecycle proxy.
+    void this.approvedLargePreviewRoots;
     void this.inspectedPreviewRoots;
     void this.lastPreviewRenderMode;
     void this.finishEditorTextPresentation;
@@ -689,7 +690,21 @@ export class TypsastraWorkspaceController {
     onScrollPositionChanged: scrollTop => {
       this.previewScrollTop = Math.max(0, scrollTop);
       const activeTab = this.getActiveTab();
-      if (activeTab) activeTab.previewScrollTop = this.previewScrollTop;
+      const previewOwnerPath = activeTab?.previewMainPath
+        ?? activeTab?.previewRootPath
+        ?? this.previewMainPath
+        ?? this.previewRootPath;
+      if (previewOwnerPath) {
+        const ownerKey = filePathKey(previewOwnerPath);
+        for (const tab of this.openTabs) {
+          const tabOwnerPath = tab.previewMainPath ?? tab.previewRootPath;
+          if (tabOwnerPath && filePathKey(tabOwnerPath) === ownerKey) {
+            tab.previewScrollTop = this.previewScrollTop;
+          }
+        }
+      } else if (activeTab) {
+        activeTab.previewScrollTop = this.previewScrollTop;
+      }
       if (!this.workspaceRootPath || !this.workspaceMetadata) return;
       if (this.previewScrollSaveTimer !== null) window.clearTimeout(this.previewScrollSaveTimer);
       this.previewScrollSaveTimer = window.setTimeout(() => {
@@ -1554,6 +1569,17 @@ export class TypsastraWorkspaceController {
     updatePreviewActionsToolbar: path => this.updatePreviewActionsToolbar(path),
     applyPreviewSessionToTab: (tab, session) => this.applyPreviewSessionToTab(tab, session),
     activatePreviewSession: sessionKey => this.previewFrame.activateSession(sessionKey),
+    previewScrollTopForTab: tab => {
+      const ownerPath = tab.previewMainPath ?? tab.previewRootPath;
+      if (!ownerPath) return tab.previewScrollTop;
+      const ownerKey = filePathKey(ownerPath);
+      return this.openTabs.find(candidate => {
+        const candidateOwnerPath = candidate.previewMainPath ?? candidate.previewRootPath;
+        return candidateOwnerPath !== null
+          && filePathKey(candidateOwnerPath) === ownerKey
+          && Number.isFinite(candidate.previewScrollTop);
+      })?.previewScrollTop ?? tab.previewScrollTop;
+    },
     queuePreviewScrollPosition: scrollTop => this.previewFrame.queueTabScrollPosition(scrollTop),
     renderEditorTabs: () => this.renderEditorTabs(),
     saveWorkspaceState: () => { void this.saveWorkspaceState(); },
@@ -1591,7 +1617,7 @@ export class TypsastraWorkspaceController {
     activeFilePath: () => this.activeFilePath,
     workspaceRootPath: () => this.workspaceRootPath,
     largePreviewNoticeForRoot: path => this.largePreviewNoticeForRoot(path),
-    isLargePreviewApproved: path => this.approvedLargePreviewRoots.has(filePathKey(path)),
+    isLargePreviewApproved: path => this.largePreviewGuardController.isApproved(path),
     prepareTypography: path => this.preparePinnedMainTypography(path),
     synchronizeTypography: typography => this.editorToolbarController.synchronizeDocumentTypography(typography),
     setImageWorkspace: (root, main) => this.imageToolsController.setWorkspace(root, main),

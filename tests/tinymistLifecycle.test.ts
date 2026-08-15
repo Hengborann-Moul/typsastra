@@ -139,6 +139,9 @@ describe("Tinymist workspace lifecycle", () => {
     expect(source).not.toContain("cachedPreviewCompilerPath");
     const normalizedLifecycleSource = lifecycleSource.replace(/\r\n/g, "\n");
     expect(normalizedLifecycleSource).toContain("await app.prepareRenderProjectIfNeeded();");
+    expect(normalizedLifecycleSource).toContain(
+      'app.invalidatePreviewWork("workspace Tinymist session is restarting")',
+    );
     expect(normalizedLifecycleSource).toContain("await app.restartTinymistSession(\"Connecting to new project...\")");
   });
 

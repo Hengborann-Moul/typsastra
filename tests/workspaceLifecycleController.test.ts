@@ -22,6 +22,7 @@ function lifecycleHarness(
     ensureLargePreviewApproved: async () => true,
     preparePinnedMainTypography: async () => null,
     prepareRenderProjectIfNeeded: async () => { calls.push("prepare-preview"); },
+    invalidatePreviewWork: () => { calls.push("invalidate-preview"); },
     restartTinymistSession: async () => { calls.push("restart-lsp"); },
     restoreActiveDocumentAfterTinymistRestart: async () => { calls.push("restore-document"); },
     appendDeveloperLog: () => {},
@@ -85,7 +86,12 @@ describe("WorkspaceLifecycleController behavior", () => {
 
     await controller.startServices("C:/project");
 
-    expect(calls).toEqual(["prepare-preview", "restart-lsp", "restore-document"]);
+    expect(calls).toEqual([
+      "prepare-preview",
+      "invalidate-preview",
+      "restart-lsp",
+      "restore-document",
+    ]);
   });
 
   test("closes every tab except the requested survivor in tab order", async () => {
