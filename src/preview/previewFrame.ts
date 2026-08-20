@@ -156,6 +156,7 @@ type ActivePageRender = {
 const ZOOM_LEVELS = [25, 33, 50, 67, 75, 80, 90, 100, 110, 125, 150, 175, 200, 250, 300, 400, 500];
 const FALLBACK_ZOOM_PERCENT = 90;
 const MAX_OUTPUT_SCALE = 2;
+const MIN_PDFIUM_OUTPUT_SCALE = 2;
 // Local PDFs do not have network latency, but every range still crosses the
 // Tauri IPC boundary. One MiB keeps each allocation bounded while avoiding the
 // several round trips a typical image-heavy page required with 256 KiB chunks.
@@ -1278,13 +1279,16 @@ export class PreviewFrame {
 
       const cssScale = this.previewZoomPercent / 100;
       const cssViewport = page.getViewport({ scale: cssScale });
-      const outputScale = Math.min(window.devicePixelRatio || 1, MAX_OUTPUT_SCALE);
+      const outputScale = this.pageOutputScale();
       const renderViewport = page.getViewport({ scale: cssScale * outputScale });
       const canvas = doc.createElement("canvas");
       active.canvas = canvas;
       canvas.className = "pdf-page-canvas pdf-page-canvas-original";
-      canvas.width = Math.max(1, Math.floor(renderViewport.width));
-      canvas.height = Math.max(1, Math.floor(renderViewport.height));
+      // Never undersize the backing raster. In particular, PDFium produces a
+      // finished bitmap rather than drawing vectors into this canvas, so a
+      // fractional zoom must not be rounded down and scaled back up by CSS.
+      canvas.width = Math.max(1, Math.ceil(renderViewport.width));
+      canvas.height = Math.max(1, Math.ceil(renderViewport.height));
 
       const task = page.render({ canvas, viewport: renderViewport, recordImages: true });
       active.task = task;
@@ -1545,8 +1549,20 @@ export class PreviewFrame {
   }
 
   private currentPageRenderKey(generation: number): string {
-    const outputScale = Math.min(window.devicePixelRatio || 1, MAX_OUTPUT_SCALE);
+    const outputScale = this.pageOutputScale();
     return `${generation}:${this.previewZoomPercent}:${outputScale}`;
+  }
+
+  private pageOutputScale(): number {
+    const deviceScale = Math.min(window.devicePixelRatio || 1, MAX_OUTPUT_SCALE);
+    // PDF.js paints vector content directly into the backing canvas and can
+    // follow the display scale. PDFium returns a pre-rasterized PNG, which is
+    // visibly softened when fractional CSS zooms interpolate a 1x bitmap.
+    // Keep standalone pages at a 2x backing resolution while retaining the
+    // existing cap on high-DPI displays.
+    return isPdfiumDocument(this.pdfDoc)
+      ? Math.max(deviceScale, MIN_PDFIUM_OUTPUT_SCALE)
+      : deviceScale;
   }
 
   private commitFinalCanvas(slot: HTMLElement, canvas: HTMLCanvasElement, overlays: HTMLElement[] = []): void {

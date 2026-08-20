@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 
 const frameSource = await Bun.file("src/preview/previewFrame.ts").text();
+const pdfiumSource = await Bun.file("src/preview/pdfiumDocument.ts").text();
 const pdfPatch = await Bun.file("patches/pdfjs-dist@6.2.108.patch").text();
 
 test("standalone PDFs render a logical selectable text layer", () => {
@@ -15,6 +16,15 @@ test("standalone PDFs render a logical selectable text layer", () => {
   expect(frameSource).toContain('container.className = "pdf-text-layer"');
   expect(frameSource).toContain('"--total-scale-factor"');
   expect(frameSource).toContain("max-width:100%;max-height:100%;overflow:clip;contain:layout paint");
+});
+
+test("standalone PDFium pages keep a sharp backing raster at fractional zoom", () => {
+  expect(frameSource).toContain("const MIN_PDFIUM_OUTPUT_SCALE = 2");
+  expect(frameSource).toContain("Math.ceil(renderViewport.width)");
+  expect(frameSource).toContain("Math.ceil(renderViewport.height)");
+  expect(frameSource).toContain("isPdfiumDocument(this.pdfDoc)");
+  expect(pdfiumSource).toContain("width: Math.max(1, Math.min(65_535, canvas.width))");
+  expect(pdfiumSource).toContain("height: Math.max(1, Math.min(65_535, canvas.height))");
 });
 
 test("standalone text selection does not trigger source inverse sync", () => {

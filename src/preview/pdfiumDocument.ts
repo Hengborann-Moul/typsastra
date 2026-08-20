@@ -139,14 +139,17 @@ export class PdfiumPage {
     };
   }
 
-  public render({ canvas, viewport }: PdfiumRenderOptions): PdfiumRenderTask {
+  public render({ canvas }: PdfiumRenderOptions): PdfiumRenderTask {
     let cancelled = false;
     const promise = (async () => {
       const response = await invoke<ArrayBuffer | Uint8Array | number[]>("render_pdfium_page", {
         documentId: this.documentId,
         pageNo: this.pageNumber,
-        width: Math.max(1, Math.min(65_535, Math.round(viewport.width))),
-        height: Math.max(1, Math.min(65_535, Math.round(viewport.height))),
+        // PreviewFrame owns the backing-store calculation. Ask PDFium for
+        // those exact dimensions so drawing the returned bitmap is a 1:1
+        // copy rather than an additional browser resampling pass.
+        width: Math.max(1, Math.min(65_535, canvas.width)),
+        height: Math.max(1, Math.min(65_535, canvas.height)),
       });
       if (cancelled) throw renderingCancelled();
       const bytes = response instanceof Uint8Array
