@@ -109,6 +109,19 @@ type PageDimensions = {
   height: number;
 };
 
+type StandalonePdfTextLayer = {
+  container: HTMLElement;
+  textDivs: HTMLElement[];
+  textItems: string[];
+};
+
+type StandalonePdfSearchMatch = {
+  pageNo: number;
+  itemIndex: number;
+  from: number;
+  to: number;
+};
+
 type ActivePageRender = {
   generation: number;
   renderKey: string;
@@ -183,6 +196,11 @@ export class PreviewFrame {
   private previewLinkModifierHeld = false;
   private previewColorMode: PreviewColorMode = "document";
   private readonly pageImageCoordinates = new WeakMap<HTMLCanvasElement, readonly number[]>();
+  private readonly standalonePdfTextLayers = new Map<number, StandalonePdfTextLayer>();
+  private standalonePdfSearchMatches: StandalonePdfSearchMatch[] = [];
+  private standalonePdfSearchIndex = -1;
+  private standalonePdfSearchGeneration = 0;
+  private standalonePdfSearchTimer: number | null = null;
 
   constructor(
     private readonly pane: HTMLElement,
@@ -196,7 +214,8 @@ export class PreviewFrame {
     private readonly onLoadStage?: (
       stage: string,
       detail: Record<string, number | string | boolean>
-    ) => void | Promise<void>
+    ) => void | Promise<void>,
+    private readonly onEditorSearchRequest?: () => void,
   ) {
     this.pane.addEventListener("wheel", event => {
       if (event.ctrlKey) {
@@ -209,6 +228,7 @@ export class PreviewFrame {
       }
     }, { passive: false });
     window.addEventListener("keydown", event => {
+      if (this.handlePreviewFindShortcut(event)) return;
       this.previewLinkModifierHeld = previewLinkModifierAfterKeyboardEvent(event, "keydown");
       const doc = this.iframe?.contentDocument;
       if (doc) this.setPreviewLinkModifier(doc, this.previewPointerInside && this.previewLinkModifierHeld);
@@ -275,8 +295,17 @@ export class PreviewFrame {
       root.style.setProperty(target, hostStyle.getPropertyValue(source).trim() || fallback);
     };
     copy("--ui-bg", "--preview-ui-bg", "#fcfcfc");
+    copy("--ui-text", "--preview-ui-text", "#202124");
     copy("--ui-header-text", "--preview-ui-header", "#616161");
     copy("--ui-accent-color", "--preview-ui-accent", TYPSASTRA_GREEN);
+    copy("--ui-border", "--preview-ui-border", "#c8c8c8");
+    copy("--ui-hover", "--preview-ui-hover", "rgba(127,127,127,.12)");
+    copy("--editor-code-font", "--preview-editor-font", "monospace");
+    copy("--editor-font-size", "--preview-editor-font-size", "14px");
+    copy("--editor-line-height-px", "--preview-editor-line-height", "23.8px");
+    copy("--editor-cursor-color", "--preview-editor-cursor", TYPSASTRA_GREEN);
+    copy("--editor-cursor-shadow", "--preview-editor-cursor-shadow", "rgba(255,255,255,.95)");
+    copy("--editor-cursor-glow", "--preview-editor-cursor-glow", "rgba(61,180,137,.45)");
     this.applyColorMode(root);
   }
 
@@ -784,6 +813,32 @@ export class PreviewFrame {
       .pdf-page-container{position:relative;box-sizing:border-box;flex:none;margin:0 auto;background:#fff;box-shadow:0 2px 10px rgba(0,0,0,.25);overflow:hidden}
       .pdf-page-canvas{position:absolute;inset:0;display:block;width:100%;height:100%}
       .pdf-page-canvas-dark{display:none}
+      .pdf-text-layer{color-scheme:only light;position:absolute;text-align:initial;inset:0;box-sizing:border-box;max-width:100%;max-height:100%;overflow:clip;contain:layout paint;opacity:1;line-height:1;letter-spacing:normal;word-spacing:normal;-webkit-text-size-adjust:none;text-size-adjust:none;forced-color-adjust:none;transform-origin:0 0;z-index:1;caret-color:CanvasText;--min-font-size:1;--text-scale-factor:calc(var(--total-scale-factor) * var(--min-font-size));--min-font-size-inv:calc(1 / var(--min-font-size))}
+      .pdf-text-layer :is(span,br){color:transparent;position:absolute;white-space:pre;cursor:text;transform-origin:0 0;-webkit-user-select:text;user-select:text}
+      .pdf-text-layer>:not(.markedContent),.pdf-text-layer .markedContent span:not(.markedContent){z-index:1;--font-height:0;font-size:calc(var(--text-scale-factor) * var(--font-height));--scale-x:1;--rotate:0deg;transform:rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv))}
+      .pdf-text-layer .markedContent{display:contents}
+      .pdf-text-layer span[role="img"]{cursor:default;-webkit-user-select:none;user-select:none}
+      .pdf-text-layer ::selection{background:color-mix(in srgb,AccentColor,transparent 50%);color:transparent}
+      .pdf-text-layer br::selection{background:transparent}
+      .pdf-search-marker{position:absolute;z-index:2;box-sizing:border-box;background:rgba(255,214,0,.52);pointer-events:none}
+      .pdf-search-marker.is-current{background:rgba(255,145,0,.68);outline:1px solid rgba(122,66,0,.72);outline-offset:-1px}
+      #pdf-search-panel{position:fixed;top:0;left:0;right:0;z-index:2147483647;box-sizing:border-box;display:grid;grid-template-columns:minmax(120px,1fr) repeat(2,var(--preview-editor-line-height)) 50px;align-items:center;gap:4px;width:100%;padding:6px 38px 6px 8px;border:1px solid var(--preview-ui-border);border-top:0;border-radius:0;background:var(--preview-ui-bg);color:var(--preview-ui-text);box-shadow:0 4px 12px rgba(0,0,0,.15);font-family:var(--preview-editor-font)}
+      #pdf-search-panel[hidden]{display:none}
+      .pdf-search-input-shell{position:relative;display:block;min-width:120px}
+      #pdf-search-input{--editor-input-horizontal-inset:10px;box-sizing:border-box;width:100%;min-width:120px;height:calc(var(--preview-editor-line-height) + 10px);min-height:calc(var(--preview-editor-line-height) + 10px);padding:4px var(--editor-input-horizontal-inset);border:1px solid var(--preview-ui-border);border-radius:3px;background:var(--preview-ui-bg);color:var(--preview-ui-text);font:var(--preview-editor-font-size)/var(--preview-editor-line-height) var(--preview-editor-font);caret-color:transparent;outline:none}
+      #pdf-search-input:focus{border-color:var(--preview-ui-accent)}
+      .pdf-search-caret-measure{position:absolute;visibility:hidden;pointer-events:none;white-space:pre;font:var(--preview-editor-font-size)/var(--preview-editor-line-height) var(--preview-editor-font)}
+      .pdf-search-editor-caret{position:absolute;top:50%;display:none;height:var(--preview-editor-line-height);border-left:2px solid var(--preview-editor-cursor);box-sizing:border-box;transform:translateY(-50%);filter:drop-shadow(0 0 2px var(--preview-editor-cursor-shadow)) drop-shadow(0 0 5px var(--preview-editor-cursor-glow));pointer-events:none;z-index:2}
+      .pdf-search-input-shell:focus-within .pdf-search-editor-caret{display:block;animation:pdf-search-caret-pulse 1.05s steps(1) infinite}
+      .pdf-search-input-shell.is-caret-active .pdf-search-editor-caret{animation:none;opacity:1}
+      @keyframes pdf-search-caret-pulse{0%,45%{opacity:1}46%,100%{opacity:0}}
+      #pdf-search-count{min-width:34px;margin-left:2px;text-align:center;white-space:nowrap;color:var(--preview-ui-header);font:11px var(--preview-editor-font)}
+      .pdf-search-button{display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;width:var(--preview-editor-line-height);height:var(--preview-editor-line-height);min-width:var(--preview-editor-line-height);padding:0;border:1px solid transparent;border-radius:3px;background:transparent;color:var(--preview-ui-header);cursor:pointer}
+      .pdf-search-button svg{display:block;width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;pointer-events:none}
+      .pdf-search-button:hover{background:var(--preview-ui-hover)}
+      .pdf-search-button:focus-visible{border-color:var(--preview-ui-accent);outline:1px solid var(--preview-ui-accent);outline-offset:1px}
+      #pdf-search-close{position:absolute;top:6px;right:7px;width:24px;height:24px;min-width:24px;border:0;opacity:.7}
+      #pdf-search-close:hover{opacity:1;background:var(--preview-ui-hover)}
       :root[data-preview-color-mode="dark"]{--preview-surface-bg:#17191c}
       :root[data-preview-color-mode="dark"] .pdf-page-container{background:#191b1f;box-shadow:0 2px 12px rgba(0,0,0,.55)}
       :root[data-preview-color-mode="dark"] .pdf-page-canvas-original{display:none}
@@ -793,7 +848,7 @@ export class PreviewFrame {
       :root[data-preview-color-mode="inverted"] .pdf-page-canvas-original{filter:invert(1)}
       .forward-sync-ripple{position:fixed;z-index:2147483647;box-sizing:border-box;width:18px;height:18px;margin:-9px 0 0 -9px;border:2px solid ${TYPSASTRA_GREEN};border-radius:999px;background:${TYPSASTRA_GREEN_RIPPLE_FILL};box-shadow:0 0 0 0 ${TYPSASTRA_GREEN_RIPPLE_SHADOW};pointer-events:none;animation:typsastra-forward-ripple 900ms ease-out forwards}
       @keyframes typsastra-forward-ripple{0%{opacity:0;transform:scale(.55);box-shadow:0 0 0 0 rgba(61,180,137,.38)}12%{opacity:1}100%{opacity:0;transform:scale(3.1);box-shadow:0 0 0 14px rgba(61,180,137,0)}}
-      .annotation-link{position:absolute;display:block;box-sizing:border-box;cursor:default;text-decoration:none}
+      .annotation-link{position:absolute;z-index:2;display:block;box-sizing:border-box;cursor:default;text-decoration:none}
       .preview-link-modifier .annotation-link.internal-reference{cursor:pointer;background:color-mix(in srgb,var(--preview-ui-accent) 15%,transparent);box-shadow:inset 3px 0 color-mix(in srgb,var(--preview-ui-accent) 88%,var(--preview-ui-header))}
       .preview-link-modifier .annotation-link.external-link{cursor:pointer;outline:2px dashed color-mix(in srgb,var(--preview-ui-accent) 78%,var(--preview-ui-header));outline-offset:-2px;background:color-mix(in srgb,var(--preview-ui-accent) 34%,transparent)}
       .preview-link-modifier .annotation-link.internal-reference:hover{outline:2px solid color-mix(in srgb,var(--preview-ui-accent) 88%,var(--preview-ui-header));outline-offset:-2px;background:color-mix(in srgb,var(--preview-ui-accent) 34%,transparent)}
@@ -809,7 +864,7 @@ export class PreviewFrame {
       #preview-go-first:hover,#preview-go-first:focus-visible{border-color:var(--preview-ui-accent);color:var(--preview-ui-accent);outline:2px solid color-mix(in srgb,var(--preview-ui-accent) 35%,transparent);outline-offset:2px}
       @media (prefers-reduced-motion:reduce){#preview-go-first{transition:none}}
       ::selection{background:rgba(0,120,215,.35)}
-    </style></head><body><div id="viewer-container"></div><button id="preview-go-first" type="button" title="Go to first page" aria-label="Go to first page" aria-hidden="true" tabindex="-1"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20V4M5.5 10.5 12 4l6.5 6.5"/></svg></button></body></html>`;
+    </style></head><body><div id="viewer-container"></div><div id="pdf-search-panel" role="search" hidden><span class="pdf-search-input-shell"><input id="pdf-search-input" type="text" autocomplete="off" spellcheck="false" aria-label="Find in PDF" placeholder="Find"><span class="pdf-search-caret-measure" aria-hidden="true"></span><span class="pdf-search-editor-caret" aria-hidden="true"></span></span><button id="pdf-search-next" class="pdf-search-button" type="button" title="Next match" aria-label="Next match"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M19 12l-7 7-7-7"/></svg></button><button id="pdf-search-previous" class="pdf-search-button" type="button" title="Previous match" aria-label="Previous match"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button><span id="pdf-search-count" aria-live="polite">0/0</span><button id="pdf-search-close" class="pdf-search-button" type="button" title="Close search" aria-label="Close search"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div><button id="preview-go-first" type="button" title="Go to first page" aria-label="Go to first page" aria-hidden="true" tabindex="-1"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20V4M5.5 10.5 12 4l6.5 6.5"/></svg></button></body></html>`;
     iframe.addEventListener("load", () => this.setupIframeInteractions());
     const loaded = new Promise<void>(resolve => iframe.addEventListener("load", () => resolve(), { once: true }));
     this.pane.appendChild(iframe);
@@ -1195,7 +1250,9 @@ export class PreviewFrame {
         detail: { pageNo, linkCount: annotationLinks.length }
       });
 
-      this.commitFinalCanvas(slot, canvas, annotationLinks);
+      const textLayer = await this.renderStandaloneTextLayer(page, cssViewport, doc);
+      if (!this.renderIsCurrent(pageNo, active, slot)) return;
+      this.commitFinalCanvas(slot, canvas, textLayer ? [textLayer, ...annotationLinks] : annotationLinks);
       if (this.previewColorMode === "dark") this.installDarkCanvas(slot, canvas);
       slot.dataset.renderKey = renderKey;
       if (this.motion.current().state !== "moving") {
@@ -1277,6 +1334,59 @@ export class PreviewFrame {
     }
   }
 
+  private async renderStandaloneTextLayer(
+    page: any,
+    viewport: any,
+    doc: Document,
+  ): Promise<HTMLElement | null> {
+    if (doc.documentElement.dataset.previewSurface !== "pdf") return null;
+    if (typeof page?.streamTextContent !== "function") return null;
+
+    try {
+      const pdfjs = await this.pdfJs();
+      const container = doc.createElement("div");
+      container.className = "pdf-text-layer";
+      container.setAttribute("role", "document");
+      container.setAttribute("aria-label", `Selectable text for PDF page ${page.pageNumber ?? ""}`.trim());
+      // PDF.js expresses text positions as percentages but derives glyph size
+      // and layer dimensions from this scale variable. Its stock viewer sets
+      // the variable on every `.page`; our custom virtualized viewer must do
+      // the equivalent explicitly or Chromium lays out transparent text at
+      // an unscaled default size. That makes selection escape the page and
+      // causes browser Find to paint oversized replacement text.
+      const viewportScale = Number(viewport?.scale);
+      container.style.setProperty(
+        "--total-scale-factor",
+        String(Number.isFinite(viewportScale) && viewportScale > 0 ? viewportScale : 1),
+      );
+      container.style.setProperty("--scale-round-x", "1px");
+      container.style.setProperty("--scale-round-y", "1px");
+      const textContentSource = page.streamTextContent({
+        disableNormalization: true,
+        preserveLogicalText: true,
+      } as any);
+      const textLayer = new pdfjs.TextLayer({
+        textContentSource,
+        container,
+        viewport,
+      });
+      await textLayer.render();
+      const pageNo = Number(page?.pageNumber ?? 0);
+      if (pageNo > 0) {
+        this.standalonePdfTextLayers.set(pageNo, {
+          container,
+          textDivs: [...textLayer.textDivs] as HTMLElement[],
+          textItems: [...textLayer.textContentItemsStr],
+        });
+        this.renderStandalonePdfSearchMarkers(pageNo);
+      }
+      return container;
+    } catch (error) {
+      console.warn(`Failed to render selectable PDF text for page ${page?.pageNumber ?? "unknown"}:`, error);
+      return null;
+    }
+  }
+
   private renderIsCurrent(pageNo: number, active: ActivePageRender, slot: HTMLElement): boolean {
     return active.generation === this.pdfGeneration
       && active.renderKey === this.currentPageRenderKey(active.generation)
@@ -1289,14 +1399,14 @@ export class PreviewFrame {
     return `${generation}:${this.previewZoomPercent}:${outputScale}`;
   }
 
-  private commitFinalCanvas(slot: HTMLElement, canvas: HTMLCanvasElement, annotations: HTMLElement[] = []): void {
+  private commitFinalCanvas(slot: HTMLElement, canvas: HTMLCanvasElement, overlays: HTMLElement[] = []): void {
     for (const child of [...slot.children]) {
       if (child === canvas) continue;
       releaseCanvasResources(child);
       child.remove();
     }
     if (!canvas.isConnected) slot.append(canvas);
-    for (const annotation of annotations) slot.append(annotation);
+    for (const overlay of overlays) slot.append(overlay);
   }
 
   private releaseFinalPage(pageNo: number): void {
@@ -1310,6 +1420,7 @@ export class PreviewFrame {
     const slot = this.iframe?.contentDocument
       ?.querySelector<HTMLElement>(`.pdf-page-container[data-page-no="${pageNo}"]`)
     if (!slot) return;
+    this.standalonePdfTextLayers.delete(pageNo);
     for (const child of [...slot.children]) {
       releaseCanvasResources(child);
       child.remove();
@@ -1368,6 +1479,7 @@ export class PreviewFrame {
   }
 
   private async disposePdfDocument(): Promise<void> {
+    this.resetStandalonePdfSearch();
     this.observer?.disconnect();
     this.observer = null;
     this.cancelAllPageRenders();
@@ -1383,6 +1495,17 @@ export class PreviewFrame {
     }
     this.pageDimensions.clear();
     this.pageSlots = [];
+  }
+
+  private resetStandalonePdfSearch(): void {
+    this.standalonePdfSearchGeneration += 1;
+    if (this.standalonePdfSearchTimer !== null) {
+      window.clearTimeout(this.standalonePdfSearchTimer);
+      this.standalonePdfSearchTimer = null;
+    }
+    this.standalonePdfTextLayers.clear();
+    this.standalonePdfSearchMatches = [];
+    this.standalonePdfSearchIndex = -1;
   }
 
   public scrollToPage(pageNo: number): void {
@@ -1561,6 +1684,245 @@ export class PreviewFrame {
     });
   }
 
+  private isStandalonePdfSurface(): boolean {
+    return this.iframe?.contentDocument?.documentElement.dataset.previewSurface === "pdf";
+  }
+
+  private shouldOpenStandalonePdfSearch(event: KeyboardEvent): boolean {
+    if (!this.isFindShortcut(event)) return false;
+    return this.isStandalonePdfSurface()
+      && (this.previewPointerInside || document.activeElement === this.iframe);
+  }
+
+  private isFindShortcut(event: KeyboardEvent): boolean {
+    return event.key.toLowerCase() === "f"
+      && (event.ctrlKey || event.metaKey)
+      && !event.altKey
+      && !event.shiftKey;
+  }
+
+  private handlePreviewFindShortcut(event: KeyboardEvent): boolean {
+    if (!this.isFindShortcut(event)) return false;
+    const ownsShortcut = this.previewPointerInside
+      || document.activeElement === this.iframe
+      || event.currentTarget === this.iframe?.contentDocument;
+    if (!ownsShortcut) return false;
+    event.preventDefault();
+    event.stopPropagation();
+    if (this.shouldOpenStandalonePdfSearch(event)) this.openStandalonePdfSearch();
+    else this.onEditorSearchRequest?.();
+    return true;
+  }
+
+  private openStandalonePdfSearch(): void {
+    const doc = this.iframe?.contentDocument;
+    if (!doc || !this.isStandalonePdfSurface()) return;
+    const panel = doc.getElementById("pdf-search-panel") as HTMLElement | null;
+    const input = doc.getElementById("pdf-search-input") as HTMLInputElement | null;
+    if (!panel || !input) return;
+    panel.hidden = false;
+    input.focus();
+    input.select();
+  }
+
+  private closeStandalonePdfSearch(): void {
+    const doc = this.iframe?.contentDocument;
+    const panel = doc?.getElementById("pdf-search-panel") as HTMLElement | null;
+    if (panel) panel.hidden = true;
+    this.standalonePdfSearchGeneration += 1;
+    this.standalonePdfSearchMatches = [];
+    this.standalonePdfSearchIndex = -1;
+    this.clearStandalonePdfSearchMarkers();
+    this.updateStandalonePdfSearchCount();
+    this.iframe?.contentWindow?.focus();
+  }
+
+  private scheduleStandalonePdfSearch(query: string): void {
+    if (this.standalonePdfSearchTimer !== null) window.clearTimeout(this.standalonePdfSearchTimer);
+    this.standalonePdfSearchTimer = window.setTimeout(() => {
+      this.standalonePdfSearchTimer = null;
+      void this.searchStandalonePdf(query);
+    }, 90);
+  }
+
+  private async searchStandalonePdf(rawQuery: string): Promise<void> {
+    const query = rawQuery.trim().toLocaleLowerCase();
+    const generation = ++this.standalonePdfSearchGeneration;
+    this.standalonePdfSearchMatches = [];
+    this.standalonePdfSearchIndex = -1;
+    this.clearStandalonePdfSearchMarkers();
+    this.updateStandalonePdfSearchCount(query ? "Searching…" : undefined);
+    if (!query || !this.pdfDoc || !this.isStandalonePdfSurface()) return;
+
+    const matches: StandalonePdfSearchMatch[] = [];
+    for (let pageNo = 1; pageNo <= Number(this.pdfDoc.numPages); pageNo += 1) {
+      if (generation !== this.standalonePdfSearchGeneration) return;
+      try {
+        const page = await this.pdfDoc.getPage(pageNo);
+        const textContent = await page.getTextContent({
+          disableNormalization: true,
+          preserveLogicalText: true,
+        } as any);
+        const items = Array.isArray(textContent?.items) ? textContent.items : [];
+        let textItemIndex = 0;
+        for (let itemIndex = 0; itemIndex < items.length; itemIndex += 1) {
+          if (typeof items[itemIndex]?.str !== "string") continue;
+          const text = items[itemIndex].str;
+          const comparable = text.toLocaleLowerCase();
+          let from = comparable.indexOf(query);
+          while (from >= 0) {
+            matches.push({ pageNo, itemIndex: textItemIndex, from, to: from + query.length });
+            from = comparable.indexOf(query, from + Math.max(1, query.length));
+          }
+          textItemIndex += 1;
+        }
+      } catch (error) {
+        console.warn(`Failed to search standalone PDF page ${pageNo}:`, error);
+      }
+    }
+    if (generation !== this.standalonePdfSearchGeneration) return;
+    this.standalonePdfSearchMatches = matches;
+    this.standalonePdfSearchIndex = matches.length > 0 ? 0 : -1;
+    this.renderAllStandalonePdfSearchMarkers();
+    this.updateStandalonePdfSearchCount();
+    if (matches.length > 0) this.revealStandalonePdfSearchMatch();
+  }
+
+  private stepStandalonePdfSearch(direction: -1 | 1): void {
+    const count = this.standalonePdfSearchMatches.length;
+    if (count < 1) return;
+    this.standalonePdfSearchIndex = (this.standalonePdfSearchIndex + direction + count) % count;
+    this.renderAllStandalonePdfSearchMarkers();
+    this.updateStandalonePdfSearchCount();
+    this.revealStandalonePdfSearchMatch();
+  }
+
+  private revealStandalonePdfSearchMatch(): void {
+    const match = this.standalonePdfSearchMatches[this.standalonePdfSearchIndex];
+    if (!match) return;
+    const slot = this.iframe?.contentDocument
+      ?.querySelector<HTMLElement>(`.pdf-page-container[data-page-no="${match.pageNo}"]`);
+    if (!slot) return;
+    this.jumpToPreviewOffset(slot.offsetTop, match.pageNo);
+    this.queuePageRender(match.pageNo, 0, "settled-visible");
+    const reveal = () => {
+      const marker = slot.querySelector<HTMLElement>(
+        `.pdf-search-marker[data-match-index="${this.standalonePdfSearchIndex}"]`,
+      );
+      marker?.scrollIntoView({ block: "center", inline: "nearest", behavior: "auto" });
+    };
+    requestAnimationFrame(() => requestAnimationFrame(reveal));
+  }
+
+  private updateStandalonePdfSearchCount(message?: string): void {
+    const count = this.iframe?.contentDocument?.getElementById("pdf-search-count");
+    if (!count) return;
+    count.textContent = message ?? (
+      this.standalonePdfSearchMatches.length > 0
+        ? `${this.standalonePdfSearchIndex + 1}/${this.standalonePdfSearchMatches.length}`
+        : "0/0"
+    );
+  }
+
+  private clearStandalonePdfSearchMarkers(): void {
+    this.iframe?.contentDocument
+      ?.querySelectorAll(".pdf-search-marker")
+      .forEach(marker => marker.remove());
+  }
+
+  private renderAllStandalonePdfSearchMarkers(): void {
+    this.clearStandalonePdfSearchMarkers();
+    for (const pageNo of this.standalonePdfTextLayers.keys()) {
+      this.renderStandalonePdfSearchMarkers(pageNo);
+    }
+  }
+
+  private renderStandalonePdfSearchMarkers(pageNo: number): void {
+    const layer = this.standalonePdfTextLayers.get(pageNo);
+    const slot = layer?.container.closest<HTMLElement>(".pdf-page-container");
+    if (!layer || !slot) return;
+    slot.querySelectorAll(".pdf-search-marker").forEach(marker => marker.remove());
+    const slotRect = slot.getBoundingClientRect();
+
+    for (let matchIndex = 0; matchIndex < this.standalonePdfSearchMatches.length; matchIndex += 1) {
+      const match = this.standalonePdfSearchMatches[matchIndex];
+      if (match.pageNo !== pageNo) continue;
+      const textDiv = layer.textDivs[match.itemIndex];
+      const textNode = textDiv?.firstChild;
+      if (!textNode || textNode.nodeType !== Node.TEXT_NODE) continue;
+      const textLength = textNode.textContent?.length ?? 0;
+      if (match.from >= textLength) continue;
+      const range = this.iframe?.contentDocument?.createRange();
+      if (!range) continue;
+      range.setStart(textNode, match.from);
+      range.setEnd(textNode, Math.min(match.to, textLength));
+      for (const rect of range.getClientRects()) {
+        const marker = slot.ownerDocument.createElement("span");
+        marker.className = `pdf-search-marker${matchIndex === this.standalonePdfSearchIndex ? " is-current" : ""}`;
+        marker.dataset.matchIndex = String(matchIndex);
+        marker.style.left = `${Math.max(0, rect.left - slotRect.left)}px`;
+        marker.style.top = `${Math.max(0, rect.top - slotRect.top)}px`;
+        marker.style.width = `${Math.min(rect.width, slotRect.right - rect.left)}px`;
+        marker.style.height = `${Math.min(rect.height, slotRect.bottom - rect.top)}px`;
+        slot.append(marker);
+      }
+    }
+  }
+
+  private installStandalonePdfSearchCaret(field: HTMLInputElement): void {
+    const view = this.iframe?.contentWindow;
+    const shell = field.closest<HTMLElement>(".pdf-search-input-shell");
+    const measure = shell?.querySelector<HTMLElement>(".pdf-search-caret-measure");
+    const caret = shell?.querySelector<HTMLElement>(".pdf-search-editor-caret");
+    if (!view || !shell || !measure || !caret || shell.dataset.caretInstalled === "true") return;
+    shell.dataset.caretInstalled = "true";
+    let frame: number | null = null;
+    let activeTimer: number | null = null;
+    const update = () => {
+      frame = null;
+      const start = field.selectionStart ?? 0;
+      const end = field.selectionEnd ?? start;
+      caret.style.visibility = start === end ? "visible" : "hidden";
+      measure.textContent = field.value.slice(0, start) || "\u200b";
+      const width = start === 0 ? 0 : measure.getBoundingClientRect().width;
+      caret.style.left = `calc(var(--editor-input-horizontal-inset, 10px) + ${width - field.scrollLeft}px)`;
+    };
+    const schedule = () => {
+      if (frame !== null) return;
+      frame = view.requestAnimationFrame(update);
+    };
+    const keepSteady = () => {
+      shell.classList.add("is-caret-active");
+      if (activeTimer !== null) view.clearTimeout(activeTimer);
+      activeTimer = view.setTimeout(() => {
+        activeTimer = null;
+        shell.classList.remove("is-caret-active");
+      }, 500);
+    };
+    for (const name of ["focus", "input", "click", "keyup", "select", "scroll"]) {
+      field.addEventListener(name, schedule);
+    }
+    field.addEventListener("keydown", event => {
+      if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"].includes(event.key)) return;
+      keepSteady();
+      schedule();
+    });
+    field.addEventListener("beforeinput", () => {
+      keepSteady();
+      schedule();
+    });
+    field.addEventListener("pointerdown", () => {
+      keepSteady();
+      schedule();
+    });
+    field.addEventListener("blur", () => {
+      if (activeTimer !== null) view.clearTimeout(activeTimer);
+      activeTimer = null;
+      shell.classList.remove("is-caret-active");
+    });
+    update();
+  }
+
   private setupIframeInteractions(): void {
     const doc = this.iframe?.contentDocument;
     if (!doc) {
@@ -1572,6 +1934,26 @@ export class PreviewFrame {
     doc.documentElement.dataset.typsastraInteractions = "true";
     this.motion.reset(this.iframe?.contentWindow?.scrollY ?? 0, performance.now());
     const goToFirstPageButton = doc.getElementById("preview-go-first") as HTMLButtonElement | null;
+    const pdfSearchInput = doc.getElementById("pdf-search-input") as HTMLInputElement | null;
+    const pdfSearchPrevious = doc.getElementById("pdf-search-previous") as HTMLButtonElement | null;
+    const pdfSearchNext = doc.getElementById("pdf-search-next") as HTMLButtonElement | null;
+    const pdfSearchClose = doc.getElementById("pdf-search-close") as HTMLButtonElement | null;
+    if (pdfSearchInput) this.installStandalonePdfSearchCaret(pdfSearchInput);
+    pdfSearchInput?.addEventListener("input", () => {
+      this.scheduleStandalonePdfSearch(pdfSearchInput.value);
+    });
+    pdfSearchInput?.addEventListener("keydown", event => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        this.stepStandalonePdfSearch(event.shiftKey ? -1 : 1);
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        this.closeStandalonePdfSearch();
+      }
+    });
+    pdfSearchPrevious?.addEventListener("click", () => this.stepStandalonePdfSearch(-1));
+    pdfSearchNext?.addEventListener("click", () => this.stepStandalonePdfSearch(1));
+    pdfSearchClose?.addEventListener("click", () => this.closeStandalonePdfSearch());
     goToFirstPageButton?.addEventListener("click", event => {
       event.preventDefault();
       event.stopPropagation();
@@ -1629,6 +2011,7 @@ export class PreviewFrame {
       this.hideDraftImagePopover();
     });
     doc.addEventListener("keydown", event => {
+      if (this.handlePreviewFindShortcut(event)) return;
       this.previewLinkModifierHeld = previewLinkModifierAfterKeyboardEvent(event, "keydown");
       this.setPreviewLinkModifier(doc, this.previewPointerInside && this.previewLinkModifierHeld);
     });
@@ -1658,6 +2041,10 @@ export class PreviewFrame {
           return;
         }
       }
+      // Standalone PDF pages use the pointer for native text selection. They
+      // have no source document to inverse-sync to, so do not turn ordinary
+      // selection clicks into preview navigation requests.
+      if (doc.documentElement.dataset.previewSurface === "pdf") return;
       const slot = target?.closest<HTMLElement>(".pdf-page-container");
       if (!slot) {
         this.debugInverse("Click ignored: no PDF page container at target.");

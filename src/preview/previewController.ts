@@ -23,6 +23,7 @@ export interface PreviewControllerPort {
     stage: string,
     detail: Record<string, number | string | boolean>,
   ): void | Promise<void>;
+  openEditorSearch(): void;
   resolveMarkdownImage(documentPath: string, source: string): Promise<MarkdownResource | null>;
   openMarkdownLink(documentPath: string, href: string): Promise<void>;
 }
@@ -43,6 +44,7 @@ export class PreviewController {
       id => port.loadDraftImage(id),
       scrollTop => port.onScrollPositionChanged(scrollTop),
       (stage, detail) => port.onLoadStage(stage, detail),
+      () => port.openEditorSearch(),
     );
     this.markdown = new MarkdownPreviewFrame(pane, {
       resolveImage: (documentPath, source) => port.resolveMarkdownImage(documentPath, source),

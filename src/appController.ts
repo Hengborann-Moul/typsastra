@@ -8,6 +8,7 @@ import { EditorView, highlightActiveLine, highlightActiveLineGutter, lineNumbers
 import { undo, redo, undoDepth } from "@codemirror/commands";
 import { indentUnit } from "@codemirror/language";
 import { closeBrackets } from "@codemirror/autocomplete";
+import { openSearchPanel } from "@codemirror/search";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { themeCompartment, getThemeExtension, wrapCompartment, lineNumbersCompartment, activeLineCompartment, closeBracketsCompartment, indentationGuidesCompartment, tabSizeCompartment, completionCompartment, showZwsCompartment, showZeroWidthSpaces, visibleIndentationMarkers } from "./editor/extensions";
 import { typstLanguage } from "./editor/typstLanguage";
@@ -717,6 +718,10 @@ export class TypsastraWorkspaceController {
       // is already represented by the main window's diagnostics.
       if (this.previewWindowController.isPreviewOnlyWindow()) return;
       return this.performanceController.logMemoryDiagnostics(`PDF ${stage}`, detail);
+    },
+    openEditorSearch: () => {
+      openSearchPanel(this.editorInstance);
+      this.editorInstance.focus();
     },
     resolveMarkdownImage: (documentPath, source) => this.resolveMarkdownImage(documentPath, source),
     openMarkdownLink: (documentPath, href) => this.openMarkdownLink(documentPath, href),
