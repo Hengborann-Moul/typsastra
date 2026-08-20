@@ -1326,6 +1326,13 @@ export class PreviewFrame {
       const textLayer = await this.renderStandaloneTextLayer(page, cssViewport, doc);
       if (!this.renderIsCurrent(pageNo, active, slot)) return;
       this.commitFinalCanvas(slot, canvas, textLayer ? [textLayer, ...annotationLinks] : annotationLinks);
+      // Search and selection markers are children of the page slot rather
+      // than the text layer. Build them only after committing the final
+      // overlays, since commitFinalCanvas removes the previous slot children.
+      // Rendering them inside renderStandaloneTextLayer made markers on a
+      // newly virtualized search-result page disappear immediately.
+      this.renderStandalonePdfSearchMarkers(pageNo);
+      this.renderStandalonePdfSelectionMarkers(pageNo);
       if (this.previewColorMode === "dark") this.installDarkCanvas(slot, canvas);
       slot.dataset.renderKey = renderKey;
       if (this.motion.current().state !== "moving") {
@@ -1464,8 +1471,6 @@ export class PreviewFrame {
               : null,
           })),
         });
-        this.renderStandalonePdfSearchMarkers(pageNo);
-        this.renderStandalonePdfSelectionMarkers(pageNo);
       }
       return container;
     } catch (error) {
@@ -1547,8 +1552,6 @@ export class PreviewFrame {
       const pageNo = Number(page?.pageNumber ?? 0);
       if (pageNo > 0) {
         this.standalonePdfTextLayers.set(pageNo, { container, textDivs, textItems });
-        this.renderStandalonePdfSearchMarkers(pageNo);
-        this.renderStandalonePdfSelectionMarkers(pageNo);
       }
       return container;
     } catch (error) {

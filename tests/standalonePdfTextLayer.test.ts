@@ -57,6 +57,18 @@ test("standalone PDF search uses geometry-only highlights instead of browser Fin
   expect(frameSource).not.toContain('marker?.scrollIntoView({ block: "center"');
 });
 
+test("virtualized standalone PDF pages restore search markers after committing overlays", () => {
+  const overlayCommit = frameSource.indexOf(
+    "this.commitFinalCanvas(slot, canvas, textLayer ? [textLayer, ...annotationLinks] : annotationLinks);",
+  );
+  const markerRender = frameSource.indexOf(
+    "this.renderStandalonePdfSearchMarkers(pageNo);",
+    overlayCommit,
+  );
+  expect(overlayCommit).toBeGreaterThan(-1);
+  expect(markerRender).toBeGreaterThan(overlayCommit);
+});
+
 test("standalone PDF copy serializes logical text items instead of positioned DOM text", () => {
   expect(frameSource).toContain('doc.addEventListener("copy"');
   expect(frameSource).toContain("this.standalonePdfSelectionText()");
