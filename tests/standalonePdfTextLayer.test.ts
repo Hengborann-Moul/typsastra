@@ -25,6 +25,8 @@ test("standalone text selection does not trigger source inverse sync", () => {
 
 test("standalone PDF search uses geometry-only highlights instead of browser Find", () => {
   expect(frameSource).toContain("shouldOpenStandalonePdfSearch(event)");
+  expect(frameSource).toContain('event.code === "KeyF"');
+  expect(frameSource).not.toContain('event.key.toLowerCase() === "f"');
   expect(frameSource).toContain("event.preventDefault()");
   expect(frameSource).toContain('id="pdf-search-panel"');
   expect(frameSource).toContain('marker.className = `pdf-search-marker');

@@ -1828,7 +1828,10 @@ export class PreviewFrame {
   }
 
   private isFindShortcut(event: KeyboardEvent): boolean {
-    return event.key.toLowerCase() === "f"
+    // `key` is the character produced by the active keyboard layout. Use the
+    // physical key code so Ctrl/Cmd+F remains ours under Khmer and other
+    // non-Latin layouts instead of falling through to WebView's native Find.
+    return event.code === "KeyF"
       && (event.ctrlKey || event.metaKey)
       && !event.altKey
       && !event.shiftKey;
