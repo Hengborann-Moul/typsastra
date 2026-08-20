@@ -28,6 +28,8 @@ describe("application settings", () => {
     expect(settings.compatibility.disableWebkitDmabufRenderer).toBe(false);
     expect(settings.fonts.privateDirectories).toEqual([]);
     expect(settings.toolchain.tinymistVersion).toBeNull();
+    expect(settings.toolchain.enhancedUnicodeEngineEnabled).toBe(false);
+    expect(settings.toolchain.enhancedUnicodeEnginePath).toBeNull();
   });
 
   test("rejects unsupported enums and clamps numeric values", () => {
@@ -68,6 +70,30 @@ describe("application settings", () => {
 
   test("migrates the former Typst version selection", () => {
     expect(normalizeAppSettings({ toolchain: { typstVersion: "0.14.2" } }).toolchain.tinymistVersion).toBe("0.14.2");
+  });
+
+  test("keeps a validated local enhanced Unicode engine selection", () => {
+    const settings = normalizeAppSettings({
+      toolchain: {
+        enhancedUnicodeEngineEnabled: true,
+        enhancedUnicodeEnginePath: " C:\\Tools\\typst-unicode.exe ",
+      },
+    });
+
+    expect(settings.toolchain.enhancedUnicodeEngineEnabled).toBe(true);
+    expect(settings.toolchain.enhancedUnicodeEnginePath).toBe("C:\\Tools\\typst-unicode.exe");
+  });
+
+  test("rejects unsafe enhanced Unicode engine paths", () => {
+    const settings = normalizeAppSettings({
+      toolchain: {
+        enhancedUnicodeEngineEnabled: true,
+        enhancedUnicodeEnginePath: "C:\\Tools\\typst.exe\n--help",
+      },
+    });
+
+    expect(settings.toolchain.enhancedUnicodeEngineEnabled).toBe(false);
+    expect(settings.toolchain.enhancedUnicodeEnginePath).toBeNull();
   });
 
   test("clamps the auto-save interval", () => {

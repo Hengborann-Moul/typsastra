@@ -1,6 +1,6 @@
 # Enhanced Unicode Engine validation
 
-Typsastra's Enhanced Unicode Engine is experimental. Before it can become an optional developer toolchain, its PDF output must be tested independently for:
+Typsastra's Enhanced Unicode Engine is experimental. Its PDF output must be tested independently for:
 
 1. logical Unicode extraction,
 2. copy and paste,
@@ -79,6 +79,29 @@ For each case, the harness records:
 
 The PDF.js check uses Typsastra's pinned `pdfjs-dist` patch with `preserveLogicalText`. It tests the logical-text items used by standalone PDF selection, search, and Typsastra's custom clipboard serialization.
 
+## Use a local engine in Typsastra
+
+Developer mode can use a locally built enhanced `typst` executable for an
+explicit **Export PDF** operation:
+
+1. Build the enhanced Typst fork for the current platform.
+2. Open **Settings > Developer** and enable **Developer mode**.
+3. Under **Enhanced Unicode PDF engine**, choose the local executable.
+4. Leave **Use for PDF export** enabled and export the document normally.
+
+Typsastra validates that the selected file is an executable compatible with
+`typst --version` each time it is selected and again before export. The setting
+stores only its absolute local path. Typsastra does not download, update, or
+redistribute the fork.
+
+This integration intentionally has a narrow boundary:
+
+- live preview still uses the selected Tinymist toolchain,
+- LSP, autocomplete, forward sync, and inverse sync still use Tinymist,
+- disabling Developer mode restores the normal Tinymist export path, and
+- an invalid or missing enhanced executable stops export with an explicit
+  error instead of silently producing a normal PDF.
+
 The automated geometry result only verifies that PDF.js produces finite rectangles contained by the page. It does not prove that those rectangles align accurately with every painted complex-script glyph. Viewer selection alignment remains part of the manual compatibility matrix.
 
 In this mode, enhanced PDFs preserve authored space glyphs and PDF.js does not
@@ -139,9 +162,11 @@ For every viewer, manually record:
 
 This matrix describes viewer compatibility; a viewer failure does not by itself prove that the exported PDF is invalid. A regression shared by multiple independent viewers is stronger evidence of an export defect.
 
-## Current gate
+## Distribution gate
 
-Do not offer the enhanced compiler in Typsastra's developer settings until:
+The local developer integration is intended for engine development and viewer
+validation. Do not bundle, advertise, or automatically install the enhanced
+compiler in a Typsastra release until:
 
 - strict automated validation passes for the supported scripts,
 - the fork is built reproducibly on every supported platform,

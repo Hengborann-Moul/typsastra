@@ -3586,11 +3586,68 @@ fn parse_short_typst_diagnostic(line: &str) -> Option<TypstCheckDiagnostic> {
     })
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TypstCompilerInspection {
+    path: String,
+    version: String,
+}
+
+fn parse_typst_compiler_version(stdout: &[u8], stderr: &[u8]) -> Option<String> {
+    let stdout = String::from_utf8_lossy(stdout);
+    let stderr = String::from_utf8_lossy(stderr);
+    stdout
+        .lines()
+        .chain(stderr.lines())
+        .map(str::trim)
+        .find(|line| line.to_ascii_lowercase().starts_with("typst "))
+        .map(str::to_string)
+}
+
+fn inspect_typst_compiler_path(path: &str) -> Result<(PathBuf, String), String> {
+    let requested = Path::new(path);
+    if !requested.is_absolute() {
+        return Err("The Enhanced Unicode engine must use an absolute executable path.".into());
+    }
+    let executable = dunce::canonicalize(requested)
+        .map_err(|error| format!("Could not resolve the selected Typst executable: {error}"))?;
+    if !executable.is_file() {
+        return Err("The selected Enhanced Unicode engine is not a file.".into());
+    }
+
+    let mut command = std::process::Command::new(&executable);
+    command.arg("--version");
+    #[cfg(windows)]
+    command.creation_flags(CREATE_NO_WINDOW);
+    let output = command
+        .output()
+        .map_err(|error| format!("Could not start the selected Typst executable: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "The selected executable rejected 'typst --version': {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let version = parse_typst_compiler_version(&output.stdout, &output.stderr)
+        .ok_or_else(|| "The selected executable is not a compatible Typst compiler.".to_string())?;
+    Ok((dunce::simplified(&executable).to_path_buf(), version))
+}
+
+#[tauri::command]
+async fn inspect_typst_compiler(path: String) -> Result<TypstCompilerInspection, String> {
+    let (path, version) = inspect_typst_compiler_path(&path)?;
+    Ok(TypstCompilerInspection {
+        path: path.to_string_lossy().to_string(),
+        version,
+    })
+}
+
 #[tauri::command]
 async fn compile_typst_document(
     app_handle: tauri::AppHandle,
     source_code: String,
     file_path: String,
+    compiler_path: Option<String>,
 ) -> Result<String, String> {
     use tauri::Manager;
     let path = std::path::Path::new(&file_path);
@@ -3612,8 +3669,16 @@ async fn compile_typst_document(
         .path()
         .app_local_data_dir()
         .map_err(|e| format!("Failed to get data dir: {}", e))?;
-    let tinymist_cmd = active_tinymist(&data_dir)
-        .ok_or_else(|| "No managed Tinymist toolchain is installed.".to_string())?;
+    let custom_compiler = compiler_path
+        .as_deref()
+        .map(inspect_typst_compiler_path)
+        .transpose()?;
+    let compiler_cmd = if let Some((path, _version)) = custom_compiler.as_ref() {
+        path.clone()
+    } else {
+        active_tinymist(&data_dir)
+            .ok_or_else(|| "No managed Tinymist toolchain is installed.".to_string())?
+    };
 
     let mut file = std::fs::OpenOptions::new()
         .write(true)
@@ -3623,7 +3688,7 @@ async fn compile_typst_document(
     std::io::Write::write_all(&mut file, source_code.as_bytes())
         .map_err(|e| format!("Buffer Flush Failure: {}", e))?;
 
-    let mut command = std::process::Command::new(&tinymist_cmd);
+    let mut command = std::process::Command::new(&compiler_cmd);
     command.current_dir(parent);
     apply_workspace_font_paths(&mut command, &app_handle, &data_dir, parent);
     #[cfg(windows)]
@@ -3632,7 +3697,7 @@ async fn compile_typst_document(
     command.arg("compile");
     // A previous interrupted export must never make a failed compile appear successful.
     let _ = std::fs::remove_file(&output_path);
-    let output =
+    let output_result =
         command
             .arg("--root")
             .arg(".")
@@ -3640,10 +3705,10 @@ async fn compile_typst_document(
                 "Failed to construct the temporary Typst export path.".to_string()
             })?)
             .arg(&output_path)
-            .output()
-            .map_err(|e| format!("Host binary execution blocked: {}", e))?;
+            .output();
 
     let _ = std::fs::remove_file(&input_path);
+    let output = output_result.map_err(|e| format!("Host binary execution blocked: {}", e))?;
 
     if !output.status.success() {
         let stderr_string = String::from_utf8_lossy(&output.stderr).to_string();
@@ -3669,7 +3734,7 @@ fn warning_only_pdf_result(output_path: &Path, stderr: &str) -> bool {
 
 #[cfg(test)]
 mod export_compile_tests {
-    use super::warning_only_pdf_result;
+    use super::{parse_typst_compiler_version, warning_only_pdf_result};
 
     #[test]
     fn accepts_only_warning_output_that_produced_a_fresh_pdf() {
@@ -3688,6 +3753,22 @@ mod export_compile_tests {
             &pdf,
             "warning: recovered output\nerror: compilation failed"
         ));
+    }
+
+    #[test]
+    fn recognizes_only_typst_version_output() {
+        assert_eq!(
+            parse_typst_compiler_version(b"typst 0.14.2\n", b""),
+            Some("typst 0.14.2".to_string())
+        );
+        assert_eq!(
+            parse_typst_compiler_version(b"", b"Typst 0.14.2 (enhanced)\n"),
+            Some("Typst 0.14.2 (enhanced)".to_string())
+        );
+        assert_eq!(
+            parse_typst_compiler_version(b"tinymist 0.15.2\n", b""),
+            None
+        );
     }
 }
 
@@ -5216,6 +5297,7 @@ pub fn run() {
             scan_webview_storage,
             load_workspace_metadata,
             save_workspace_metadata,
+            inspect_typst_compiler,
             compile_typst_document,
             check_typst_document,
             read_workspace_file,

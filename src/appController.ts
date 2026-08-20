@@ -1246,6 +1246,12 @@ export class TypsastraWorkspaceController {
     mapToOriginalPath: path => this.mapToOriginalPath(path),
     openTabs: () => this.openTabs,
     khmerRenderPreparationEnabled: () => this.settingsController.value.preview.khmerRenderPreparation,
+    enhancedUnicodeEnginePath: () => {
+      const settings = this.settingsController.value;
+      return settings.developerMode && settings.toolchain.enhancedUnicodeEngineEnabled
+        ? settings.toolchain.enhancedUnicodeEnginePath
+        : null;
+    },
     setLspStatus: status => this.setLspStatus(status),
   });
   private readonly documentPersistenceController = new DocumentPersistenceController({

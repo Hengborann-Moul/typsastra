@@ -66,6 +66,10 @@ type LinuxRendererCompatibility = {
   dmabufEnvironmentValue: string | null;
   dmabufAppliedByTypsastra: boolean;
 };
+type TypstCompilerInspection = {
+  path: string;
+  version: string;
+};
 export type SettingsTimingEntry = {
   source: string;
   label: string;
@@ -275,6 +279,9 @@ export class SettingsController {
       settings.compatibility.disableWebkitDmabufRenderer = (control as HTMLInputElement).checked;
     });
     onChange("settings-developer-mode", (settings, control) => { settings.developerMode = (control as HTMLInputElement).checked; });
+    onChange("settings-enhanced-unicode-engine", (settings, control) => {
+      settings.toolchain.enhancedUnicodeEngineEnabled = (control as HTMLInputElement).checked;
+    });
     onChange("settings-dev-log-preview", (settings, control) => { settings.developerLogs.preview = (control as HTMLInputElement).checked; });
     onChange("settings-dev-log-inverse-sync", (settings, control) => { settings.developerLogs.inverseSync = (control as HTMLInputElement).checked; });
     onChange("settings-dev-log-forward-sync", (settings, control) => { settings.developerLogs.forwardSync = (control as HTMLInputElement).checked; });
@@ -283,6 +290,15 @@ export class SettingsController {
     onChange("settings-dev-log-lsp", (settings, control) => { settings.developerLogs.lsp = (control as HTMLInputElement).checked; });
     onChange("settings-dev-log-spellcheck", (settings, control) => { settings.developerLogs.spellcheck = (control as HTMLInputElement).checked; });
     onChange("settings-dev-log-general", (settings, control) => { settings.developerLogs.general = (control as HTMLInputElement).checked; });
+    document.getElementById("settings-enhanced-unicode-choose")?.addEventListener("click", () => {
+      void this.chooseEnhancedUnicodeEngine();
+    });
+    document.getElementById("settings-enhanced-unicode-clear")?.addEventListener("click", () => {
+      this.update(settings => {
+        settings.toolchain.enhancedUnicodeEngineEnabled = false;
+        settings.toolchain.enhancedUnicodeEnginePath = null;
+      });
+    });
     document.getElementById("settings-add-language")?.addEventListener("click", () => {
       void this.toggleLanguageCatalog();
     });
@@ -602,6 +618,7 @@ export class SettingsController {
     setChecked("settings-khmer-prep", preview.khmerRenderPreparation);
     setChecked("settings-disable-webkit-dmabuf", this.settings.compatibility.disableWebkitDmabufRenderer);
     setChecked("settings-developer-mode", this.settings.developerMode);
+    setChecked("settings-enhanced-unicode-engine", this.settings.toolchain.enhancedUnicodeEngineEnabled);
     setChecked("settings-dev-log-preview", this.settings.developerLogs.preview);
     setChecked("settings-dev-log-inverse-sync", this.settings.developerLogs.inverseSync);
     setChecked("settings-dev-log-forward-sync", this.settings.developerLogs.forwardSync);
@@ -615,6 +632,7 @@ export class SettingsController {
     developerLogFilters?.querySelectorAll<HTMLInputElement>("input").forEach(control => {
       control.disabled = !this.settings.developerMode;
     });
+    this.populateEnhancedUnicodeEngine();
     this.populateTerminology();
     this.populateRendererCompatibility();
 
@@ -625,6 +643,66 @@ export class SettingsController {
     }
     const status = document.getElementById("settings-save-status");
     if (status && this.loadError) status.textContent = `Using defaults: ${this.loadError}`;
+  }
+
+  private populateEnhancedUnicodeEngine(): void {
+    const container = document.getElementById("settings-enhanced-unicode-engine-controls");
+    const toggle = document.getElementById("settings-enhanced-unicode-engine") as HTMLInputElement | null;
+    const choose = document.getElementById("settings-enhanced-unicode-choose") as HTMLButtonElement | null;
+    const clear = document.getElementById("settings-enhanced-unicode-clear") as HTMLButtonElement | null;
+    const path = document.getElementById("settings-enhanced-unicode-path");
+    const status = document.getElementById("settings-enhanced-unicode-status");
+    const configuredPath = this.settings.toolchain.enhancedUnicodeEnginePath;
+    const available = this.settings.developerMode;
+
+    container?.classList.toggle("disabled", !available);
+    if (toggle) {
+      toggle.disabled = !available || !configuredPath;
+      toggle.title = !available
+        ? "Enable Developer mode to configure the experimental export engine."
+        : configuredPath
+          ? "Use this compiler only for explicit PDF exports."
+          : "Choose a compatible Typst executable first.";
+    }
+    if (choose) choose.disabled = !available;
+    if (clear) clear.disabled = !available || !configuredPath;
+    if (path) {
+      path.textContent = configuredPath ?? "No local executable selected";
+      path.title = configuredPath ?? "";
+    }
+    if (status) {
+      status.textContent = configuredPath
+        ? this.settings.toolchain.enhancedUnicodeEngineEnabled
+          ? "Enabled for explicit PDF exports. Live preview and language services continue to use Tinymist."
+          : "Executable validated. Enable the option to use it for PDF exports."
+        : "Choose a locally built Enhanced Unicode Typst executable. Typsastra does not download or update this experimental engine.";
+    }
+  }
+
+  private async chooseEnhancedUnicodeEngine(): Promise<void> {
+    const selected = await open({
+      directory: false,
+      multiple: false,
+      title: "Choose Enhanced Unicode Typst Executable",
+    });
+    if (typeof selected !== "string") return;
+
+    try {
+      const inspection = await invoke<TypstCompilerInspection>("inspect_typst_compiler", { path: selected });
+      this.update(settings => {
+        settings.toolchain.enhancedUnicodeEnginePath = inspection.path;
+        settings.toolchain.enhancedUnicodeEngineEnabled = true;
+      });
+      await message(
+        `Typsastra validated ${inspection.version}.\n\nThis local compiler will be used only for explicit PDF exports while Developer mode remains enabled.`,
+        { title: "Enhanced Unicode Engine Selected", kind: "info" },
+      );
+    } catch (error) {
+      await message(String(error), {
+        title: "Invalid Enhanced Unicode Engine",
+        kind: "error",
+      });
+    }
   }
 
   private async refreshRendererCompatibility(): Promise<void> {

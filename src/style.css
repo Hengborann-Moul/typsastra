@@ -1828,6 +1828,28 @@ body.typsastra-resizing #input-container-wrapper::after {
 .settings-developer-log-filters h4 { margin: 0 0 4px; font-size: 12px; }
 .settings-developer-log-filters.disabled { opacity: 0.55; }
 .settings-developer-log-filters .settings-toggle { padding-left: 10px; }
+.settings-developer-tool {
+  margin-top: 18px;
+  padding: 12px;
+  border: 1px solid var(--ui-border);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--ui-bg) 94%, var(--ui-hover));
+}
+.settings-developer-tool.disabled { opacity: 0.55; }
+.settings-developer-tool h4 { margin: 0 0 4px; font-size: 12px; }
+.settings-developer-tool .settings-toggle { padding-left: 0; }
+.settings-developer-tool-path { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.settings-developer-tool-path code {
+  overflow: hidden;
+  padding: 7px 8px;
+  border: 1px solid var(--ui-border);
+  color: var(--ui-header-text);
+  background: var(--ui-bg);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.settings-developer-tool-actions { display: flex; gap: 8px; }
 .settings-capability-note {
   border: 1px solid var(--ui-border);
   border-radius: 6px;

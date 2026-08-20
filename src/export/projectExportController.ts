@@ -25,6 +25,7 @@ type ProjectExportDependencies = {
   mapToOriginalPath: (path: string) => string;
   openTabs: () => readonly ExportableEditorTab[];
   khmerRenderPreparationEnabled: () => boolean;
+  enhancedUnicodeEnginePath: () => string | null;
   setLspStatus: (status: LspStatus) => void;
 };
 
@@ -61,7 +62,13 @@ export class ProjectExportController {
         return;
       }
 
-      this.deps.setLspStatus({ kind: "running", message: "Exporting PDF..." });
+      const enhancedUnicodeEnginePath = this.deps.enhancedUnicodeEnginePath();
+      this.deps.setLspStatus({
+        kind: "running",
+        message: enhancedUnicodeEnginePath
+          ? "Exporting PDF with Enhanced Unicode Engine..."
+          : "Exporting PDF...",
+      });
       let targetFilePath = rootPath;
       let targetContent = "";
       if (filePathKey(targetFilePath) === filePathKey(activeFilePath)) {
@@ -109,7 +116,8 @@ export class ProjectExportController {
 
       const pdfPath = await invoke<string>("compile_typst_document", {
         sourceCode: targetContent,
-        filePath: targetFilePath
+        filePath: targetFilePath,
+        compilerPath: enhancedUnicodeEnginePath,
       });
       await invoke("copy_workspace_file", { source: pdfPath, dest: exportPdfPath });
       await invoke("move_to_trash", { path: pdfPath });

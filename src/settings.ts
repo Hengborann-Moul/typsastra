@@ -78,6 +78,8 @@ export type AppSettings = {
   };
   toolchain: {
     tinymistVersion: string | null;
+    enhancedUnicodeEngineEnabled: boolean;
+    enhancedUnicodeEnginePath: string | null;
   };
 };
 
@@ -140,7 +142,9 @@ export const defaultAppSettings: AppSettings = {
     privateDirectories: []
   },
   toolchain: {
-    tinymistVersion: null
+    tinymistVersion: null,
+    enhancedUnicodeEngineEnabled: false,
+    enhancedUnicodeEnginePath: null
   }
 };
 
@@ -243,6 +247,12 @@ export function normalizeAppSettings(value: unknown): AppSettings {
   const fonts = objectValue(root.fonts);
   const developerLogs = objectValue(root.developerLogs);
   const toolchain = objectValue(root.toolchain);
+  const enhancedUnicodeEnginePath = typeof toolchain.enhancedUnicodeEnginePath === "string"
+    && toolchain.enhancedUnicodeEnginePath.trim().length > 0
+    && toolchain.enhancedUnicodeEnginePath.length <= 32_768
+    && !/[\r\n\0]/.test(toolchain.enhancedUnicodeEnginePath)
+    ? toolchain.enhancedUnicodeEnginePath.trim()
+    : null;
   const theme = themeNames.includes(appearance.theme as ThemeName)
     ? appearance.theme as ThemeName
     : defaultAppSettings.appearance.theme;
@@ -328,7 +338,12 @@ export function normalizeAppSettings(value: unknown): AppSettings {
         ? toolchain.tinymistVersion
         : typeof toolchain.typstVersion === "string" && /^\d+\.\d+\.\d+$/.test(toolchain.typstVersion)
           ? toolchain.typstVersion
-        : null
+        : null,
+      enhancedUnicodeEngineEnabled: booleanValue(
+        toolchain.enhancedUnicodeEngineEnabled,
+        defaultAppSettings.toolchain.enhancedUnicodeEngineEnabled,
+      ) && enhancedUnicodeEnginePath !== null,
+      enhancedUnicodeEnginePath,
     }
   };
 }

@@ -2917,9 +2917,38 @@
                                         as inverse-sync refinement logs.
                                         LSP/compiler diagnostics and errors are
                                         always shown.</small
-                                    ></span
+                                ></span
                                 ></label
                             >
+                            <section
+                                id="settings-enhanced-unicode-engine-controls"
+                                class="settings-developer-tool"
+                            >
+                                <h4>Enhanced Unicode PDF engine</h4>
+                                <p class="settings-help">
+                                    Experimental, locally built Typst compiler for
+                                    explicit PDF exports. It never replaces Tinymist
+                                    for live preview, LSP, or synchronization.
+                                </p>
+                                <label class="settings-toggle"
+                                    ><input
+                                        id="settings-enhanced-unicode-engine"
+                                        type="checkbox"
+                                    /><span
+                                        ><strong>Use for PDF export</strong
+                                        ><small id="settings-enhanced-unicode-status"
+                                            >Choose a local executable first.</small
+                                        ></span
+                                    ></label
+                                >
+                                <div class="settings-developer-tool-path">
+                                    <code id="settings-enhanced-unicode-path">No local executable selected</code>
+                                    <div class="settings-developer-tool-actions">
+                                        <button id="settings-enhanced-unicode-choose" class="settings-secondary-button" type="button">Choose executable</button>
+                                        <button id="settings-enhanced-unicode-clear" class="settings-secondary-button" type="button" disabled>Clear</button>
+                                    </div>
+                                </div>
+                            </section>
                             <div
                                 id="settings-developer-log-filters"
                                 class="settings-developer-log-filters"
