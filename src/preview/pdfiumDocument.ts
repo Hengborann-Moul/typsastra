@@ -230,10 +230,6 @@ function renderingCancelled(): Error {
   return error;
 }
 
-function isRtlText(text: string): boolean {
-  return /[\u0590-\u08ff\ufb1d-\ufdff\ufe70-\ufefc]/u.test(text);
-}
-
 export function buildPdfiumTextRuns(page: PdfiumPageText): PdfiumTextRun[] {
   const lines: Array<{ chars: PdfiumTextChar[]; hasEOL: boolean }> = [];
   let chars: PdfiumTextChar[] = [];
@@ -370,35 +366,49 @@ function firstStrongDirection(text: string): "ltr" | "rtl" {
 }
 
 function orderPdfiumLineChars(chars: PdfiumTextChar[]): PdfiumTextChar[] {
-  if (!chars.some(char => isRtlText(char.text))) return chars;
+  if (!chars.some(char => strongDirection(char.text) === "rtl")) return chars;
 
-  const visual = chars
-    .map((char, index) => ({ char, index, direction: strongDirection(char.text) }))
-    .sort((left, right) => (
-      Number(left.char.left ?? Number.POSITIVE_INFINITY)
-      - Number(right.char.left ?? Number.POSITIVE_INFINITY)
-      || left.index - right.index
+  // PDFium normally exposes the enhanced engine's characters in logical
+  // order, even though an RTL run's geometry moves from right to left. Keep
+  // that order intact. Older PDFs can instead expose a visually ordered RTL
+  // run, whose character boxes move left to right; reverse only that run.
+  // Sorting the whole line by X corrupts mixed-script text and can place an
+  // Arabic punctuation character after the visually final LTR character,
+  // making a whole-line drag omit it from the clipboard.
+  const result = [...chars];
+  let start = 0;
+  while (start < result.length) {
+    if (strongDirection(result[start].text) !== "rtl") {
+      start += 1;
+      continue;
+    }
+
+    let boundary = start + 1;
+    let lastRtl = start;
+    while (boundary < result.length && strongDirection(result[boundary].text) !== "ltr") {
+      if (strongDirection(result[boundary].text) === "rtl") lastRtl = boundary;
+      boundary += 1;
+    }
+
+    const positionedRtl = result.slice(start, lastRtl + 1).filter(char => (
+      strongDirection(char.text) === "rtl" && char.left !== null
     ));
-
-  for (let index = 0; index < visual.length; index += 1) {
-    if (visual[index].direction !== "neutral") continue;
-    const previous = [...visual.slice(0, index)].reverse().find(item => item.direction !== "neutral")?.direction;
-    const next = visual.slice(index + 1).find(item => item.direction !== "neutral")?.direction;
-    const punctuationClosesRtlRun = next === "rtl"
-      && previous !== next
-      && /[.!?…،؛؟٪]/u.test(visual[index].char.text);
-    visual[index].direction = punctuationClosesRtlRun ? next : previous ?? next ?? "ltr";
-  }
-
-  const result: PdfiumTextChar[] = [];
-  let index = 0;
-  while (index < visual.length) {
-    const direction = visual[index].direction;
-    let end = index + 1;
-    while (end < visual.length && visual[end].direction === direction) end += 1;
-    const run = visual.slice(index, end).map(item => item.char);
-    result.push(...(direction === "rtl" ? run.reverse() : run));
-    index = end;
+    const firstLeft = positionedRtl[0]?.left;
+    const lastLeft = positionedRtl[positionedRtl.length - 1]?.left;
+    if (
+      firstLeft !== null
+      && firstLeft !== undefined
+      && lastLeft !== null
+      && lastLeft !== undefined
+      && firstLeft < lastLeft
+    ) {
+      result.splice(
+        start,
+        lastRtl - start + 1,
+        ...result.slice(start, lastRtl + 1).reverse(),
+      );
+    }
+    start = boundary;
   }
   return result;
 }

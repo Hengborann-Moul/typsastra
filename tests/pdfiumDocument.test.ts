@@ -63,6 +63,29 @@ describe("PDFium standalone text runs", () => {
     expect(runs[0].dir).toBe("ltr");
   });
 
+  test("preserves enhanced logical RTL order inside mixed-script lines", () => {
+    const runs = buildPdfiumTextRuns(page([
+      ...[..."EU-MIXED: "].map((text, index) => char(text, 10 + index * 6, 150, 16 + index * 6, 162)),
+      char("ا", 154, 150, 160, 162),
+      char("ب", 148, 150, 154, 162),
+      char(".", 142, 150, 148, 162),
+      char("X", 166, 150, 172, 162),
+    ]));
+
+    expect(runs[0].text).toBe("EU-MIXED: اب.X");
+  });
+
+  test("does not reorder Arabic punctuation in an otherwise LTR line", () => {
+    const text = "EU-PUNCT: ១០០٪.";
+    const runs = buildPdfiumTextRuns(page(
+      [...text].map((value, index) => char(value, 10 + index * 6, 150, 16 + index * 6, 162)),
+    ));
+
+    expect(runs[0].text).toBe(text);
+    expect(runs[0].glyphs.map(glyph => text.slice(glyph.from, glyph.to)).join(""))
+      .toBe(text);
+  });
+
   test("merges PDFium character boxes into indivisible Khmer graphemes", () => {
     const text = "កម្ពុជា";
     const glyphs = [...text].map((value, index) => {

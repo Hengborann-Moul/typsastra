@@ -870,7 +870,8 @@ export class PreviewFrame {
       .pdf-text-layer :is(span,br){color:transparent;position:absolute;white-space:pre;cursor:text;transform-origin:0 0;-webkit-user-select:text;user-select:text}
       .pdfium-text-layer :is(span,br){-webkit-user-select:none;user-select:none}
       .pdf-text-layer>:not(.markedContent),.pdf-text-layer .markedContent span:not(.markedContent){z-index:1;--font-height:0;font-size:calc(var(--text-scale-factor) * var(--font-height));--scale-x:1;--rotate:0deg;transform:rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv))}
-      .pdf-text-layer>.pdfium-text-run{z-index:1;box-sizing:border-box;display:block;overflow:visible;font-family:Arial,sans-serif;font-size:var(--pdfium-font-size)!important;line-height:1!important;transform:scaleX(var(--pdfium-scale-x))!important}
+      .pdf-text-layer>.pdfium-text-hit-area{z-index:0;box-sizing:border-box;display:block;cursor:text}
+      .pdf-text-layer>.pdfium-text-run{z-index:1;box-sizing:border-box;display:block;overflow:visible;font-family:Arial,sans-serif;font-size:var(--pdfium-font-size)!important;line-height:1!important;transform:scaleX(var(--pdfium-scale-x))!important;pointer-events:none}
       .pdf-text-layer .markedContent{display:contents}
       .pdf-text-layer span[role="img"]{cursor:default;-webkit-user-select:none;user-select:none}
       .pdf-text-layer:not(.pdfium-text-layer) ::selection{background:color-mix(in srgb,AccentColor,transparent 50%);color:transparent}
@@ -1491,6 +1492,12 @@ export class PreviewFrame {
       const textItems: StandalonePdfTextLayer["textItems"] = [];
       const measurement = doc.createElement("canvas").getContext("2d");
       for (const run of runs) {
+        // Keep pointer hit testing on an untransformed line rectangle. The
+        // transparent text carrier below is horizontally scaled to match the
+        // PDF, which also scales its browser hitbox and otherwise leaves
+        // pointer-shaped gaps across RTL and mixed-script lines.
+        const hitArea = doc.createElement("span");
+        hitArea.className = "pdfium-text-hit-area";
         const element = doc.createElement("span");
         element.className = "pdfium-text-run";
         element.textContent = run.text;
@@ -1508,12 +1515,17 @@ export class PreviewFrame {
         if (measurement) measurement.font = `${fontSize}px Arial, sans-serif`;
         const measuredWidth = Math.max(measurement?.measureText(run.text).width ?? width, 0.5);
         const scaleX = Math.max(0.05, Math.min(20, width / measuredWidth));
+        hitArea.style.left = `${left}px`;
+        hitArea.style.top = `${top}px`;
+        hitArea.style.width = `${width}px`;
+        hitArea.style.height = `${height}px`;
         element.style.left = `${left}px`;
         element.style.top = `${top}px`;
         element.style.width = `${width}px`;
         element.style.height = `${height}px`;
         element.style.setProperty("--pdfium-font-size", `${fontSize}px`);
         element.style.setProperty("--pdfium-scale-x", String(scaleX));
+        container.append(hitArea);
         container.append(element);
         textDivs.push(element);
         textItems.push({

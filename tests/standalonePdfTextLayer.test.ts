@@ -73,6 +73,14 @@ test("standalone PDF copy serializes logical text items instead of positioned DO
   expect(frameSource).not.toContain("serializeStandalonePdfSelection(doc.getSelection())");
 });
 
+test("PDFium text lines use untransformed cursor hit areas", () => {
+  expect(frameSource).toContain('hitArea.className = "pdfium-text-hit-area"');
+  expect(frameSource).toContain("container.append(hitArea)");
+  expect(frameSource).toContain(".pdf-text-layer>.pdfium-text-hit-area");
+  expect(frameSource).toContain("display:block;cursor:text");
+  expect(frameSource).toContain("transform:scaleX(var(--pdfium-scale-x))!important;pointer-events:none");
+});
+
 test("the pinned PDF.js worker preserves logical Unicode text", () => {
   expect(pdfPatch).toContain("diff --git a/legacy/build/pdf.worker.mjs");
   expect(pdfPatch).toContain("preserveLogicalText ? text : bidiResult.str");
