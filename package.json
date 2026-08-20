@@ -12,6 +12,7 @@
     "test:docs": "bun test tests/documentationLinks.test.ts",
     "conform": "bun test tests/editingPolicies.test.ts tests/khmerReference.test.ts tests/laoReference.test.ts tests/languageSupport.test.ts",
     "benchmark:performance": "bun scripts/run-performance-benchmarks.ts",
+    "validate:enhanced-unicode": "bun scripts/run-enhanced-unicode-validation.ts",
     "validate:examples": "bun scripts/validate-examples.ts",
     "tauri:dev": "bun scripts/run-tauri-with-fallback.ts dev --config src-tauri/tauri.dev.conf.json",
     "tauri:build": "bun scripts/run-tauri-with-fallback.ts build",

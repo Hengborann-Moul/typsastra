@@ -336,6 +336,7 @@ installation is not required for normal use.
 - [PDF preview and source synchronization](./docs/tutorials/PDF_PREVIEW_AND_SYNC.md)
 - [Markdown live preview](./docs/tutorials/MARKDOWN_PREVIEW.md)
 - [Image Tools](./docs/tutorials/IMAGE_TOOLS.md)
+- [Enhanced Unicode Engine validation](./docs/ENHANCED_UNICODE_ENGINE_VALIDATION.md)
 - [Roadmap](./docs/ROADMAP.md)
 - [Troubleshooting](./docs/TROUBLESHOOTING.md)
 - [Typsastra v0.7.0 release notes](./docs/RELEASE_NOTES_V0.7.0.md)
