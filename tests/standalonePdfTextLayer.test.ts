@@ -8,6 +8,7 @@ test("standalone PDFs render a logical selectable text layer", () => {
   expect(frameSource).toContain("page.getTextContent({");
   expect(frameSource).toContain("disableNormalization: true");
   expect(frameSource).toContain("preserveLogicalText: true");
+  expect(frameSource).toContain("normalizePdfLogicalTextContent(await page.getTextContent({");
   expect(frameSource).toContain('import("pdfjs-dist/build/pdf.worker.mjs?url")');
   expect(frameSource).not.toContain('import("pdfjs-dist/build/pdf.worker.min.mjs?url")');
   expect(frameSource).toContain("new pdfjs.TextLayer({");
@@ -35,6 +36,7 @@ test("standalone PDF search uses geometry-only highlights instead of browser Fin
   expect(frameSource).toContain("this.onEditorSearchRequest?.()");
   expect(frameSource).toContain("pdf-search-editor-caret");
   expect(frameSource).toContain('id="pdf-search-next"');
+  expect(frameSource).toContain("findPdfTextMatches(items, query)");
 });
 
 test("standalone PDF copy serializes logical text items instead of positioned DOM text", () => {

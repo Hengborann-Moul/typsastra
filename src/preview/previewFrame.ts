@@ -37,7 +37,7 @@ export type PreviewMemorySnapshot = {
   pdfBytes: number;
   pdfBytesRead: number;
   pdfRangeRequests: number;
-  pdfTransport: "none" | "full-buffer" | "range";
+  pdfTransport: "none" | "full-buffer" | "range" | "pdfium";
   pdfPages: number;
   residentCanvases: number;
   residentFinalCanvases: number;
@@ -82,6 +82,16 @@ import {
   TYPSASTRA_GREEN_RIPPLE_FILL,
   TYPSASTRA_GREEN_RIPPLE_SHADOW
 } from "../ui/brandColors";
+import {
+  findPdfTextMatches,
+  normalizePdfLogicalTextContent,
+  type PdfTextSearchFragment,
+} from "./pdfLogicalText";
+import {
+  PdfiumDocument,
+  isPdfiumDocument,
+  isPdfiumPage,
+} from "./pdfiumDocument";
 
 type PdfJsModule = typeof import("pdfjs-dist");
 
@@ -95,7 +105,7 @@ type PdfRangeSourceInfo = {
 };
 
 type PdfTransportStats = {
-  transport: "full-buffer" | "range";
+  transport: Exclude<PreviewMemorySnapshot["pdfTransport"], "none">;
   bytesRead: number;
   rangeRequests: number;
 };
@@ -122,9 +132,7 @@ type StandalonePdfTextLayer = {
 
 type StandalonePdfSearchMatch = {
   pageNo: number;
-  itemIndex: number;
-  from: number;
-  to: number;
+  fragments: PdfTextSearchFragment[];
 };
 
 type ActivePageRender = {
@@ -554,98 +562,152 @@ export class PreviewFrame {
     let orphanedRangeSourceCleanup: (() => Promise<void>) | null = null;
     let pdfByteLength = 0;
     const transportStats: PdfTransportStats = {
-      transport: source.kind === "range" ? "range" : "full-buffer",
+      transport: surface === "pdf" && source.kind === "range"
+        ? "pdfium"
+        : source.kind === "range"
+          ? "range"
+          : "full-buffer",
       bytesRead: 0,
       rangeRequests: 0
     };
     try {
-      const pdfjs = await this.pdfJs();
-      if (generation !== this.pdfGeneration) return 0;
-      if (!this.pdfWorker || this.pdfWorker.destroyed) {
-        this.pdfWorker = pdfjs.PDFWorker.create({ name: "typsastra-preview" });
-      }
-      let pdfInput: { data: Uint8Array } | {
-        range: InstanceType<typeof pdfjs.PDFDataRangeTransport>;
-        disableStream: true;
-        disableAutoFetch: false;
-        rangeChunkSize: number;
-      };
+      let pdfDocumentPromise: Promise<any>;
       let closeRangeSource: (() => Promise<void>) | null = null;
-      if (source.kind === "bytes") {
-        const resolved = await source.source;
-        if (generation !== this.pdfGeneration) return 0;
-        const bytes = resolved instanceof Uint8Array ? resolved : new Uint8Array(resolved);
-        pdfByteLength = bytes.byteLength;
-        transportStats.bytesRead = pdfByteLength;
-        pdfInput = { data: bytes };
-      } else {
-        const opened = await invoke<PdfRangeSourceInfo>("open_pdf_range_source", {
-          path: source.path,
-          deleteOnClose: source.deleteOnClose
+      if (surface === "pdf" && source.kind === "range") {
+        let openedPdfiumDocument: PdfiumDocument | null = null;
+        let cancelled = false;
+        pdfDocumentPromise = PdfiumDocument.open(source.path, source.deleteOnClose).then(async document => {
+          openedPdfiumDocument = document;
+          if (cancelled) {
+            await document.destroy();
+            throw new DOMException("PDFium loading was cancelled.", "AbortError");
+          }
+          pdfByteLength = document.byteLength;
+          return document;
         });
-        if (generation !== this.pdfGeneration) {
-          await invoke("close_pdf_range_source", { sourceId: opened.sourceId }).catch(() => {});
-          return 0;
+        nextLoadingTask = {
+          destroy: async () => {
+            cancelled = true;
+            await openedPdfiumDocument?.destroy();
+          },
+        };
+      } else {
+        const pdfjs = await this.pdfJs();
+        if (generation !== this.pdfGeneration) return 0;
+        if (!this.pdfWorker || this.pdfWorker.destroyed) {
+          this.pdfWorker = pdfjs.PDFWorker.create({ name: "typsastra-preview" });
         }
-        pdfByteLength = opened.length;
-        let closed = false;
-        closeRangeSource = async () => {
-          if (closed) return;
-          closed = true;
-          await invoke("close_pdf_range_source", { sourceId: opened.sourceId }).catch(() => {});
+        let pdfInput: { data: Uint8Array } | {
+          range: InstanceType<typeof pdfjs.PDFDataRangeTransport>;
+          disableStream: true;
+          disableAutoFetch: false;
+          rangeChunkSize: number;
         };
-        orphanedRangeSourceCleanup = closeRangeSource;
-        const thisFrame = this;
-        const RangeTransport = class extends pdfjs.PDFDataRangeTransport {
-          private aborted = false;
-
-          constructor() {
-            super(opened.length, null, false);
+        if (source.kind === "bytes") {
+          const resolved = await source.source;
+          if (generation !== this.pdfGeneration) return 0;
+          const bytes = resolved instanceof Uint8Array ? resolved : new Uint8Array(resolved);
+          pdfByteLength = bytes.byteLength;
+          transportStats.bytesRead = pdfByteLength;
+          pdfInput = { data: bytes };
+        } else {
+          const opened = await invoke<PdfRangeSourceInfo>("open_pdf_range_source", {
+            path: source.path,
+            deleteOnClose: source.deleteOnClose
+          });
+          if (generation !== this.pdfGeneration) {
+            await invoke("close_pdf_range_source", { sourceId: opened.sourceId }).catch(() => {});
+            return 0;
           }
+          pdfByteLength = opened.length;
+          let closed = false;
+          closeRangeSource = async () => {
+            if (closed) return;
+            closed = true;
+            await invoke("close_pdf_range_source", { sourceId: opened.sourceId }).catch(() => {});
+          };
+          orphanedRangeSourceCleanup = closeRangeSource;
+          const thisFrame = this;
+          const RangeTransport = class extends pdfjs.PDFDataRangeTransport {
+            private aborted = false;
 
-          public requestDataRange(begin: number, end: number): void {
-            if (this.aborted) return;
-            transportStats.rangeRequests += 1;
-            void invoke<ArrayBuffer | Uint8Array | number[]>("read_pdf_range", {
-              sourceId: opened.sourceId,
-              begin,
-              end
-            }).then(response => {
+            constructor() {
+              super(opened.length, null, false);
+            }
+
+            public requestDataRange(begin: number, end: number): void {
               if (this.aborted) return;
-              const bytes = response instanceof Uint8Array
-                ? response
-                : response instanceof ArrayBuffer
-                  ? new Uint8Array(response)
-                  : new Uint8Array(response);
-              transportStats.bytesRead += bytes.byteLength;
-              if (generation === thisFrame.pdfGeneration && thisFrame.currentPdfTransport === "range") {
-                thisFrame.currentPdfBytesRead = transportStats.bytesRead;
-                thisFrame.currentPdfRangeRequests = transportStats.rangeRequests;
-              }
-              this.onDataRange(begin, bytes);
-            }).catch(error => {
-              if (this.aborted) return;
-              console.error("PDF range request failed:", error);
-              this.onDataRange(begin, null);
-              this.abort();
-            });
-          }
+              transportStats.rangeRequests += 1;
+              void invoke<ArrayBuffer | Uint8Array | number[]>("read_pdf_range", {
+                sourceId: opened.sourceId,
+                begin,
+                end
+              }).then(response => {
+                if (this.aborted) return;
+                const bytes = response instanceof Uint8Array
+                  ? response
+                  : response instanceof ArrayBuffer
+                    ? new Uint8Array(response)
+                    : new Uint8Array(response);
+                transportStats.bytesRead += bytes.byteLength;
+                if (generation === thisFrame.pdfGeneration && thisFrame.currentPdfTransport === "range") {
+                  thisFrame.currentPdfBytesRead = transportStats.bytesRead;
+                  thisFrame.currentPdfRangeRequests = transportStats.rangeRequests;
+                }
+                this.onDataRange(begin, bytes);
+              }).catch(error => {
+                if (this.aborted) return;
+                console.error("PDF range request failed:", error);
+                this.onDataRange(begin, null);
+                this.abort();
+              });
+            }
 
-          public abort(): void {
-            if (this.aborted) return;
-            this.aborted = true;
-            void closeRangeSource?.();
-          }
-        };
-        pdfInput = {
-          range: new RangeTransport(),
-          disableStream: true,
-          // Keep filling the PDF worker's bounded range cache in the
-          // background. Fast scrollbar jumps can then render from worker
-          // memory instead of waiting for several post-release IPC reads.
-          disableAutoFetch: false,
-          rangeChunkSize: LOCAL_PDF_RANGE_CHUNK_SIZE
-        };
+            public abort(): void {
+              if (this.aborted) return;
+              this.aborted = true;
+              void closeRangeSource?.();
+            }
+          };
+          pdfInput = {
+            range: new RangeTransport(),
+            disableStream: true,
+            // Keep filling the PDF worker's bounded range cache in the
+            // background. Fast scrollbar jumps can then render from worker
+            // memory instead of waiting for several post-release IPC reads.
+            disableAutoFetch: false,
+            rangeChunkSize: LOCAL_PDF_RANGE_CHUNK_SIZE
+          };
+        }
+        const loadingTask = pdfjs.getDocument({
+          ...pdfInput,
+          worker: this.pdfWorker as InstanceType<typeof pdfjs.PDFWorker>,
+          ownerDocument: iframeDoc,
+          // Browser FontFace rendering is substantially faster than rebuilding
+          // every embedded glyph from PDF path primitives. Page and document
+          // disposal below bound the lifetime of these resources.
+          disableFontFace: false,
+          useSystemFonts: false,
+          enableHWA: true,
+          cMapUrl: "/cmaps/",
+          cMapPacked: true,
+          standardFontDataUrl: "/standard_fonts/",
+          // PDF.js decodes JBIG2 and CCITT Fax image layers through the same
+          // packaged decoder. Scanner-generated MRC PDFs commonly store their
+          // text as a CCITT foreground mask over a low-resolution background;
+          // without these assets PDF.js can display only the washed-out base.
+          wasmUrl: "/pdfjs-wasm/",
+          // Keep binary asset loading on the window side of the worker bridge.
+          // Besides matching the previous CMap/font behavior, this avoids making
+          // Tauri's custom application protocol directly fetchable by a worker.
+          useWorkerFetch: false
+        });
+        nextLoadingTask = pdfLoadingHandle(
+          loadingTask as unknown as PdfLoadingHandle,
+          closeRangeSource
+        );
+        orphanedRangeSourceCleanup = null;
+        pdfDocumentPromise = loadingTask.promise;
       }
       await this.onLoadStage?.("source ready", {
         transport: transportStats.transport,
@@ -653,36 +715,9 @@ export class PreviewFrame {
         bytesRead: transportStats.bytesRead,
         rangeRequests: transportStats.rangeRequests
       });
-      const loadingTask = pdfjs.getDocument({
-        ...pdfInput,
-        worker: this.pdfWorker as InstanceType<typeof pdfjs.PDFWorker>,
-        ownerDocument: iframeDoc,
-        // Browser FontFace rendering is substantially faster than rebuilding
-        // every embedded glyph from PDF path primitives. Page and document
-        // disposal below bound the lifetime of these resources.
-        disableFontFace: false,
-        useSystemFonts: false,
-        enableHWA: true,
-        cMapUrl: "/cmaps/",
-        cMapPacked: true,
-        standardFontDataUrl: "/standard_fonts/",
-        // PDF.js decodes JBIG2 and CCITT Fax image layers through the same
-        // packaged decoder. Scanner-generated MRC PDFs commonly store their
-        // text as a CCITT foreground mask over a low-resolution background;
-        // without these assets PDF.js can display only the washed-out base.
-        wasmUrl: "/pdfjs-wasm/",
-        // Keep binary asset loading on the window side of the worker bridge.
-        // Besides matching the previous CMap/font behavior, this avoids making
-        // Tauri's custom application protocol directly fetchable by a worker.
-        useWorkerFetch: false
-      });
-      nextLoadingTask = pdfLoadingHandle(
-        loadingTask as unknown as PdfLoadingHandle,
-        closeRangeSource
-      );
-      orphanedRangeSourceCleanup = null;
       this.pendingPdfLoadingTask = nextLoadingTask;
-      const pdfDoc = await loadingTask.promise;
+      const pdfDoc = await pdfDocumentPromise;
+      if (isPdfiumDocument(pdfDoc)) pdfByteLength = pdfDoc.byteLength;
       nextPdfDoc = pdfDoc;
       await this.onLoadStage?.("document opened", {
         transport: transportStats.transport,
@@ -824,6 +859,7 @@ export class PreviewFrame {
       .pdf-text-layer{color-scheme:only light;position:absolute;text-align:initial;inset:0;box-sizing:border-box;max-width:100%;max-height:100%;overflow:clip;contain:layout paint;opacity:1;line-height:1;letter-spacing:normal;word-spacing:normal;-webkit-text-size-adjust:none;text-size-adjust:none;forced-color-adjust:none;transform-origin:0 0;z-index:1;caret-color:CanvasText;--min-font-size:1;--text-scale-factor:calc(var(--total-scale-factor) * var(--min-font-size));--min-font-size-inv:calc(1 / var(--min-font-size))}
       .pdf-text-layer :is(span,br){color:transparent;position:absolute;white-space:pre;cursor:text;transform-origin:0 0;-webkit-user-select:text;user-select:text}
       .pdf-text-layer>:not(.markedContent),.pdf-text-layer .markedContent span:not(.markedContent){z-index:1;--font-height:0;font-size:calc(var(--text-scale-factor) * var(--font-height));--scale-x:1;--rotate:0deg;transform:rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv))}
+      .pdf-text-layer>.pdfium-text-run{z-index:1;box-sizing:border-box;display:block;overflow:visible;font-family:Arial,sans-serif;font-size:var(--pdfium-font-size)!important;line-height:1!important;transform:scaleX(var(--pdfium-scale-x))!important}
       .pdf-text-layer .markedContent{display:contents}
       .pdf-text-layer span[role="img"]{cursor:default;-webkit-user-select:none;user-select:none}
       .pdf-text-layer ::selection{background:color-mix(in srgb,AccentColor,transparent 50%);color:transparent}
@@ -928,6 +964,19 @@ export class PreviewFrame {
 
   private async hydratePageDimensions(pdfDoc: any, generation: number): Promise<void> {
     const startedAt = performance.now();
+    if (isPdfiumDocument(pdfDoc)) {
+      for (let index = 0; index < pdfDoc.pageDimensions.length; index += 1) {
+        const dimensions = pdfDoc.pageDimensions[index];
+        this.pageDimensions.set(index + 1, dimensions);
+        this.updatePageSlotDimensions(index + 1, dimensions);
+      }
+      this.onPerformance?.({
+        name: "preview.geometry",
+        milliseconds: performance.now() - startedAt,
+        detail: { pageCount: pdfDoc.numPages }
+      });
+      return;
+    }
     let widerPageFound = false;
     const initialMaxWidth = [...this.pageDimensions.values()]
       .reduce((maximum, dimensions) => Math.max(maximum, dimensions.width), 0);
@@ -1348,6 +1397,7 @@ export class PreviewFrame {
     doc: Document,
   ): Promise<HTMLElement | null> {
     if (doc.documentElement.dataset.previewSurface !== "pdf") return null;
+    if (isPdfiumPage(page)) return this.renderPdfiumTextLayer(page, viewport, doc);
     if (typeof page?.streamTextContent !== "function") return null;
 
     try {
@@ -1369,10 +1419,10 @@ export class PreviewFrame {
       );
       container.style.setProperty("--scale-round-x", "1px");
       container.style.setProperty("--scale-round-y", "1px");
-      const textContentSource = await page.getTextContent({
+      const textContentSource = normalizePdfLogicalTextContent(await page.getTextContent({
         disableNormalization: true,
         preserveLogicalText: true,
-      } as any);
+      } as any));
       const textLayer = new pdfjs.TextLayer({
         textContentSource,
         container,
@@ -1403,6 +1453,69 @@ export class PreviewFrame {
       return container;
     } catch (error) {
       console.warn(`Failed to render selectable PDF text for page ${page?.pageNumber ?? "unknown"}:`, error);
+      return null;
+    }
+  }
+
+  private async renderPdfiumTextLayer(
+    page: any,
+    viewport: any,
+    doc: Document,
+  ): Promise<HTMLElement | null> {
+    try {
+      const runs = await page.getPdfiumTextRuns();
+      const scale = Number(viewport?.scale);
+      const viewportScale = Number.isFinite(scale) && scale > 0 ? scale : 1;
+      const container = doc.createElement("div");
+      container.className = "pdf-text-layer pdfium-text-layer";
+      container.setAttribute("role", "document");
+      container.setAttribute("aria-label", `Selectable text for PDF page ${page.pageNumber ?? ""}`.trim());
+
+      const textDivs: HTMLElement[] = [];
+      const textItems: StandalonePdfTextLayer["textItems"] = [];
+      const measurement = doc.createElement("canvas").getContext("2d");
+      for (const run of runs) {
+        const element = doc.createElement("span");
+        element.className = "pdfium-text-run";
+        element.textContent = run.text;
+        element.dir = run.dir;
+
+        const left = run.left * viewportScale;
+        const top = (page.height - run.top) * viewportScale;
+        const width = Math.max(0.5, (run.right - run.left) * viewportScale);
+        const height = Math.max(1, (run.top - run.bottom) * viewportScale);
+        const fontSize = Math.max(1, height);
+        // The text is transparent; its font is only a browser selection
+        // carrier. Scale each complete line to PDFium's measured bounds so
+        // Chromium neither inserts separators between positioned glyphs nor
+        // lets the selectable geometry escape the rendered page.
+        if (measurement) measurement.font = `${fontSize}px Arial, sans-serif`;
+        const measuredWidth = Math.max(measurement?.measureText(run.text).width ?? width, 0.5);
+        const scaleX = Math.max(0.05, Math.min(20, width / measuredWidth));
+        element.style.left = `${left}px`;
+        element.style.top = `${top}px`;
+        element.style.width = `${width}px`;
+        element.style.height = `${height}px`;
+        element.style.setProperty("--pdfium-font-size", `${fontSize}px`);
+        element.style.setProperty("--pdfium-scale-x", String(scaleX));
+        container.append(element);
+        textDivs.push(element);
+        textItems.push({
+          text: run.text,
+          hasEOL: run.hasEOL,
+          baselineY: run.bottom,
+          height: Math.abs(run.top - run.bottom),
+        });
+      }
+
+      const pageNo = Number(page?.pageNumber ?? 0);
+      if (pageNo > 0) {
+        this.standalonePdfTextLayers.set(pageNo, { container, textDivs, textItems });
+        this.renderStandalonePdfSearchMarkers(pageNo);
+      }
+      return container;
+    } catch (error) {
+      console.warn(`Failed to render PDFium selectable text for page ${page?.pageNumber ?? "unknown"}:`, error);
       return null;
     }
   }
@@ -1779,22 +1892,13 @@ export class PreviewFrame {
       if (generation !== this.standalonePdfSearchGeneration) return;
       try {
         const page = await this.pdfDoc.getPage(pageNo);
-        const textContent = await page.getTextContent({
+        const textContent = normalizePdfLogicalTextContent(await page.getTextContent({
           disableNormalization: true,
           preserveLogicalText: true,
-        } as any);
+        } as any));
         const items = Array.isArray(textContent?.items) ? textContent.items : [];
-        let textItemIndex = 0;
-        for (let itemIndex = 0; itemIndex < items.length; itemIndex += 1) {
-          if (typeof items[itemIndex]?.str !== "string") continue;
-          const text = items[itemIndex].str;
-          const comparable = text.toLocaleLowerCase();
-          let from = comparable.indexOf(query);
-          while (from >= 0) {
-            matches.push({ pageNo, itemIndex: textItemIndex, from, to: from + query.length });
-            from = comparable.indexOf(query, from + Math.max(1, query.length));
-          }
-          textItemIndex += 1;
+        for (const fragments of findPdfTextMatches(items, query)) {
+          matches.push({ pageNo, fragments });
         }
       } catch (error) {
         console.warn(`Failed to search standalone PDF page ${pageNo}:`, error);
@@ -1867,24 +1971,26 @@ export class PreviewFrame {
     for (let matchIndex = 0; matchIndex < this.standalonePdfSearchMatches.length; matchIndex += 1) {
       const match = this.standalonePdfSearchMatches[matchIndex];
       if (match.pageNo !== pageNo) continue;
-      const textDiv = layer.textDivs[match.itemIndex];
-      const textNode = textDiv?.firstChild;
-      if (!textNode || textNode.nodeType !== Node.TEXT_NODE) continue;
-      const textLength = textNode.textContent?.length ?? 0;
-      if (match.from >= textLength) continue;
-      const range = this.iframe?.contentDocument?.createRange();
-      if (!range) continue;
-      range.setStart(textNode, match.from);
-      range.setEnd(textNode, Math.min(match.to, textLength));
-      for (const rect of range.getClientRects()) {
-        const marker = slot.ownerDocument.createElement("span");
-        marker.className = `pdf-search-marker${matchIndex === this.standalonePdfSearchIndex ? " is-current" : ""}`;
-        marker.dataset.matchIndex = String(matchIndex);
-        marker.style.left = `${Math.max(0, rect.left - slotRect.left)}px`;
-        marker.style.top = `${Math.max(0, rect.top - slotRect.top)}px`;
-        marker.style.width = `${Math.min(rect.width, slotRect.right - rect.left)}px`;
-        marker.style.height = `${Math.min(rect.height, slotRect.bottom - rect.top)}px`;
-        slot.append(marker);
+      for (const fragment of match.fragments) {
+        const textDiv = layer.textDivs[fragment.itemIndex];
+        const textNode = textDiv?.firstChild;
+        if (!textNode || textNode.nodeType !== Node.TEXT_NODE) continue;
+        const textLength = textNode.textContent?.length ?? 0;
+        if (fragment.from >= textLength) continue;
+        const range = this.iframe?.contentDocument?.createRange();
+        if (!range) continue;
+        range.setStart(textNode, fragment.from);
+        range.setEnd(textNode, Math.min(fragment.to, textLength));
+        for (const rect of range.getClientRects()) {
+          const marker = slot.ownerDocument.createElement("span");
+          marker.className = `pdf-search-marker${matchIndex === this.standalonePdfSearchIndex ? " is-current" : ""}`;
+          marker.dataset.matchIndex = String(matchIndex);
+          marker.style.left = `${Math.max(0, rect.left - slotRect.left)}px`;
+          marker.style.top = `${Math.max(0, rect.top - slotRect.top)}px`;
+          marker.style.width = `${Math.min(rect.width, slotRect.right - rect.left)}px`;
+          marker.style.height = `${Math.min(rect.height, slotRect.bottom - rect.top)}px`;
+          slot.append(marker);
+        }
       }
     }
   }
@@ -2723,6 +2829,12 @@ export class PreviewFrame {
 async function readInitialPdfPageDimensions(pdfDoc: any): Promise<Map<number, PageDimensions>> {
   const dimensions = new Map<number, PageDimensions>();
   if (pdfDoc.numPages < 1) return dimensions;
+  if (isPdfiumDocument(pdfDoc)) {
+    pdfDoc.pageDimensions.forEach((page: PageDimensions, index: number) => {
+      dimensions.set(index + 1, page);
+    });
+    return dimensions;
+  }
   const page = await pdfDoc.getPage(1);
   const viewport = page.getViewport({ scale: 1 });
   const first = { width: viewport.width, height: viewport.height };

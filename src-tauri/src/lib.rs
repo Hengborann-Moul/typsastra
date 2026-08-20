@@ -18,6 +18,7 @@ use tokio_tungstenite::{
 mod compatibility;
 mod examples;
 mod font_store;
+mod pdfium_preview;
 mod project_archive;
 mod render_prepare;
 mod scaled_fonts;
@@ -26,6 +27,10 @@ mod toolchain;
 mod webview_storage;
 use compatibility::{get_linux_renderer_compatibility, prepare_linux_renderer_relaunch};
 use examples::prepare_examples_workspace;
+use pdfium_preview::{
+    close_pdfium_document, get_pdfium_page_text, open_pdfium_document, render_pdfium_page,
+    PdfiumPreviewState,
+};
 use render_prepare::{
     cancel_draft_thumbnail_generation, cancel_render_preparation, get_draft_thumbnail_status,
     map_generated_to_source, map_source_to_generated, prepare_render_file, prepare_render_project,
@@ -5147,6 +5152,7 @@ pub fn run() {
         .manage(pending_project_imports)
         .manage(ProjectImportOperations::default())
         .manage(PdfRangeSources::default())
+        .manage(PdfiumPreviewState::default())
         .plugin(tauri_plugin_single_instance::init(
             |app, arguments, _working_directory| {
                 let pending = app.state::<PendingProjectImports>();
@@ -5218,6 +5224,10 @@ pub fn run() {
             open_pdf_range_source,
             read_pdf_range,
             close_pdf_range_source,
+            open_pdfium_document,
+            render_pdfium_page,
+            get_pdfium_page_text,
+            close_pdfium_document,
             stage_pdf_preview_generation,
             remove_preview_generation_file,
             read_workspace_text_prefix,

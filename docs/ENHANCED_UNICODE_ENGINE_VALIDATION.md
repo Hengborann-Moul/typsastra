@@ -87,11 +87,13 @@ patch covers both PDF.js's browser build and the legacy Node build used by the
 automated validator, so the report exercises the same extraction semantics as
 Typsastra's standalone preview.
 
-The current reference run passes exact extraction for 7 of 10 cases and bounded
-geometry for all 10. Combining Latin, Khmer, Thai, and Lao now pass exactly. The
-remaining failures are engine-level work: Arabic still needs line-level logical
-ordering, while Devanagari and the mixed fixture expose unsupported collection
-font mappings and invalid control characters.
+The patched PDF.js worker returns exact extraction for 7 of 10 cases and bounded
+geometry for all 10. Typsastra then normalizes positioned RTL runs before
+building its standalone text layer. This restores source-order Arabic for
+search, DOM selection, and clipboard serialization without moving the painted
+PDF coordinates. Devanagari remains engine-level work: PDF.js exposes
+unsupported collection-font mappings as invalid control characters, and the
+mixed fixture inherits that failure.
 
 ## Viewer compatibility matrix
 
@@ -105,25 +107,28 @@ The generated report contains an automated PDF.js row and placeholders for manua
 
 ### Verified Typsastra standalone preview
 
-The current Typsastra standalone preview has been manually verified against the
-enhanced fixture. Its custom clipboard path reproduces the patched PDF.js
-logical extraction result:
+Typsastra now renders directly opened PDFs with bundled PDFium. PDF.js remains
+the engine used by the automated comparison above and by live Typst previews;
+the standalone viewer uses PDFium so its painted page, extracted characters,
+and selectable geometry come from the same native PDF engine.
+
+The current PDFium standalone preview has been manually checked against the
+enhanced fixture:
 
 | Capability | Result |
 |---|---|
-| Exact copied text | 7/10 cases |
-| Combining Latin, Khmer, Thai, and Lao | Exact |
-| Arabic | Incorrect visual-order sequence |
-| Devanagari | Invalid C0 controls remain |
-| Mixed script | Fails because it contains the Arabic and Devanagari cases |
+| Exact copied text | 9/10 labeled cases in the current manual fixture |
+| Combining Latin, Khmer, Devanagari, Thai, and Lao | Exact |
+| Arabic | Pure Arabic text is valid, but the mixed Latin label and RTL sentence are ordered incorrectly |
+| Mixed script | Exact for the current fixture |
 | Selection bounds | Remain inside the page |
-| Complex-script rectangle alignment | Fragmented or offset in some clusters |
+| Complex-script rectangle alignment | Contiguous line-level geometry in the current fixture |
 
-This confirms that Typsastra's clipboard reconstruction no longer introduces
-the inferred spaces produced by native DOM selection. It does not repair text
-already returned incorrectly by PDF.js. Arabic ordering and Devanagari decoding
-must be resolved in the enhanced PDF/PDF.js integration rather than in the
-clipboard serializer.
+This confirms that PDFium avoids the invalid Devanagari mappings exposed by the
+current PDF.js extraction path and provides stable selectable bounds for the
+tested scripts. The remaining Arabic failure is a bidirectional run-ordering
+issue in Typsastra's PDFium adapter, not missing Unicode data. Keep it visible
+in the compatibility matrix until mixed LTR/RTL line reconstruction is exact.
 
 For every viewer, manually record:
 

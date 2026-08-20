@@ -7,6 +7,7 @@ import {
   type PdfTextItemGeometry,
   type UnicodeCaseResult
 } from "./enhanced-unicode-validation-core";
+import { normalizePdfLogicalTextContent } from "../src/preview/pdfLogicalText";
 
 interface CompilerResult {
   name: "baseline" | "enhanced";
@@ -21,7 +22,10 @@ interface CompilerResult {
 
 const root = process.cwd();
 const fixturePath = join(root, "tests", "fixtures", "enhanced-unicode", "unicode-selection.typ");
-const outputDirectory = join(root, "artifacts", "enhanced-unicode");
+const outputDirectory = resolve(
+  root,
+  argument("--output-dir") ?? join("artifacts", "enhanced-unicode"),
+);
 const defaultEnhancedExecutable = resolve(
   root,
   "..",
@@ -74,10 +78,10 @@ async function inspectPdf(
   for (let pageNo = 1; pageNo <= pdf.numPages; pageNo += 1) {
     const page = await pdf.getPage(pageNo);
     const pageView = [...page.view];
-    const textContent = await page.getTextContent({
+    const textContent = normalizePdfLogicalTextContent(await page.getTextContent({
       disableNormalization: true,
       preserveLogicalText: true
-    });
+    }));
     for (const item of textContent.items) {
       if (!("str" in item)) continue;
       items.push({

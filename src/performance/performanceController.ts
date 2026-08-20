@@ -154,7 +154,9 @@ export class PerformanceController {
         `jsHeap=${heap?.usedJSHeapSize === undefined ? "unavailable" : `${mib(heap.usedJSHeapSize)} MiB (${delta(heap.usedJSHeapSize, previous?.jsHeapBytes)})`}`,
         `jsHeapTotal=${heap?.totalJSHeapSize === undefined ? "unavailable" : `${mib(heap.totalJSHeapSize)} MiB`}`,
         `pdf=${mib(preview.pdfBytes)} MiB/${preview.pdfPages} pages/gen ${preview.pdfGeneration}`,
-        `pdfTransport=${preview.pdfTransport}; pdfRead=${mib(preview.pdfBytesRead)} MiB/${preview.pdfRangeRequests} range request(s)`,
+        preview.pdfTransport === "pdfium"
+          ? "pdfTransport=pdfium; PDFium reads the source natively"
+          : `pdfTransport=${preview.pdfTransport}; pdfRead=${mib(preview.pdfBytesRead)} MiB/${preview.pdfRangeRequests} range request(s)`,
         `finalCanvas=${preview.residentFinalCanvases}; mountedCanvas=${preview.residentCanvases} (${mib(preview.canvasPixels * 4)} MiB estimated RGBA)`,
         `fontFaces=${preview.fontFaces}`,
         `activeRenders=${preview.activeRenders}; pdfLoading=${preview.loading}`,
