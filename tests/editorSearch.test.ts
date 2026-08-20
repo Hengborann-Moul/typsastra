@@ -146,12 +146,22 @@ describe("editor search navigation", () => {
     const searchSource = await Bun.file(new URL("../src/editor/search.ts", import.meta.url)).text();
     const css = await Bun.file(new URL("../src/style.css", import.meta.url)).text();
 
-    expect(source).toContain("cm-search-match-count");
+    expect(source).toContain("panel.append(status)");
     expect(source).toContain("performance.now() - startedAt < 4");
     expect(source).toContain("`${current}/${total}`");
     expect(searchSource).toContain("queueMicrotask(() =>");
     expect(searchSource).not.toContain("mount(): void {\n    this.searchField.select();\n    this.view.dispatch");
     expect(css).toContain(".cm-panel.cm-search .cm-search-match-count");
+    expect(css).toContain("bottom: 7px");
+  });
+
+  test("clears saved search state before reloading a project", async () => {
+    const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
+
+    expect(source.match(/this\.clearEditorSearchForWorkspaceReload\(\);/g)).toHaveLength(2);
+    expect(source).toContain("await this.workspaceLifecycleController.restart();");
+    expect(source).toContain("effects: setSearchQuery.of(emptyQuery)");
+    expect(source).toContain("selection: collapseSearchSelection(state)");
   });
 
   test("uses compact accessible app icons for search actions and toggles", async () => {

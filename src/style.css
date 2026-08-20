@@ -3909,8 +3909,7 @@ button.welcome-item:disabled {
   display: grid !important;
   grid-template-columns:
     minmax(120px, 1fr)
-    repeat(7, var(--editor-line-height-px, 23.8px))
-    34px;
+    repeat(7, var(--editor-line-height-px, 23.8px));
   align-items: center !important;
   width: 100%;
   min-width: 0;
@@ -4069,8 +4068,11 @@ button.welcome-item:disabled {
 }
 
 .cm-panel.cm-search .cm-search-match-count {
+  position: absolute;
+  right: 8px;
+  bottom: 7px;
   min-width: 34px;
-  margin-left: 2px;
+  margin: 0;
   color: var(--ui-header-text);
   font: 11px var(--editor-code-font);
   text-align: center;

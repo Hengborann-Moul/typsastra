@@ -472,8 +472,7 @@ const searchMatchCounter = ViewPlugin.fromClass(class {
     status.className = "cm-search-match-count";
     status.setAttribute("role", "status");
     status.setAttribute("aria-live", "polite");
-    const searchRow = panel.querySelector<HTMLElement>(".cm-search-row");
-    searchRow?.append(status);
+    panel.append(status);
     return status;
   }
 
@@ -497,7 +496,7 @@ const searchMatchCounter = ViewPlugin.fromClass(class {
       const cursor = query.getCursor(state);
       let total = 0;
       let current = 0;
-      status.textContent = "…/…";
+      status.textContent = "0/0";
       status.title = "Counting matches";
 
       const scan = () => {
@@ -518,6 +517,7 @@ const searchMatchCounter = ViewPlugin.fromClass(class {
           total += 1;
           if (result.value.from === selection.from && result.value.to === selection.to) current = total;
         }
+        status.textContent = `${current}/${total}`;
         this.frame = requestAnimationFrame(scan);
       };
       scan();

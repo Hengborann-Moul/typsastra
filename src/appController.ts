@@ -8,11 +8,12 @@ import { EditorView, highlightActiveLine, highlightActiveLineGutter, lineNumbers
 import { undo, redo, undoDepth } from "@codemirror/commands";
 import { indentUnit } from "@codemirror/language";
 import { closeBrackets } from "@codemirror/autocomplete";
-import { openSearchPanel } from "@codemirror/search";
+import { closeSearchPanel, openSearchPanel, SearchQuery, setSearchQuery } from "@codemirror/search";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { themeCompartment, getThemeExtension, wrapCompartment, lineNumbersCompartment, activeLineCompartment, closeBracketsCompartment, indentationGuidesCompartment, tabSizeCompartment, completionCompartment, showZwsCompartment, showZeroWidthSpaces, visibleIndentationMarkers } from "./editor/extensions";
 import { typstLanguage } from "./editor/typstLanguage";
 import { createTypstAutocomplete } from "./editor/autocomplete";
+import { collapseSearchSelection } from "./editor/search";
 import { EditorController } from "./editor/editorController";
 import { EditorInitializationController } from "./editor/editorInitializationController";
 import { SurroundWithDiscoveryController } from "./editor/surroundWithDiscoveryController";
@@ -2676,8 +2677,32 @@ export class TypsastraWorkspaceController {
   }
 
 
-  private restartWorkspace(): Promise<void> {
-    return this.workspaceLifecycleController.restart();
+  private async restartWorkspace(): Promise<void> {
+    this.clearEditorSearchForWorkspaceReload();
+    await this.workspaceLifecycleController.restart();
+    this.clearEditorSearchForWorkspaceReload();
+  }
+
+  private clearEditorSearchForWorkspaceReload(): void {
+    const emptyQuery = new SearchQuery({ search: "" });
+    closeSearchPanel(this.editorInstance);
+    const clearState = (state: EditorState): EditorState => state.update({
+      effects: setSearchQuery.of(emptyQuery),
+      selection: collapseSearchSelection(state),
+    }).state;
+    this.editorInstance.dispatch({
+      effects: setSearchQuery.of(emptyQuery),
+      selection: collapseSearchSelection(this.editorInstance.state),
+    });
+    const activeState = this.editorInstance.state;
+    for (const tab of this.openTabs) {
+      if (tab.editorState) tab.editorState = clearState(tab.editorState);
+      if (this.activeFilePath && filePathKey(tab.path) === filePathKey(this.activeFilePath)) {
+        const selection = activeState.selection.main;
+        tab.selectionAnchor = selection.anchor;
+        tab.selectionHead = selection.head;
+      }
+    }
   }
 
 
