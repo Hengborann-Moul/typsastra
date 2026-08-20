@@ -1,6 +1,14 @@
+diff --git a/node_modules/pdfjs-dist/.bun-tag-4984cf6cd866ee1b b/.bun-tag-4984cf6cd866ee1b
+new file mode 100644
+index 0000000000000000000000000000000000000000..e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
+diff --git a/node_modules/pdfjs-dist/.bun-tag-9ffe36a6f14388d3 b/.bun-tag-9ffe36a6f14388d3
+new file mode 100644
+index 0000000000000000000000000000000000000000..e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
+diff --git a/build/pdf.mjs b/build/pdf.mjs
+index 184f0cfc3275aff6d68b8abce5c6344d39887399..1d9219552cd568068099c79851f3af248c8c471f 100644
 --- a/build/pdf.mjs
 +++ b/build/pdf.mjs
-@@ -15028,6 +15028,9 @@
+@@ -15028,6 +15028,9 @@ class TextLayer {
      textDiv.setAttribute("role", "presentation");
      textDiv.textContent = geom.str;
      textDiv.dir = geom.dir;
@@ -10,7 +18,7 @@
      if (this.#fontInspectorEnabled) {
        textDiv.dataset.fontName = style.fontSubstitutionLoadedName || geom.fontName;
      }
-@@ -15035,7 +15038,7 @@
+@@ -15035,7 +15038,7 @@ class TextLayer {
        textDivProperties.angle = angle * (180 / Math.PI);
      }
      let shouldScaleText = false;
@@ -19,7 +27,7 @@
        shouldScaleText = true;
      } else if (geom.str !== " " && geom.transform[0] !== geom.transform[3]) {
        const absScaleX = Math.abs(geom.transform[0]),
-@@ -15796,14 +15799,16 @@
+@@ -15796,14 +15799,16 @@ class PDFPageProxy {
    }
    streamTextContent({
      includeMarkedContent = false,
@@ -38,9 +46,11 @@
      }, {
        highWaterMark: TEXT_CONTENT_CHUNK_SIZE,
        size(textContent) {
+diff --git a/build/pdf.worker.mjs b/build/pdf.worker.mjs
+index 66ae0d0b2282d6763eaa00b53983964e07b295dd..fa6f668085bcae624d301e4495a6b65dc5d637a6 100644
 --- a/build/pdf.worker.mjs
 +++ b/build/pdf.worker.mjs
-@@ -17384,7 +17384,7 @@
+@@ -17384,7 +17384,7 @@ function getUnicodeRangeFor(value, lastPosition = -1) {
    }
    return -1;
  }
@@ -49,7 +59,7 @@
  const CategoryCache = new Map();
  function getCharUnicodeCategory(char) {
    const cachedCategory = CategoryCache.get(char);
-@@ -35678,9 +35678,13 @@
+@@ -35678,9 +35678,13 @@ class PartialEvaluator {
      markedContentData = null,
      disableNormalization = false,
      keepWhiteSpace = false,
@@ -63,7 +73,7 @@
      if (stream.isAsync) {
        const bytes = await stream.asyncGetBytes();
        if (bytes) {
-@@ -35855,13 +35859,14 @@
+@@ -35855,13 +35859,14 @@ class PartialEvaluator {
      }
      function runBidiTransform(textChunk) {
        let text = textChunk.str.join("");
@@ -80,7 +90,27 @@
          width: Math.abs(textChunk.totalWidth),
          height: Math.abs(textChunk.totalHeight),
          transform: textChunk.transform,
-@@ -36076,6 +36081,10 @@
+@@ -35952,6 +35957,9 @@ class PartialEvaluator {
+           } else {
+             textContentItem.height += advanceY;
+           }
++        } else if (preserveLogicalText) {
++          // Enhanced Unicode PDFs encode real spaces explicitly. Avoid
++          // synthesizing additional spaces from positioned logical units.
+         } else if (!addFakeSpaces(advanceY, textContentItem.prevTransform, textOrientation)) {
+           if (textContentItem.str.length === 0) {
+             resetLastChars();
+@@ -35998,6 +36006,9 @@ class PartialEvaluator {
+         } else {
+           textContentItem.width += advanceX;
+         }
++      } else if (preserveLogicalText) {
++        // Enhanced Unicode PDFs encode real spaces explicitly. Avoid
++        // synthesizing additional spaces from positioned logical units.
+       } else if (!addFakeSpaces(advanceX, textContentItem.prevTransform, textOrientation)) {
+         if (textContentItem.str.length === 0) {
+           resetLastChars();
+@@ -36076,6 +36087,10 @@ class PartialEvaluator {
            }
            continue;
          }
@@ -91,7 +121,7 @@
          const textChunk = ensureTextContentItem();
          if (category.isZeroWidthDiacritic) {
            scaledDim = 0;
-@@ -36110,6 +36119,9 @@
+@@ -36110,6 +36125,9 @@ class PartialEvaluator {
              textState.translateTextMatrix(0, -charSpacing);
            }
          }
@@ -101,7 +131,7 @@
        }
      }
      function appendEOL() {
-@@ -36379,6 +36391,7 @@
+@@ -36379,6 +36397,7 @@ class PartialEvaluator {
                  markedContentData,
                  disableNormalization,
                  keepWhiteSpace,
@@ -109,7 +139,7 @@
                  prevRefs: seenRefs
                }).then(function () {
                  if (!sinkWrapper.enqueueInvoked) {
-@@ -59382,6 +59395,7 @@
+@@ -59382,6 +59401,7 @@ class Page {
      task,
      includeMarkedContent,
      disableNormalization,
@@ -117,7 +147,7 @@
      sink,
      intersector = null
    }) {
-@@ -59397,6 +59411,7 @@
+@@ -59397,6 +59417,7 @@ class Page {
        resources,
        includeMarkedContent,
        disableNormalization,
@@ -125,7 +155,7 @@
        sink,
        viewBox: this.view,
        lang,
-@@ -64772,7 +64787,8 @@
+@@ -64772,7 +64793,8 @@ class WorkerMessageHandler {
        pageId,
        pageIndex,
        includeMarkedContent,
@@ -135,7 +165,178 @@
      }, sink) {
        pdfManager.getPage(pageId).then(function (page) {
          const task = new WorkerTask("GetTextContent: page " + pageIndex);
-@@ -64783,7 +64799,8 @@
+@@ -64783,7 +64805,8 @@ class WorkerMessageHandler {
+           task,
+           sink,
+           includeMarkedContent,
+-          disableNormalization
++          disableNormalization,
++          preserveLogicalText
+         }).then(() => {
+           if (start) {
+             info(`${task.name}; time=${Date.now() - start}ms`);
+diff --git a/legacy/build/pdf.mjs b/legacy/build/pdf.mjs
+index 1529140e3b8a97c852c73a69802b331969447959..d04620834d72bc10c8138e5675cba498a1451b8b 100644
+--- a/legacy/build/pdf.mjs
++++ b/legacy/build/pdf.mjs
+@@ -21347,6 +21347,9 @@ class TextLayer {
+     textDiv.setAttribute("role", "presentation");
+     textDiv.textContent = geom.str;
+     textDiv.dir = geom.dir;
++    if (geom.preserveLogicalText) {
++      this.#rootContainer.dataset.preserveLogicalText = "true";
++    }
+     if (this.#fontInspectorEnabled) {
+       textDiv.dataset.fontName = style.fontSubstitutionLoadedName || geom.fontName;
+     }
+@@ -21354,7 +21357,7 @@ class TextLayer {
+       textDivProperties.angle = angle * (180 / Math.PI);
+     }
+     let shouldScaleText = false;
+-    if (geom.str.length > 1) {
++    if (geom.preserveLogicalText || geom.str.length > 1) {
+       shouldScaleText = true;
+     } else if (geom.str !== " " && geom.transform[0] !== geom.transform[3]) {
+       const absScaleX = Math.abs(geom.transform[0]),
+@@ -22138,14 +22141,16 @@ class PDFPageProxy {
+   }
+   streamTextContent({
+     includeMarkedContent = false,
+-    disableNormalization = false
++    disableNormalization = false,
++    preserveLogicalText = false
+   } = {}) {
+     const TEXT_CONTENT_CHUNK_SIZE = 100;
+     return this._transport.messageHandler.sendWithStream("GetTextContent", {
+       pageId: this.#pagesMapper.getPageId(this._pageIndex + 1) - 1,
+       pageIndex: this._pageIndex,
+       includeMarkedContent: includeMarkedContent === true,
+-      disableNormalization: disableNormalization === true
++      disableNormalization: disableNormalization === true,
++      preserveLogicalText: preserveLogicalText === true
+     }, {
+       highWaterMark: TEXT_CONTENT_CHUNK_SIZE,
+       size(textContent) {
+diff --git a/legacy/build/pdf.worker.mjs b/legacy/build/pdf.worker.mjs
+index ff381bb9b154685f8ed641b6c1adabb4c732e1f3..7211c366000bece5cdc49a3f6a6a779b616ca4fd 100644
+--- a/legacy/build/pdf.worker.mjs
++++ b/legacy/build/pdf.worker.mjs
+@@ -23095,7 +23095,7 @@ function getUnicodeRangeFor(value, lastPosition = -1) {
+   }
+   return -1;
+ }
+-const SpecialCharRegExp = /^(\s)|(\p{Mn})|(\p{Cf})$/u;
++const SpecialCharRegExp = /^(\s)$|^(\p{Mn})$|^(\p{Cf})$/u;
+ const CategoryCache = new Map();
+ function getCharUnicodeCategory(char) {
+   const cachedCategory = CategoryCache.get(char);
+@@ -41567,9 +41567,13 @@ class PartialEvaluator {
+     markedContentData = null,
+     disableNormalization = false,
+     keepWhiteSpace = false,
++    preserveLogicalText = false,
+     prevRefs = null,
+     intersector = null
+   }) {
++    if (preserveLogicalText) {
++      keepWhiteSpace = true;
++    }
+     if (stream.isAsync) {
+       const bytes = await stream.asyncGetBytes();
+       if (bytes) {
+@@ -41744,13 +41748,14 @@ class PartialEvaluator {
+     }
+     function runBidiTransform(textChunk) {
+       let text = textChunk.str.join("");
+-      if (!disableNormalization) {
++      if (!disableNormalization && !preserveLogicalText) {
+         text = normalizeUnicode(text);
+       }
+       const bidiResult = bidi(text, -1, textChunk.vertical);
+       return {
+-        str: bidiResult.str,
++        str: preserveLogicalText ? text : bidiResult.str,
+         dir: bidiResult.dir,
++        preserveLogicalText,
+         width: Math.abs(textChunk.totalWidth),
+         height: Math.abs(textChunk.totalHeight),
+         transform: textChunk.transform,
+@@ -41841,6 +41846,9 @@ class PartialEvaluator {
+           } else {
+             textContentItem.height += advanceY;
+           }
++        } else if (preserveLogicalText) {
++          // Enhanced Unicode PDFs encode real spaces explicitly. Avoid
++          // synthesizing additional spaces from positioned logical units.
+         } else if (!addFakeSpaces(advanceY, textContentItem.prevTransform, textOrientation)) {
+           if (textContentItem.str.length === 0) {
+             resetLastChars();
+@@ -41887,6 +41895,9 @@ class PartialEvaluator {
+         } else {
+           textContentItem.width += advanceX;
+         }
++      } else if (preserveLogicalText) {
++        // Enhanced Unicode PDFs encode real spaces explicitly. Avoid
++        // synthesizing additional spaces from positioned logical units.
+       } else if (!addFakeSpaces(advanceX, textContentItem.prevTransform, textOrientation)) {
+         if (textContentItem.str.length === 0) {
+           resetLastChars();
+@@ -41965,6 +41976,10 @@ class PartialEvaluator {
+           }
+           continue;
+         }
++        const isolateLogicalGlyph = preserveLogicalText && Array.from(glyph.unicode).length > 1;
++        if (isolateLogicalGlyph) {
++          flushTextContentItem();
++        }
+         const textChunk = ensureTextContentItem();
+         if (category.isZeroWidthDiacritic) {
+           scaledDim = 0;
+@@ -41999,6 +42014,9 @@ class PartialEvaluator {
+             textState.translateTextMatrix(0, -charSpacing);
+           }
+         }
++        if (isolateLogicalGlyph) {
++          flushTextContentItem();
++        }
+       }
+     }
+     function appendEOL() {
+@@ -42268,6 +42286,7 @@ class PartialEvaluator {
+                 markedContentData,
+                 disableNormalization,
+                 keepWhiteSpace,
++                preserveLogicalText,
+                 prevRefs: seenRefs
+               }).then(function () {
+                 if (!sinkWrapper.enqueueInvoked) {
+@@ -65539,6 +65558,7 @@ class Page {
+     task,
+     includeMarkedContent,
+     disableNormalization,
++    preserveLogicalText = false,
+     sink,
+     intersector = null
+   }) {
+@@ -65554,6 +65574,7 @@ class Page {
+       resources,
+       includeMarkedContent,
+       disableNormalization,
++      preserveLogicalText,
+       sink,
+       viewBox: this.view,
+       lang,
+@@ -70987,7 +71008,8 @@ class WorkerMessageHandler {
+       pageId,
+       pageIndex,
+       includeMarkedContent,
+-      disableNormalization
++      disableNormalization,
++      preserveLogicalText
+     }, sink) {
+       pdfManager.getPage(pageId).then(function (page) {
+         const task = new WorkerTask("GetTextContent: page " + pageIndex);
+@@ -70998,7 +71020,8 @@ class WorkerMessageHandler {
            task,
            sink,
            includeMarkedContent,

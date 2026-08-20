@@ -79,6 +79,18 @@ For each case, the harness records:
 
 The PDF.js check uses Typsastra's pinned `pdfjs-dist` patch with `preserveLogicalText`. It tests the same logical-text path used by standalone PDF selection and search.
 
+In this mode, enhanced PDFs preserve authored space glyphs and PDF.js does not
+infer additional spaces from the distance between positioned logical units. The
+patch covers both PDF.js's browser build and the legacy Node build used by the
+automated validator, so the report exercises the same extraction semantics as
+Typsastra's standalone preview.
+
+The current reference run passes exact extraction for 7 of 10 cases and bounded
+geometry for all 10. Combining Latin, Khmer, Thai, and Lao now pass exactly. The
+remaining failures are engine-level work: Arabic still needs line-level logical
+ordering, while Devanagari and the mixed fixture expose unsupported collection
+font mappings and invalid control characters.
+
 ## Viewer compatibility matrix
 
 The generated report contains an automated PDF.js row and placeholders for manual testing in:
@@ -106,4 +118,3 @@ Do not offer the enhanced compiler in Typsastra's developer settings until:
 - the fork is built reproducibly on every supported platform,
 - the manual viewer matrix is recorded for release artifacts, and
 - installation remains explicitly opt-in and separate from Tinymist.
-

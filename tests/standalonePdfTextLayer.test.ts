@@ -36,7 +36,9 @@ test("standalone PDF search uses geometry-only highlights instead of browser Fin
 });
 
 test("the pinned PDF.js worker preserves logical Unicode text", () => {
+  expect(pdfPatch).toContain("diff --git a/legacy/build/pdf.worker.mjs");
   expect(pdfPatch).toContain("preserveLogicalText ? text : bidiResult.str");
   expect(pdfPatch).toContain("!disableNormalization && !preserveLogicalText");
   expect(pdfPatch).toContain("isolateLogicalGlyph");
+  expect(pdfPatch.match(/Enhanced Unicode PDFs encode real spaces explicitly/g)?.length).toBe(4);
 });
