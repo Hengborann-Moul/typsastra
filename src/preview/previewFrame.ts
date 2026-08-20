@@ -91,6 +91,7 @@ import {
   PdfiumDocument,
   isPdfiumDocument,
   isPdfiumPage,
+  type PdfiumTextGlyph,
 } from "./pdfiumDocument";
 
 type PdfJsModule = typeof import("pdfjs-dist");
@@ -127,6 +128,14 @@ type StandalonePdfTextLayer = {
     hasEOL: boolean;
     baselineY: number | null;
     height: number | null;
+    searchGeometry?: Array<{
+      from: number;
+      to: number;
+      left: number;
+      top: number;
+      width: number;
+      height: number;
+    }>;
   }>;
 };
 
@@ -1505,6 +1514,14 @@ export class PreviewFrame {
           hasEOL: run.hasEOL,
           baselineY: run.bottom,
           height: Math.abs(run.top - run.bottom),
+          searchGeometry: run.glyphs.map((glyph: PdfiumTextGlyph) => ({
+            from: glyph.from,
+            to: glyph.to,
+            left: glyph.left * viewportScale,
+            top: (page.height - glyph.top) * viewportScale,
+            width: Math.max(0, (glyph.right - glyph.left) * viewportScale),
+            height: Math.max(0, (glyph.top - glyph.bottom) * viewportScale),
+          })),
         });
       }
 
@@ -1859,12 +1876,19 @@ export class PreviewFrame {
     panel.hidden = false;
     input.focus();
     input.select();
+    // Closing the panel clears transient results but retains the query. Run
+    // that query again on reopen so its markers and count are restored.
+    this.scheduleStandalonePdfSearch(input.value, 0);
   }
 
   private closeStandalonePdfSearch(): void {
     const doc = this.iframe?.contentDocument;
     const panel = doc?.getElementById("pdf-search-panel") as HTMLElement | null;
     if (panel) panel.hidden = true;
+    if (this.standalonePdfSearchTimer !== null) {
+      window.clearTimeout(this.standalonePdfSearchTimer);
+      this.standalonePdfSearchTimer = null;
+    }
     this.standalonePdfSearchGeneration += 1;
     this.standalonePdfSearchMatches = [];
     this.standalonePdfSearchIndex = -1;
@@ -1873,22 +1897,25 @@ export class PreviewFrame {
     this.iframe?.contentWindow?.focus();
   }
 
-  private scheduleStandalonePdfSearch(query: string): void {
+  private scheduleStandalonePdfSearch(query: string, delay = 90): void {
     if (this.standalonePdfSearchTimer !== null) window.clearTimeout(this.standalonePdfSearchTimer);
     this.standalonePdfSearchTimer = window.setTimeout(() => {
       this.standalonePdfSearchTimer = null;
       void this.searchStandalonePdf(query);
-    }, 90);
+    }, delay);
   }
 
   private async searchStandalonePdf(rawQuery: string): Promise<void> {
     const query = rawQuery.trim().toLocaleLowerCase();
     const generation = ++this.standalonePdfSearchGeneration;
-    this.standalonePdfSearchMatches = [];
-    this.standalonePdfSearchIndex = -1;
-    this.clearStandalonePdfSearchMarkers();
     this.updateStandalonePdfSearchCount(query ? "Searching…" : undefined);
-    if (!query || !this.pdfDoc || !this.isStandalonePdfSurface()) return;
+    if (!query || !this.pdfDoc || !this.isStandalonePdfSurface()) {
+      this.standalonePdfSearchMatches = [];
+      this.standalonePdfSearchIndex = -1;
+      this.clearStandalonePdfSearchMarkers();
+      this.updateStandalonePdfSearchCount();
+      return;
+    }
 
     const matches: StandalonePdfSearchMatch[] = [];
     for (let pageNo = 1; pageNo <= Number(this.pdfDoc.numPages); pageNo += 1) {
@@ -1918,8 +1945,9 @@ export class PreviewFrame {
   private stepStandalonePdfSearch(direction: -1 | 1): void {
     const count = this.standalonePdfSearchMatches.length;
     if (count < 1) return;
+    const previousIndex = this.standalonePdfSearchIndex;
     this.standalonePdfSearchIndex = (this.standalonePdfSearchIndex + direction + count) % count;
-    this.renderAllStandalonePdfSearchMarkers();
+    this.updateStandalonePdfCurrentMarkers(previousIndex);
     this.updateStandalonePdfSearchCount();
     this.revealStandalonePdfSearchMatch();
   }
@@ -1930,15 +1958,47 @@ export class PreviewFrame {
     const slot = this.iframe?.contentDocument
       ?.querySelector<HTMLElement>(`.pdf-page-container[data-page-no="${match.pageNo}"]`);
     if (!slot) return;
-    this.jumpToPreviewOffset(slot.offsetTop, match.pageNo);
-    this.queuePageRender(match.pageNo, 0, "settled-visible");
-    const reveal = () => {
-      const marker = slot.querySelector<HTMLElement>(
-        `.pdf-search-marker[data-match-index="${this.standalonePdfSearchIndex}"]`,
-      );
-      marker?.scrollIntoView({ block: "center", inline: "nearest", behavior: "auto" });
-    };
-    requestAnimationFrame(() => requestAnimationFrame(reveal));
+    const marker = slot.querySelector<HTMLElement>(
+      `.pdf-search-marker[data-match-index="${this.standalonePdfSearchIndex}"]`,
+    );
+    if (marker) {
+      this.revealStandalonePdfMarker(marker);
+    } else if (!this.standalonePdfTextLayers.has(match.pageNo)) {
+      // Keep navigation inside the iframe. Element.scrollIntoView() can also
+      // scroll the parent WebView, which moves Typsastra's title bar away.
+      this.scrollStandalonePdfViewport(slot.offsetTop, match.pageNo);
+      this.queuePageRender(match.pageNo, 0, "settled-visible");
+    }
+  }
+
+  private revealStandalonePdfMarker(marker: HTMLElement): void {
+    const view = this.iframe?.contentWindow;
+    const doc = this.iframe?.contentDocument;
+    if (!view || !doc) return;
+    const panel = doc.getElementById("pdf-search-panel") as HTMLElement | null;
+    const panelBottom = panel && !panel.hidden ? panel.getBoundingClientRect().bottom : 0;
+    const rect = marker.getBoundingClientRect();
+    const viewportBottom = view.innerHeight;
+    if (rect.top >= panelBottom && rect.bottom <= viewportBottom) return;
+    const availableTop = panelBottom;
+    const availableHeight = Math.max(1, viewportBottom - availableTop);
+    const targetTop = Math.max(
+      0,
+      view.scrollY + rect.top - availableTop - (availableHeight - rect.height) / 2,
+    );
+    this.scrollStandalonePdfViewport(targetTop, this.standalonePdfSearchMatches[this.standalonePdfSearchIndex]?.pageNo);
+  }
+
+  private scrollStandalonePdfViewport(top: number, pageNo?: number): void {
+    const view = this.iframe?.contentWindow;
+    if (!view) return;
+    view.scrollTo({ top, behavior: "auto" });
+    if (pageNo !== undefined) {
+      this.motion.reset(view.scrollY, performance.now());
+      this.motionDestinationPage = pageNo;
+      this.reportPageStatus(pageNo);
+      this.onScrollPositionChanged?.(view.scrollY);
+    }
   }
 
   private updateStandalonePdfSearchCount(message?: string): void {
@@ -1964,6 +2024,17 @@ export class PreviewFrame {
     }
   }
 
+  private updateStandalonePdfCurrentMarkers(previousIndex: number): void {
+    const doc = this.iframe?.contentDocument;
+    if (!doc) return;
+    doc.querySelectorAll<HTMLElement>(
+      `.pdf-search-marker[data-match-index="${previousIndex}"]`,
+    ).forEach(marker => marker.classList.remove("is-current"));
+    doc.querySelectorAll<HTMLElement>(
+      `.pdf-search-marker[data-match-index="${this.standalonePdfSearchIndex}"]`,
+    ).forEach(marker => marker.classList.add("is-current"));
+  }
+
   private renderStandalonePdfSearchMarkers(pageNo: number): void {
     const layer = this.standalonePdfTextLayers.get(pageNo);
     const slot = layer?.container.closest<HTMLElement>(".pdf-page-container");
@@ -1975,6 +2046,27 @@ export class PreviewFrame {
       const match = this.standalonePdfSearchMatches[matchIndex];
       if (match.pageNo !== pageNo) continue;
       for (const fragment of match.fragments) {
+        const item = layer.textItems[fragment.itemIndex];
+        if (item?.searchGeometry) {
+          const geometry = item.searchGeometry.filter(rect => (
+            rect.to > fragment.from && rect.from < fragment.to
+          ));
+          if (geometry.length > 0) {
+            const left = Math.min(...geometry.map(rect => rect.left));
+            const top = Math.min(...geometry.map(rect => rect.top));
+            const right = Math.max(...geometry.map(rect => rect.left + rect.width));
+            const bottom = Math.max(...geometry.map(rect => rect.top + rect.height));
+            this.appendStandalonePdfSearchMarker(
+              slot,
+              matchIndex,
+              left,
+              top,
+              right - left,
+              bottom - top,
+            );
+            continue;
+          }
+        }
         const textDiv = layer.textDivs[fragment.itemIndex];
         const textNode = textDiv?.firstChild;
         if (!textNode || textNode.nodeType !== Node.TEXT_NODE) continue;
@@ -1985,17 +2077,35 @@ export class PreviewFrame {
         range.setStart(textNode, fragment.from);
         range.setEnd(textNode, Math.min(fragment.to, textLength));
         for (const rect of range.getClientRects()) {
-          const marker = slot.ownerDocument.createElement("span");
-          marker.className = `pdf-search-marker${matchIndex === this.standalonePdfSearchIndex ? " is-current" : ""}`;
-          marker.dataset.matchIndex = String(matchIndex);
-          marker.style.left = `${Math.max(0, rect.left - slotRect.left)}px`;
-          marker.style.top = `${Math.max(0, rect.top - slotRect.top)}px`;
-          marker.style.width = `${Math.min(rect.width, slotRect.right - rect.left)}px`;
-          marker.style.height = `${Math.min(rect.height, slotRect.bottom - rect.top)}px`;
-          slot.append(marker);
+          this.appendStandalonePdfSearchMarker(
+            slot,
+            matchIndex,
+            Math.max(0, rect.left - slotRect.left),
+            Math.max(0, rect.top - slotRect.top),
+            Math.min(rect.width, slotRect.right - rect.left),
+            Math.min(rect.height, slotRect.bottom - rect.top),
+          );
         }
       }
     }
+  }
+
+  private appendStandalonePdfSearchMarker(
+    slot: HTMLElement,
+    matchIndex: number,
+    left: number,
+    top: number,
+    width: number,
+    height: number,
+  ): void {
+    const marker = slot.ownerDocument.createElement("span");
+    marker.className = `pdf-search-marker${matchIndex === this.standalonePdfSearchIndex ? " is-current" : ""}`;
+    marker.dataset.matchIndex = String(matchIndex);
+    marker.style.left = `${Math.max(0, left)}px`;
+    marker.style.top = `${Math.max(0, top)}px`;
+    marker.style.width = `${Math.max(0, width)}px`;
+    marker.style.height = `${Math.max(0, height)}px`;
+    slot.append(marker);
   }
 
   private installStandalonePdfSearchCaret(field: HTMLInputElement): void {

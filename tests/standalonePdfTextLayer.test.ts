@@ -39,6 +39,12 @@ test("standalone PDF search uses geometry-only highlights instead of browser Fin
   expect(frameSource).toContain("pdf-search-editor-caret");
   expect(frameSource).toContain('id="pdf-search-next"');
   expect(frameSource).toContain("findPdfTextMatches(items, query)");
+  expect(frameSource).toContain("this.scheduleStandalonePdfSearch(input.value, 0)");
+  expect(frameSource).toContain("searchGeometry: run.glyphs.map");
+  expect(frameSource).toContain("if (!this.standalonePdfTextLayers.has(match.pageNo))");
+  expect(frameSource).toContain("this.updateStandalonePdfCurrentMarkers(previousIndex)");
+  expect(frameSource).toContain("this.scrollStandalonePdfViewport(targetTop");
+  expect(frameSource).not.toContain('marker?.scrollIntoView({ block: "center"');
 });
 
 test("standalone PDF copy serializes logical text items instead of positioned DOM text", () => {

@@ -34,6 +34,16 @@ export type PdfiumTextRun = {
   top: number;
   hasEOL: boolean;
   dir: "ltr" | "rtl";
+  glyphs: PdfiumTextGlyph[];
+};
+
+export type PdfiumTextGlyph = {
+  from: number;
+  to: number;
+  left: number;
+  bottom: number;
+  right: number;
+  top: number;
 };
 
 type PdfiumViewport = {
@@ -263,7 +273,24 @@ export function buildPdfiumTextRuns(page: PdfiumPageText): PdfiumTextRun[] {
       char.left !== null && char.bottom !== null && char.right !== null && char.top !== null
     ));
     if (positioned.length < 1) return [];
-    const text = orderPdfiumLineChars(line.chars).map(char => char.text).join("");
+    const ordered = orderPdfiumLineChars(line.chars);
+    let text = "";
+    const glyphs: PdfiumTextGlyph[] = [];
+    for (const char of ordered) {
+      const from = text.length;
+      text += char.text;
+      const to = text.length;
+      if (char.left !== null && char.bottom !== null && char.right !== null && char.top !== null) {
+        glyphs.push({
+          from,
+          to,
+          left: char.left,
+          bottom: char.bottom,
+          right: char.right,
+          top: char.top,
+        });
+      }
+    }
     return [{
       text,
       left: Math.min(...positioned.map(char => Number(char.left))),
@@ -272,6 +299,7 @@ export function buildPdfiumTextRuns(page: PdfiumPageText): PdfiumTextRun[] {
       top: Math.max(...positioned.map(char => Number(char.top))),
       hasEOL: line.hasEOL,
       dir: firstStrongDirection(text),
+      glyphs,
     }];
   });
 }

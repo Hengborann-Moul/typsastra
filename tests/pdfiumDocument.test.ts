@@ -23,6 +23,12 @@ describe("PDFium standalone text runs", () => {
     expect(runs.map(run => run.text)).toEqual(["Hi ក", "N"]);
     expect(runs.map(run => run.hasEOL)).toEqual([true, false]);
     expect(runs[0]).toMatchObject({ left: 10, right: 36, bottom: 150, top: 162 });
+    expect(runs[0].glyphs).toEqual([
+      { from: 0, to: 1, left: 10, bottom: 150, right: 18, top: 162 },
+      { from: 1, to: 2, left: 18, bottom: 150, right: 22, top: 162 },
+      { from: 2, to: 3, left: 22, bottom: 150, right: 26, top: 162 },
+      { from: 3, to: 4, left: 26, bottom: 150, right: 36, top: 162 },
+    ]);
   });
 
   test("restores logical order within a visually positioned RTL run", () => {
