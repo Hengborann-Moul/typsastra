@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { buildPdfiumTextRuns, type PdfiumPageText } from "../src/preview/pdfiumDocument";
+import {
+  buildPdfiumTextRuns,
+  groupPdfiumGlyphsByGrapheme,
+  type PdfiumPageText,
+} from "../src/preview/pdfiumDocument";
 
 function page(chars: PdfiumPageText["chars"]): PdfiumPageText {
   return { width: 200, height: 200, chars };
@@ -57,5 +61,27 @@ describe("PDFium standalone text runs", () => {
 
     expect(runs[0].text).toBe("EU-ARABIC-01: ابت.");
     expect(runs[0].dir).toBe("ltr");
+  });
+
+  test("merges PDFium character boxes into indivisible Khmer graphemes", () => {
+    const text = "កម្ពុជា";
+    const glyphs = [...text].map((value, index) => {
+      const from = [...text].slice(0, index).join("").length;
+      return {
+        from,
+        to: from + value.length,
+        left: index * 5,
+        bottom: 10,
+        right: index * 5 + 7,
+        top: 22,
+      };
+    });
+
+    const grouped = groupPdfiumGlyphsByGrapheme(text, glyphs);
+
+    expect(grouped.map(glyph => text.slice(glyph.from, glyph.to)).join("")).toBe(text);
+    expect(grouped.length).toBeLessThan([...text].length);
+    expect(grouped.at(-1)?.to).toBe(text.length);
+    expect(grouped.some(glyph => glyph.to - glyph.from > 1)).toBe(true);
   });
 });

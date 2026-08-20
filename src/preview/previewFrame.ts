@@ -93,6 +93,13 @@ import {
   isPdfiumPage,
   type PdfiumTextGlyph,
 } from "./pdfiumDocument";
+import {
+  hitTestStandalonePdfSelection,
+  serializeStandalonePdfSelection,
+  standalonePdfSelectionFragments,
+  type StandalonePdfSelectionEndpoint,
+  type StandalonePdfSelectionItem,
+} from "./standalonePdfSelection";
 
 type PdfJsModule = typeof import("pdfjs-dist");
 
@@ -123,20 +130,7 @@ type PageDimensions = {
 type StandalonePdfTextLayer = {
   container: HTMLElement;
   textDivs: HTMLElement[];
-  textItems: Array<{
-    text: string;
-    hasEOL: boolean;
-    baselineY: number | null;
-    height: number | null;
-    searchGeometry?: Array<{
-      from: number;
-      to: number;
-      left: number;
-      top: number;
-      width: number;
-      height: number;
-    }>;
-  }>;
+  textItems: StandalonePdfSelectionItem[];
 };
 
 type StandalonePdfSearchMatch = {
@@ -224,6 +218,12 @@ export class PreviewFrame {
   private standalonePdfSearchIndex = -1;
   private standalonePdfSearchGeneration = 0;
   private standalonePdfSearchTimer: number | null = null;
+  private standalonePdfSelectionAnchor: StandalonePdfSelectionEndpoint | null = null;
+  private standalonePdfSelectionFocus: StandalonePdfSelectionEndpoint | null = null;
+  private standalonePdfSelectionPointerId: number | null = null;
+  private standalonePdfSelectionOrigin: { x: number; y: number } | null = null;
+  private standalonePdfSelectionDragging = false;
+  private standalonePdfSelectionRetainClick = false;
 
   constructor(
     private readonly pane: HTMLElement,
@@ -868,12 +868,14 @@ export class PreviewFrame {
       .pdf-page-canvas-dark{display:none}
       .pdf-text-layer{color-scheme:only light;position:absolute;text-align:initial;inset:0;box-sizing:border-box;max-width:100%;max-height:100%;overflow:clip;contain:layout paint;opacity:1;line-height:1;letter-spacing:normal;word-spacing:normal;-webkit-text-size-adjust:none;text-size-adjust:none;forced-color-adjust:none;transform-origin:0 0;z-index:1;caret-color:CanvasText;--min-font-size:1;--text-scale-factor:calc(var(--total-scale-factor) * var(--min-font-size));--min-font-size-inv:calc(1 / var(--min-font-size))}
       .pdf-text-layer :is(span,br){color:transparent;position:absolute;white-space:pre;cursor:text;transform-origin:0 0;-webkit-user-select:text;user-select:text}
+      .pdfium-text-layer :is(span,br){-webkit-user-select:none;user-select:none}
       .pdf-text-layer>:not(.markedContent),.pdf-text-layer .markedContent span:not(.markedContent){z-index:1;--font-height:0;font-size:calc(var(--text-scale-factor) * var(--font-height));--scale-x:1;--rotate:0deg;transform:rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv))}
       .pdf-text-layer>.pdfium-text-run{z-index:1;box-sizing:border-box;display:block;overflow:visible;font-family:Arial,sans-serif;font-size:var(--pdfium-font-size)!important;line-height:1!important;transform:scaleX(var(--pdfium-scale-x))!important}
       .pdf-text-layer .markedContent{display:contents}
       .pdf-text-layer span[role="img"]{cursor:default;-webkit-user-select:none;user-select:none}
-      .pdf-text-layer ::selection{background:color-mix(in srgb,AccentColor,transparent 50%);color:transparent}
-      .pdf-text-layer br::selection{background:transparent}
+      .pdf-text-layer:not(.pdfium-text-layer) ::selection{background:color-mix(in srgb,AccentColor,transparent 50%);color:transparent}
+      .pdf-text-layer:not(.pdfium-text-layer) br::selection{background:transparent}
+      .pdf-selection-marker{position:absolute;z-index:3;box-sizing:border-box;background:color-mix(in srgb,AccentColor,transparent 48%);pointer-events:none}
       .pdf-search-marker{position:absolute;z-index:2;box-sizing:border-box;background:rgba(255,214,0,.52);pointer-events:none}
       .pdf-search-marker.is-current{background:rgba(255,145,0,.68);outline:1px solid rgba(122,66,0,.72);outline-offset:-1px}
       #pdf-search-panel{position:fixed;top:0;left:0;right:0;z-index:2147483647;box-sizing:border-box;display:grid;grid-template-columns:minmax(120px,1fr) repeat(2,var(--preview-editor-line-height)) 50px;align-items:center;gap:4px;width:100%;padding:6px 38px 6px 8px;border:1px solid var(--preview-ui-border);border-top:0;border-radius:0;background:var(--preview-ui-bg);color:var(--preview-ui-text);box-shadow:0 4px 12px rgba(0,0,0,.15);font-family:var(--preview-editor-font)}
@@ -1462,6 +1464,7 @@ export class PreviewFrame {
           })),
         });
         this.renderStandalonePdfSearchMarkers(pageNo);
+        this.renderStandalonePdfSelectionMarkers(pageNo);
       }
       return container;
     } catch (error) {
@@ -1533,6 +1536,7 @@ export class PreviewFrame {
       if (pageNo > 0) {
         this.standalonePdfTextLayers.set(pageNo, { container, textDivs, textItems });
         this.renderStandalonePdfSearchMarkers(pageNo);
+        this.renderStandalonePdfSelectionMarkers(pageNo);
       }
       return container;
     } catch (error) {
@@ -1672,6 +1676,7 @@ export class PreviewFrame {
     this.standalonePdfTextLayers.clear();
     this.standalonePdfSearchMatches = [];
     this.standalonePdfSearchIndex = -1;
+    this.clearStandalonePdfSelection();
   }
 
   public scrollToPage(pageNo: number): void {
@@ -2124,6 +2129,152 @@ export class PreviewFrame {
     slot.append(marker);
   }
 
+  private standalonePdfSelectionAtPointer(
+    event: PointerEvent,
+    maxDistance = Number.POSITIVE_INFINITY,
+  ): StandalonePdfSelectionEndpoint | null {
+    const target = event.target as Element | null;
+    const slot = target?.closest<HTMLElement>(".pdf-page-container");
+    const pageNo = Number(slot?.dataset.pageNo);
+    const layer = Number.isFinite(pageNo) ? this.standalonePdfTextLayers.get(pageNo) : undefined;
+    if (!slot || !layer) return null;
+    const rect = slot.getBoundingClientRect();
+    return hitTestStandalonePdfSelection(
+      pageNo,
+      layer.textItems,
+      event.clientX - rect.left,
+      event.clientY - rect.top,
+      maxDistance,
+    );
+  }
+
+  private beginStandalonePdfSelection(event: PointerEvent): boolean {
+    const doc = this.iframe?.contentDocument;
+    if (
+      !doc
+      || doc.documentElement.dataset.previewSurface !== "pdf"
+      || event.button !== 0
+      || (event.target as Element | null)?.closest("#pdf-search-panel,.annotation-link")
+    ) return false;
+    // A selection must begin on text. During a drag, hit testing may resolve
+    // through the whitespace between adjacent logical units.
+    const endpoint = this.standalonePdfSelectionAtPointer(event, 4);
+    if (!endpoint) {
+      this.clearStandalonePdfSelection();
+      return false;
+    }
+    event.preventDefault();
+    // Preventing native text selection also prevents the iframe document from
+    // receiving focus automatically. Focus its body explicitly so Ctrl/Cmd+C
+    // reaches the custom clipboard handler instead of the editor behind it.
+    doc.body.tabIndex = -1;
+    doc.body.focus({ preventScroll: true });
+    doc.getSelection()?.removeAllRanges();
+    this.standalonePdfSelectionAnchor = endpoint;
+    this.standalonePdfSelectionFocus = endpoint;
+    this.standalonePdfSelectionPointerId = event.pointerId;
+    this.standalonePdfSelectionOrigin = { x: event.clientX, y: event.clientY };
+    this.standalonePdfSelectionDragging = false;
+    this.standalonePdfSelectionRetainClick = false;
+    this.renderAllStandalonePdfSelectionMarkers();
+    return true;
+  }
+
+  private updateStandalonePdfSelection(event: PointerEvent): boolean {
+    if (this.standalonePdfSelectionPointerId !== event.pointerId) return false;
+    event.preventDefault();
+    const origin = this.standalonePdfSelectionOrigin;
+    if (
+      origin
+      && !this.standalonePdfSelectionDragging
+      && Math.hypot(event.clientX - origin.x, event.clientY - origin.y) >= 3
+    ) this.standalonePdfSelectionDragging = true;
+    if (!this.standalonePdfSelectionDragging) return true;
+    const endpoint = this.standalonePdfSelectionAtPointer(event);
+    if (!endpoint) return true;
+    this.standalonePdfSelectionFocus = endpoint;
+    this.renderAllStandalonePdfSelectionMarkers();
+    return true;
+  }
+
+  private finishStandalonePdfSelection(event: PointerEvent): boolean {
+    if (this.standalonePdfSelectionPointerId !== event.pointerId) return false;
+    this.updateStandalonePdfSelection(event);
+    const wasDragging = this.standalonePdfSelectionDragging;
+    this.standalonePdfSelectionPointerId = null;
+    this.standalonePdfSelectionOrigin = null;
+    if (!wasDragging) this.clearStandalonePdfSelection();
+    this.standalonePdfSelectionDragging = false;
+    this.standalonePdfSelectionRetainClick = wasDragging;
+    return true;
+  }
+
+  private renderAllStandalonePdfSelectionMarkers(): void {
+    this.iframe?.contentDocument
+      ?.querySelectorAll(".pdf-selection-marker")
+      .forEach(marker => marker.remove());
+    for (const pageNo of this.standalonePdfTextLayers.keys()) {
+      this.renderStandalonePdfSelectionMarkers(pageNo);
+    }
+  }
+
+  private renderStandalonePdfSelectionMarkers(pageNo: number): void {
+    const anchor = this.standalonePdfSelectionAnchor;
+    const focus = this.standalonePdfSelectionFocus;
+    const layer = this.standalonePdfTextLayers.get(pageNo);
+    const slot = layer?.container.closest<HTMLElement>(".pdf-page-container");
+    if (!anchor || !focus || !layer || !slot) return;
+    slot.querySelectorAll(".pdf-selection-marker").forEach(marker => marker.remove());
+    const fragments = standalonePdfSelectionFragments(this.standalonePdfTextLayers, anchor, focus)
+      .filter(fragment => fragment.pageNo === pageNo);
+    for (const fragment of fragments) {
+      const geometry = layer.textItems[fragment.itemIndex]?.searchGeometry ?? [];
+      const selected = geometry.filter(rect => rect.to > fragment.from && rect.from < fragment.to);
+      if (selected.length < 1) continue;
+      const left = Math.min(...selected.map(rect => rect.left));
+      const top = Math.min(...selected.map(rect => rect.top));
+      const right = Math.max(...selected.map(rect => rect.left + rect.width));
+      const bottom = Math.max(...selected.map(rect => rect.top + rect.height));
+      const marker = slot.ownerDocument.createElement("span");
+      marker.className = "pdf-selection-marker";
+      marker.style.left = `${Math.max(0, left)}px`;
+      marker.style.top = `${Math.max(0, top)}px`;
+      marker.style.width = `${Math.max(0, right - left)}px`;
+      marker.style.height = `${Math.max(0, bottom - top)}px`;
+      slot.append(marker);
+    }
+  }
+
+  private clearStandalonePdfSelection(): void {
+    this.standalonePdfSelectionAnchor = null;
+    this.standalonePdfSelectionFocus = null;
+    this.standalonePdfSelectionPointerId = null;
+    this.standalonePdfSelectionOrigin = null;
+    this.standalonePdfSelectionDragging = false;
+    this.standalonePdfSelectionRetainClick = false;
+    this.iframe?.contentDocument
+      ?.querySelectorAll(".pdf-selection-marker")
+      .forEach(marker => marker.remove());
+  }
+
+  private standalonePdfSelectionText(): string | null {
+    if (!this.standalonePdfSelectionAnchor || !this.standalonePdfSelectionFocus) return null;
+    return serializeStandalonePdfSelection(
+      this.standalonePdfTextLayers,
+      this.standalonePdfSelectionAnchor,
+      this.standalonePdfSelectionFocus,
+    );
+  }
+
+  private copyStandalonePdfSelection(): boolean {
+    const text = this.standalonePdfSelectionText();
+    if (text === null) return false;
+    void writeText(text).catch(error => {
+      console.warn("Failed to write standalone PDF selection to the native clipboard:", error);
+    });
+    return true;
+  }
+
   private installStandalonePdfSearchCaret(field: HTMLInputElement): void {
     const view = this.iframe?.contentWindow;
     const shell = field.closest<HTMLElement>(".pdf-search-input-shell");
@@ -2221,19 +2372,27 @@ export class PreviewFrame {
     doc.addEventListener("contextmenu", event => event.preventDefault());
     doc.addEventListener("copy", event => {
       if (doc.documentElement.dataset.previewSurface !== "pdf") return;
-      const text = this.serializeStandalonePdfSelection(doc.getSelection());
+      const text = this.standalonePdfSelectionText();
       if (text === null) return;
       event.preventDefault();
       event.clipboardData?.setData("text/plain", text);
-      void writeText(text).catch(error => {
-        console.warn("Failed to write standalone PDF selection to the native clipboard:", error);
-      });
-    });
+      this.copyStandalonePdfSelection();
+    }, true);
     doc.addEventListener("pointerdown", event => {
       if ((event.target as Element | null)?.closest("#preview-go-first")) return;
+      this.beginStandalonePdfSelection(event);
       this.rememberDraftPointer(event);
       window.postMessage({ type: "HIDE_CONTEXT_MENU" }, "*");
       this.motion.setPointerDown(true);
+    }, true);
+    doc.addEventListener("pointermove", event => {
+      this.updateStandalonePdfSelection(event);
+    }, { capture: true, passive: false });
+    doc.addEventListener("pointerup", event => {
+      this.finishStandalonePdfSelection(event);
+    }, true);
+    doc.addEventListener("pointercancel", event => {
+      this.finishStandalonePdfSelection(event);
     }, true);
     this.iframe?.contentWindow?.addEventListener("pointerup", () => this.motion.setPointerDown(false), true);
     this.iframe?.contentWindow?.addEventListener("pointercancel", () => this.motion.setPointerDown(false), true);
@@ -2277,9 +2436,29 @@ export class PreviewFrame {
     });
     doc.addEventListener("keydown", event => {
       if (this.handlePreviewFindShortcut(event)) return;
+      if (
+        doc.documentElement.dataset.previewSurface === "pdf"
+        && (event.ctrlKey || event.metaKey)
+        && !event.altKey
+        && event.code === "KeyC"
+        && this.copyStandalonePdfSelection()
+      ) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        return;
+      }
+      if (
+        event.key === "Escape"
+        && doc.documentElement.dataset.previewSurface === "pdf"
+        && this.standalonePdfSelectionAnchor
+      ) {
+        event.preventDefault();
+        this.clearStandalonePdfSelection();
+        return;
+      }
       this.previewLinkModifierHeld = previewLinkModifierAfterKeyboardEvent(event, "keydown");
       this.setPreviewLinkModifier(doc, this.previewPointerInside && this.previewLinkModifierHeld);
-    });
+    }, true);
     doc.addEventListener("keyup", event => {
       this.previewLinkModifierHeld = previewLinkModifierAfterKeyboardEvent(event, "keyup");
       this.setPreviewLinkModifier(doc, this.previewPointerInside && this.previewLinkModifierHeld);
@@ -2287,6 +2466,16 @@ export class PreviewFrame {
     doc.addEventListener("click", event => {
       const target = event.target as Element | null;
       if (target?.closest("#preview-go-first")) return;
+      if (
+        doc.documentElement.dataset.previewSurface === "pdf"
+        && !target?.closest("#pdf-search-panel,.annotation-link")
+      ) {
+        if (this.standalonePdfSelectionRetainClick) {
+          this.standalonePdfSelectionRetainClick = false;
+        } else {
+          this.clearStandalonePdfSelection();
+        }
+      }
       const annotationLink = target?.closest<HTMLElement>(".annotation-link");
       const mouse = event as MouseEvent;
       if (annotationLink) {
@@ -2348,91 +2537,6 @@ export class PreviewFrame {
       },
       { passive: true }
     );
-  }
-
-  private serializeStandalonePdfSelection(selection: Selection | null): string | null {
-    if (!selection || selection.isCollapsed || selection.rangeCount < 1) return null;
-
-    const fragments: Array<{
-      pageNo: number;
-      itemIndex: number;
-      from: number;
-      to: number;
-      text: string;
-      hasEOL: boolean;
-      baselineY: number | null;
-      height: number | null;
-    }> = [];
-
-    for (let rangeIndex = 0; rangeIndex < selection.rangeCount; rangeIndex += 1) {
-      const range = selection.getRangeAt(rangeIndex);
-      for (const [pageNo, layer] of this.standalonePdfTextLayers) {
-        for (let itemIndex = 0; itemIndex < layer.textDivs.length; itemIndex += 1) {
-          const textNode = layer.textDivs[itemIndex]?.firstChild;
-          const item = layer.textItems[itemIndex];
-          if (!item || !textNode || textNode.nodeType !== Node.TEXT_NODE) continue;
-          try {
-            if (!range.intersectsNode(textNode)) continue;
-          } catch {
-            continue;
-          }
-
-          const length = textNode.textContent?.length ?? 0;
-          let from = range.startContainer === textNode ? range.startOffset : 0;
-          let to = range.endContainer === textNode ? range.endOffset : length;
-          from = Math.max(0, Math.min(from, length));
-          to = Math.max(from, Math.min(to, length));
-          if (to <= from) continue;
-          fragments.push({
-            pageNo,
-            itemIndex,
-            from,
-            to,
-            text: item.text,
-            hasEOL: item.hasEOL,
-            baselineY: item.baselineY,
-            height: item.height,
-          });
-        }
-      }
-    }
-
-    if (fragments.length < 1) return null;
-    fragments.sort((left, right) => (
-      left.pageNo - right.pageNo
-      || left.itemIndex - right.itemIndex
-      || left.from - right.from
-    ));
-
-    let result = "";
-    let previousPage = fragments[0].pageNo;
-    let previousFragment: (typeof fragments)[number] | null = null;
-    let previousKey = "";
-    for (const fragment of fragments) {
-      const key = `${fragment.pageNo}:${fragment.itemIndex}:${fragment.from}:${fragment.to}`;
-      if (key === previousKey) continue;
-      const changedPage = fragment.pageNo !== previousPage;
-      const baselineDelta = previousFragment?.baselineY != null && fragment.baselineY != null
-        ? Math.abs(fragment.baselineY - previousFragment.baselineY)
-        : 0;
-      const lineThreshold = Math.max(
-        1,
-        Math.min(
-          previousFragment?.height ?? Number.POSITIVE_INFINITY,
-          fragment.height ?? Number.POSITIVE_INFINITY,
-        ) * 0.45,
-      );
-      const changedVisualLine = !changedPage
-        && baselineDelta > lineThreshold
-        && Number.isFinite(lineThreshold);
-      if ((changedPage || changedVisualLine) && result && !result.endsWith("\n")) result += "\n";
-      result += fragment.text.slice(fragment.from, fragment.to);
-      if (fragment.hasEOL && fragment.to >= fragment.text.length && !result.endsWith("\n")) result += "\n";
-      previousPage = fragment.pageNo;
-      previousFragment = fragment;
-      previousKey = key;
-    }
-    return result;
   }
 
   private updateGoToFirstPageButton(): void {

@@ -4,7 +4,7 @@ const frameSource = await Bun.file("src/preview/previewFrame.ts").text();
 const pdfiumSource = await Bun.file("src/preview/pdfiumDocument.ts").text();
 const pdfPatch = await Bun.file("patches/pdfjs-dist@6.2.108.patch").text();
 
-test("standalone PDFs render a logical selectable text layer", () => {
+test("standalone PDFs render a logical text geometry layer", () => {
   expect(frameSource).toContain('dataset.previewSurface !== "pdf"');
   expect(frameSource).toContain("page.getTextContent({");
   expect(frameSource).toContain("disableNormalization: true");
@@ -59,11 +59,17 @@ test("standalone PDF search uses geometry-only highlights instead of browser Fin
 
 test("standalone PDF copy serializes logical text items instead of positioned DOM text", () => {
   expect(frameSource).toContain('doc.addEventListener("copy"');
-  expect(frameSource).toContain("serializeStandalonePdfSelection(doc.getSelection())");
+  expect(frameSource).toContain("this.standalonePdfSelectionText()");
   expect(frameSource).toContain('event.clipboardData?.setData("text/plain", text)');
-  expect(frameSource).toContain("hasEOL: sourceItems[index]?.hasEOL === true");
-  expect(frameSource).toContain("const changedVisualLine =");
-  expect(frameSource).toContain('fragment.text.slice(fragment.from, fragment.to)');
+  expect(frameSource).toContain('event.code === "KeyC"');
+  expect(frameSource).toContain("this.copyStandalonePdfSelection()");
+  expect(frameSource).toContain("doc.body.focus({ preventScroll: true })");
+  expect(frameSource).toContain("hitTestStandalonePdfSelection(");
+  expect(frameSource).toContain("standalonePdfSelectionFragments(");
+  expect(frameSource).toContain('marker.className = "pdf-selection-marker"');
+  expect(frameSource).toContain(".pdfium-text-layer :is(span,br){-webkit-user-select:none;user-select:none}");
+  expect(frameSource).toContain(".pdf-text-layer:not(.pdfium-text-layer) ::selection");
+  expect(frameSource).not.toContain("serializeStandalonePdfSelection(doc.getSelection())");
 });
 
 test("the pinned PDF.js worker preserves logical Unicode text", () => {

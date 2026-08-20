@@ -278,13 +278,13 @@ export function buildPdfiumTextRuns(page: PdfiumPageText): PdfiumTextRun[] {
     if (positioned.length < 1) return [];
     const ordered = orderPdfiumLineChars(line.chars);
     let text = "";
-    const glyphs: PdfiumTextGlyph[] = [];
+    const characterGlyphs: PdfiumTextGlyph[] = [];
     for (const char of ordered) {
       const from = text.length;
       text += char.text;
       const to = text.length;
       if (char.left !== null && char.bottom !== null && char.right !== null && char.top !== null) {
-        glyphs.push({
+        characterGlyphs.push({
           from,
           to,
           left: char.left,
@@ -302,9 +302,63 @@ export function buildPdfiumTextRuns(page: PdfiumPageText): PdfiumTextRun[] {
       top: Math.max(...positioned.map(char => Number(char.top))),
       hasEOL: line.hasEOL,
       dir: firstStrongDirection(text),
-      glyphs,
+      glyphs: groupPdfiumGlyphsByGrapheme(text, characterGlyphs),
     }];
   });
+}
+
+/**
+ * PDFium exposes character boxes, but a visible Unicode grapheme may contain
+ * several of those characters (for example a Khmer base, coeng sequence, and
+ * dependent vowel). Selection endpoints must use the grapheme as their
+ * indivisible unit. Otherwise overlapping character bounds can paint the
+ * entire grapheme while clipboard serialization silently omits its last mark.
+ */
+export function groupPdfiumGlyphsByGrapheme(
+  text: string,
+  glyphs: readonly PdfiumTextGlyph[],
+): PdfiumTextGlyph[] {
+  if (!text || glyphs.length < 1) return [];
+  const boundaries = graphemeBoundaries(text);
+  const grouped: PdfiumTextGlyph[] = [];
+  for (let index = 0; index < boundaries.length - 1; index += 1) {
+    const from = boundaries[index];
+    const to = boundaries[index + 1];
+    const members = glyphs.filter(glyph => glyph.to > from && glyph.from < to);
+    if (members.length < 1) continue;
+    grouped.push({
+      from,
+      to,
+      left: Math.min(...members.map(glyph => glyph.left)),
+      bottom: Math.min(...members.map(glyph => glyph.bottom)),
+      right: Math.max(...members.map(glyph => glyph.right)),
+      top: Math.max(...members.map(glyph => glyph.top)),
+    });
+  }
+  return grouped;
+}
+
+function graphemeBoundaries(text: string): number[] {
+  type SegmentRecord = { index: number };
+  type SegmenterLike = { segment(input: string): Iterable<SegmentRecord> };
+  const Segmenter = (Intl as unknown as {
+    Segmenter?: new (
+      locale: string | undefined,
+      options: { granularity: "grapheme" },
+    ) => SegmenterLike;
+  }).Segmenter;
+  if (Segmenter) {
+    const segmenter = new Segmenter(undefined, { granularity: "grapheme" });
+    const starts = [...segmenter.segment(text)].map(segment => segment.index);
+    return [...starts, text.length];
+  }
+  const boundaries = [0];
+  let offset = 0;
+  for (const codePoint of text) {
+    offset += codePoint.length;
+    boundaries.push(offset);
+  }
+  return boundaries;
 }
 
 function firstStrongDirection(text: string): "ltr" | "rtl" {
