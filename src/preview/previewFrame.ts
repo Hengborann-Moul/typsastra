@@ -2383,7 +2383,25 @@ export class PreviewFrame {
     });
     this.updateGoToFirstPageButton();
     this.debugInverse(`Interaction listener installed: readyState=${doc.readyState}, url=${doc.URL || "(empty)"}.`);
-    doc.addEventListener("contextmenu", event => event.preventDefault());
+    doc.addEventListener("contextmenu", event => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (doc.documentElement.dataset.previewSurface !== "pdf") {
+        window.postMessage({ type: "HIDE_CONTEXT_MENU" }, "*");
+        return;
+      }
+      const selectedText = this.standalonePdfSelectionText();
+      if (selectedText === null || selectedText.length === 0) {
+        window.postMessage({ type: "HIDE_CONTEXT_MENU" }, "*");
+        return;
+      }
+      window.postMessage({
+        type: "SHOW_PREVIEW_CONTEXT_MENU",
+        x: event.clientX,
+        y: event.clientY,
+        selectedText,
+      }, "*");
+    });
     doc.addEventListener("copy", event => {
       if (doc.documentElement.dataset.previewSurface !== "pdf") return;
       const text = this.standalonePdfSelectionText();

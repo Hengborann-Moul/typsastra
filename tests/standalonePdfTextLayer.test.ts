@@ -73,6 +73,16 @@ test("standalone PDF copy serializes logical text items instead of positioned DO
   expect(frameSource).not.toContain("serializeStandalonePdfSelection(doc.getSelection())");
 });
 
+test("standalone PDF selections expose the logical text through the app context menu", async () => {
+  const contextMenuSource = await Bun.file("src/components/contextMenuController.ts").text();
+  expect(frameSource).toContain('type: "SHOW_PREVIEW_CONTEXT_MENU"');
+  expect(frameSource).toContain("selectedText,");
+  expect(contextMenuSource).toContain('id="ctx-preview-copy-selection"');
+  expect(contextMenuSource).toContain("await writeText(this.previewSelectionText)");
+  expect(contextMenuSource).toContain("frameRect.left + data.x");
+  expect(contextMenuSource).toContain("frameRect.top + data.y");
+});
+
 test("PDFium text lines use untransformed cursor hit areas", () => {
   expect(frameSource).toContain('hitArea.className = "pdfium-text-hit-area"');
   expect(frameSource).toContain("container.append(hitArea)");

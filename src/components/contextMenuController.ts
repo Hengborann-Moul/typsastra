@@ -96,6 +96,7 @@ export class ContextMenuController {
   private textControl: HTMLInputElement | HTMLTextAreaElement | null = null;
   private selectedText = "";
   private contextText = "";
+  private previewSelectionText = "";
   private readonly menu = document.getElementById("context-menu")!;
   private spellingIssue: SpellingIssue | null = null;
   private spellingDictionaryWords: string[] = [];
@@ -256,6 +257,9 @@ export class ContextMenuController {
       case "ctx-cut-text": return this.copyEditorText(true);
       case "ctx-paste-text": return this.pasteText();
       case "ctx-native-copy": return this.copyNativeText();
+      case "ctx-preview-copy-selection":
+        if (this.previewSelectionText) await writeText(this.previewSelectionText);
+        return;
       case "ctx-native-cut": return this.cutNativeText();
       case "ctx-native-paste": return this.pasteNativeText();
       case "ctx-native-select-all": this.selectAllNativeText(); return;
@@ -714,10 +718,40 @@ export class ContextMenuController {
   }
 
   private handlePreviewMessage(event: MessageEvent): void {
-    const data = event.data as { type?: unknown; x?: unknown; y?: unknown } | null;
-    if (data?.type === "HIDE_CONTEXT_MENU" || data?.type === "SHOW_PREVIEW_CONTEXT_MENU") {
+    const data = event.data as {
+      type?: unknown;
+      x?: unknown;
+      y?: unknown;
+      selectedText?: unknown;
+    } | null;
+    if (data?.type === "HIDE_CONTEXT_MENU") {
       this.hide();
+      return;
     }
+    if (data?.type !== "SHOW_PREVIEW_CONTEXT_MENU") return;
+
+    const frame = this.dependencies.getPreviewFrame();
+    const frameWindow = frame?.contentWindow;
+    if (!frame || (event.source !== window && event.source !== frameWindow)) return;
+    if (typeof data.x !== "number" || typeof data.y !== "number") return;
+    if (typeof data.selectedText !== "string" || data.selectedText.length === 0) {
+      this.hide();
+      return;
+    }
+
+    this.previewSelectionText = data.selectedText;
+    const frameRect = frame.getBoundingClientRect();
+    this.show(
+      this.previewSelectionItems(),
+      frameRect.left + data.x,
+      frameRect.top + data.y,
+      false,
+      "preview-selection",
+    );
+  }
+
+  private previewSelectionItems(): string {
+    return '<div class="dropdown-item" id="ctx-preview-copy-selection">Copy <span class="hotkey" data-shortcut="Mod+C">Ctrl+C</span></div>';
   }
 
   private explorerItems(): string {
