@@ -16,6 +16,7 @@ use tokio_tungstenite::{
 };
 
 mod compatibility;
+mod enhanced_unicode_toolchain;
 mod examples;
 mod font_store;
 mod pdfium_preview;
@@ -4449,6 +4450,21 @@ async fn install_tinymist_toolchain_with_progress(
 }
 
 #[tauri::command]
+async fn install_enhanced_unicode_engine(
+    app_handle: tauri::AppHandle,
+    on_progress: tauri::ipc::Channel<toolchain::ToolchainInstallProgress>,
+) -> Result<enhanced_unicode_toolchain::EnhancedUnicodeInstallResult, String> {
+    let data_dir = app_handle
+        .path()
+        .app_local_data_dir()
+        .map_err(|error| format!("Failed to get data dir: {error}"))?;
+    enhanced_unicode_toolchain::install_with_progress(&data_dir, &|progress| {
+        let _ = on_progress.send(progress);
+    })
+    .await
+}
+
+#[tauri::command]
 async fn start_tinymist_lsp(
     app_handle: tauri::AppHandle,
     state: tauri::State<'_, LspState>,
@@ -5376,6 +5392,7 @@ pub fn run() {
             select_system_tinymist_toolchain,
             install_tinymist_toolchain,
             install_tinymist_toolchain_with_progress,
+            install_enhanced_unicode_engine,
             start_tinymist_lsp,
             stop_tinymist_lsp,
             send_lsp_message,

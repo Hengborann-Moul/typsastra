@@ -2926,9 +2926,11 @@
                             >
                                 <h4>Enhanced Unicode PDF engine</h4>
                                 <p class="settings-help">
-                                    Experimental, locally built Typst compiler for
-                                    explicit PDF exports. It never replaces Tinymist
-                                    for live preview, LSP, or synchronization.
+                                    Enable to download the verified Enhanced Unicode
+                                    Engine release into Typsastra's managed toolchain
+                                    directory. It is used only for explicit PDF exports
+                                    and never replaces Tinymist for live preview, LSP,
+                                    or synchronization.
                                 </p>
                                 <label class="settings-toggle"
                                     ><input
@@ -2937,15 +2939,15 @@
                                     /><span
                                         ><strong>Use for PDF export</strong
                                         ><small id="settings-enhanced-unicode-status"
-                                            >Choose a local executable first.</small
+                                            >Enable to install the managed engine.</small
                                         ></span
                                     ></label
                                 >
                                 <div class="settings-developer-tool-path">
-                                    <code id="settings-enhanced-unicode-path">No local executable selected</code>
+                                    <code id="settings-enhanced-unicode-path">Not installed</code>
                                     <div class="settings-developer-tool-actions">
-                                        <button id="settings-enhanced-unicode-choose" class="settings-secondary-button" type="button">Choose executable</button>
-                                        <button id="settings-enhanced-unicode-clear" class="settings-secondary-button" type="button" disabled>Clear</button>
+                                        <button id="settings-enhanced-unicode-choose" class="settings-secondary-button" type="button">Choose local executable</button>
+                                        <button id="settings-enhanced-unicode-clear" class="settings-secondary-button" type="button" disabled>Forget</button>
                                     </div>
                                 </div>
                             </section>

@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 import { confirm, message, open } from "@tauri-apps/plugin-dialog";
 import { relaunch } from "@tauri-apps/plugin-process";
 import {
@@ -70,6 +70,14 @@ type TypstCompilerInspection = {
   path: string;
   version: string;
 };
+type ToolchainInstallProgress = {
+  phase: string;
+  downloadedBytes: number;
+  totalBytes: number | null;
+};
+type EnhancedUnicodeInstallResult = TypstCompilerInspection & {
+  engineVersion: string;
+};
 export type SettingsTimingEntry = {
   source: string;
   label: string;
@@ -101,6 +109,8 @@ export class SettingsController {
   private scaledFontCacheReport: ScaledFontCacheReport | null = null;
   private readonly scaledFontCacheSelection = new Set<string>();
   private scaledFontCacheLoading = false;
+  private enhancedUnicodeEngineInstalling = false;
+  private enhancedUnicodeEngineInstallStatus: string | null = null;
 
   constructor(
     private readonly applySettings: (settings: AppSettings) => void,
@@ -279,8 +289,15 @@ export class SettingsController {
       settings.compatibility.disableWebkitDmabufRenderer = (control as HTMLInputElement).checked;
     });
     onChange("settings-developer-mode", (settings, control) => { settings.developerMode = (control as HTMLInputElement).checked; });
-    onChange("settings-enhanced-unicode-engine", (settings, control) => {
-      settings.toolchain.enhancedUnicodeEngineEnabled = (control as HTMLInputElement).checked;
+    document.getElementById("settings-enhanced-unicode-engine")?.addEventListener("change", event => {
+      const enabled = (event.currentTarget as HTMLInputElement).checked;
+      if (!enabled) {
+        this.update(settings => {
+          settings.toolchain.enhancedUnicodeEngineEnabled = false;
+        });
+        return;
+      }
+      void this.installEnhancedUnicodeEngine();
     });
     onChange("settings-dev-log-preview", (settings, control) => { settings.developerLogs.preview = (control as HTMLInputElement).checked; });
     onChange("settings-dev-log-inverse-sync", (settings, control) => { settings.developerLogs.inverseSync = (control as HTMLInputElement).checked; });
@@ -657,25 +674,78 @@ export class SettingsController {
 
     container?.classList.toggle("disabled", !available);
     if (toggle) {
-      toggle.disabled = !available || !configuredPath;
+      toggle.checked = this.enhancedUnicodeEngineInstalling
+        || this.settings.toolchain.enhancedUnicodeEngineEnabled;
+      toggle.disabled = !available || this.enhancedUnicodeEngineInstalling;
       toggle.title = !available
         ? "Enable Developer mode to configure the experimental export engine."
-        : configuredPath
-          ? "Use this compiler only for explicit PDF exports."
-          : "Choose a compatible Typst executable first.";
+        : this.enhancedUnicodeEngineInstalling
+          ? "Installing the managed Enhanced Unicode Engine."
+          : configuredPath
+            ? "Use this compiler only for explicit PDF exports."
+            : "Download and install the Enhanced Unicode Engine for this platform.";
     }
-    if (choose) choose.disabled = !available;
-    if (clear) clear.disabled = !available || !configuredPath;
+    if (choose) choose.disabled = !available || this.enhancedUnicodeEngineInstalling;
+    if (clear) clear.disabled = !available || !configuredPath || this.enhancedUnicodeEngineInstalling;
     if (path) {
-      path.textContent = configuredPath ?? "No local executable selected";
+      path.textContent = configuredPath ?? "Not installed";
       path.title = configuredPath ?? "";
     }
     if (status) {
-      status.textContent = configuredPath
+      status.textContent = this.enhancedUnicodeEngineInstallStatus ?? (configuredPath
         ? this.settings.toolchain.enhancedUnicodeEngineEnabled
           ? "Enabled for explicit PDF exports. Live preview and language services continue to use Tinymist."
           : "Executable validated. Enable the option to use it for PDF exports."
-        : "Choose an Enhanced Unicode Typst executable from the Typsastra engine release or a compatible local build. Automatic installation is not enabled yet.";
+        : "Enable to download the verified engine release into Typsastra's managed toolchain directory.");
+    }
+  }
+
+  private async installEnhancedUnicodeEngine(): Promise<void> {
+    if (this.enhancedUnicodeEngineInstalling) return;
+    this.enhancedUnicodeEngineInstalling = true;
+    this.enhancedUnicodeEngineInstallStatus = "Resolving the Enhanced Unicode Engine release...";
+    this.populatePanel();
+
+    const progress = new Channel<ToolchainInstallProgress>();
+    progress.onmessage = update => {
+      if (!this.enhancedUnicodeEngineInstalling) return;
+      if (update.phase === "downloading") {
+        const downloaded = formatBytes(update.downloadedBytes);
+        this.enhancedUnicodeEngineInstallStatus = update.totalBytes
+          ? `Downloading Enhanced Unicode Engine... ${downloaded} / ${formatBytes(update.totalBytes)}`
+          : `Downloading Enhanced Unicode Engine... ${downloaded}`;
+      } else if (update.phase === "verifying") {
+        this.enhancedUnicodeEngineInstallStatus = "Verifying the pinned release archive...";
+      } else if (update.phase === "installing") {
+        this.enhancedUnicodeEngineInstallStatus = "Installing into Typsastra's managed toolchain directory...";
+      } else if (update.phase === "complete") {
+        this.enhancedUnicodeEngineInstallStatus = "Enhanced Unicode Engine is ready.";
+      } else {
+        this.enhancedUnicodeEngineInstallStatus = "Resolving the Enhanced Unicode Engine release...";
+      }
+      this.populateEnhancedUnicodeEngine();
+    };
+
+    try {
+      const installed = await invoke<EnhancedUnicodeInstallResult>("install_enhanced_unicode_engine", {
+        onProgress: progress,
+      });
+      this.enhancedUnicodeEngineInstallStatus = null;
+      this.enhancedUnicodeEngineInstalling = false;
+      this.update(settings => {
+        settings.toolchain.enhancedUnicodeEnginePath = installed.path;
+        settings.toolchain.enhancedUnicodeEngineEnabled = true;
+      });
+    } catch (error) {
+      this.enhancedUnicodeEngineInstallStatus = null;
+      this.enhancedUnicodeEngineInstalling = false;
+      this.update(settings => {
+        settings.toolchain.enhancedUnicodeEngineEnabled = false;
+      });
+      await message(String(error), {
+        title: "Enhanced Unicode Engine installation failed",
+        kind: "error",
+      });
     }
   }
 
