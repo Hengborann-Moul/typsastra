@@ -1,0 +1,191 @@
+name: Enhanced Unicode Engine Release
+
+on:
+  push:
+    tags:
+      - "enhanced-unicode-v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  ENGINE_VERSION: "0.1.0"
+  ENGINE_TAG: "enhanced-unicode-v0.1.0"
+  ENGINE_REPOSITORY: "Sovichea/typst"
+  ENGINE_COMMIT: "ee922252539d51e6520caa8a3bd3808f708f5f50"
+  EXPECTED_TYPST_VERSION: "0.15.1"
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            executable: typst.exe
+          - runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            executable: typst
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            executable: typst
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+            executable: typst
+          - runner: macos-15
+            target: aarch64-apple-darwin
+            executable: typst
+
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout Typsastra release definition
+        uses: actions/checkout@v4
+
+      - name: Verify release identity
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF_TYPE:-}" == "tag" && "${GITHUB_REF_NAME}" != "${ENGINE_TAG}" ]]; then
+            echo "This workflow revision releases only ${ENGINE_TAG}; received ${GITHUB_REF_NAME}."
+            exit 1
+          fi
+
+      - name: Checkout pinned Enhanced Typst source
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.ENGINE_REPOSITORY }}
+          ref: ${{ env.ENGINE_COMMIT }}
+          path: enhanced-typst
+
+      - name: Setup Rust 1.92
+        uses: dtolnay/rust-toolchain@1.92.0
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Enhanced Typst build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "enhanced-typst -> enhanced-typst/target"
+          key: enhanced-unicode-${{ env.ENGINE_VERSION }}-${{ matrix.target }}
+
+      - name: Verify pinned source revision
+        shell: bash
+        working-directory: enhanced-typst
+        run: test "$(git rev-parse HEAD)" = "${ENGINE_COMMIT}"
+
+      - name: Build Enhanced Typst CLI
+        shell: bash
+        working-directory: enhanced-typst
+        run: cargo build --release --locked --package typst-cli --target "${{ matrix.target }}"
+
+      - name: Validate executable and compile Unicode fixture
+        shell: bash
+        run: |
+          executable="enhanced-typst/target/${{ matrix.target }}/release/${{ matrix.executable }}"
+          version="$(${executable} --version)"
+          echo "${version}"
+          [[ "${version}" == typst\ ${EXPECTED_TYPST_VERSION}* ]]
+          "${executable}" compile \
+            tests/fixtures/enhanced-unicode/unicode-selection.typ \
+            enhanced-unicode-smoke-test.pdf
+          test -s enhanced-unicode-smoke-test.pdf
+
+      - name: Package engine with source metadata
+        shell: bash
+        env:
+          RELEASE_TARGET: ${{ matrix.target }}
+          RELEASE_EXECUTABLE: ${{ matrix.executable }}
+        run: |
+          archive="typsastra-enhanced-unicode-v${ENGINE_VERSION}-${RELEASE_TARGET}.zip"
+          package="package"
+          mkdir -p "${package}"
+          cp "enhanced-typst/target/${RELEASE_TARGET}/release/${RELEASE_EXECUTABLE}" "${package}/${RELEASE_EXECUTABLE}"
+          cp enhanced-typst/LICENSE "${package}/LICENSE"
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          metadata = {
+              "schemaVersion": 1,
+              "name": "Typsastra Enhanced Unicode Engine",
+              "version": os.environ["ENGINE_VERSION"],
+              "target": os.environ["RELEASE_TARGET"],
+              "executable": os.environ["RELEASE_EXECUTABLE"],
+              "typstVersion": os.environ["EXPECTED_TYPST_VERSION"],
+              "typstRepository": os.environ["ENGINE_REPOSITORY"],
+              "typstCommit": os.environ["ENGINE_COMMIT"],
+              "krillaRepository": "Sovichea/krilla",
+              "krillaCommit": "92cd34f2f9b7ff2d02b7d2b358d7d7a27e3c1dce",
+              "license": "Apache-2.0",
+          }
+          Path("package/ENGINE_RELEASE.json").write_text(
+              json.dumps(metadata, indent=2) + "\n",
+              encoding="utf-8",
+          )
+          PY
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
+
+          archive = Path(f"typsastra-enhanced-unicode-v{os.environ['ENGINE_VERSION']}-{os.environ['RELEASE_TARGET']}.zip")
+          with ZipFile(archive, "w", ZIP_DEFLATED, compresslevel=9) as output:
+              for path in sorted(Path("package").iterdir()):
+                  info = ZipInfo(path.name, date_time=(1980, 1, 1, 0, 0, 0))
+                  info.create_system = 3
+                  mode = 0o755 if path.name == os.environ["RELEASE_EXECUTABLE"] else 0o644
+                  info.external_attr = mode << 16
+                  info.compress_type = ZIP_DEFLATED
+                  output.writestr(info, path.read_bytes(), compress_type=ZIP_DEFLATED, compresslevel=9)
+          PY
+
+      - name: Upload platform package
+        uses: actions/upload-artifact@v4
+        with:
+          name: enhanced-unicode-${{ matrix.target }}
+          path: typsastra-enhanced-unicode-v${{ env.ENGINE_VERSION }}-${{ matrix.target }}.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Create draft engine release
+    needs: build
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout Typsastra release definition
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Download platform packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: enhanced-unicode-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Generate checksummed release manifest
+        run: >-
+          bun scripts/enhanced-unicode-release-manifest.ts
+          toolchains/enhanced-unicode/release-v0.1.0.json
+          release-assets
+          release-assets/enhanced-unicode-manifest.json
+
+      - name: Create draft release in Typsastra repository
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.ENGINE_TAG }}
+          name: Typsastra Enhanced Unicode Engine v${{ env.ENGINE_VERSION }}
+          body_path: docs/ENHANCED_UNICODE_ENGINE_RELEASE_NOTES_V0.1.0.md
+          draft: true
+          prerelease: false
+          fail_on_unmatched_files: true
+          files: |
+            release-assets/*.zip
+            release-assets/enhanced-unicode-manifest.json

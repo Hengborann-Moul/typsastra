@@ -675,7 +675,7 @@ export class SettingsController {
         ? this.settings.toolchain.enhancedUnicodeEngineEnabled
           ? "Enabled for explicit PDF exports. Live preview and language services continue to use Tinymist."
           : "Executable validated. Enable the option to use it for PDF exports."
-        : "Choose a locally built Enhanced Unicode Typst executable. Typsastra does not download or update this experimental engine.";
+        : "Choose an Enhanced Unicode Typst executable from the Typsastra engine release or a compatible local build. Automatic installation is not enabled yet.";
     }
   }
 

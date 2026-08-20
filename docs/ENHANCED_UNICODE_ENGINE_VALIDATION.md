@@ -81,18 +81,21 @@ The PDF.js check uses Typsastra's pinned `pdfjs-dist` patch with `preserveLogica
 
 ## Use a local engine in Typsastra
 
-Developer mode can use a locally built enhanced `typst` executable for an
-explicit **Export PDF** operation:
+Developer mode can use the enhanced `typst` executable from the Typsastra
+engine release, or a compatible local build, for an explicit **Export PDF**
+operation:
 
-1. Build the enhanced Typst fork for the current platform.
+1. Download and extract the package for the current platform from the
+   `enhanced-unicode-v0.1.0` release, or build the pinned enhanced Typst fork.
 2. Open **Settings > Developer** and enable **Developer mode**.
 3. Under **Enhanced Unicode PDF engine**, choose the local executable.
 4. Leave **Use for PDF export** enabled and export the document normally.
 
 Typsastra validates that the selected file is an executable compatible with
 `typst --version` each time it is selected and again before export. The setting
-stores only its absolute local path. Typsastra does not download, update, or
-redistribute the fork.
+stores only its absolute local path. Version 0.1.0 remains a manual download;
+managed installation will use the checksummed release manifest in a later
+Typsastra update.
 
 This integration intentionally has a narrow boundary:
 
@@ -162,13 +165,16 @@ For every viewer, manually record:
 
 This matrix describes viewer compatibility; a viewer failure does not by itself prove that the exported PDF is invalid. A regression shared by multiple independent viewers is stronger evidence of an export defect.
 
-## Distribution gate
+## Engine release 0.1.0
 
-The local developer integration is intended for engine development and viewer
-validation. Do not bundle, advertise, or automatically install the enhanced
-compiler in a Typsastra release until:
+The first reproducible engine packages are defined by
+[`release-v0.1.0.json`](../toolchains/enhanced-unicode/release-v0.1.0.json) and
+published from this repository under the scoped tag
+`enhanced-unicode-v0.1.0`. Keeping the artifacts in the Typsastra repository
+avoids presenting the Typst fork as an unrelated or official upstream binary.
 
-- strict automated validation passes for the supported scripts,
-- the fork is built reproducibly on every supported platform,
-- the manual viewer matrix is recorded for release artifacts, and
-- installation remains explicitly opt-in and separate from Tinymist.
+The release remains explicitly opt-in and separate from Tinymist. It is used
+only for explicit PDF exports and never replaces live preview, LSP,
+autocomplete, diagnostics, or source synchronization. See the
+[v0.1.0 engine release notes](ENHANCED_UNICODE_ENGINE_RELEASE_NOTES_V0.1.0.md)
+for pinned source revisions, supported packages, and current validation scope.
