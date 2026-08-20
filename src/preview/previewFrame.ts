@@ -2170,13 +2170,15 @@ export class PreviewFrame {
     doc.body.tabIndex = -1;
     doc.body.focus({ preventScroll: true });
     doc.getSelection()?.removeAllRanges();
+    // Pointer-down only establishes an anchor. Do not paint a one-grapheme
+    // selection until the user actually drags beyond the movement threshold.
+    doc.querySelectorAll(".pdf-selection-marker").forEach(marker => marker.remove());
     this.standalonePdfSelectionAnchor = endpoint;
     this.standalonePdfSelectionFocus = endpoint;
     this.standalonePdfSelectionPointerId = event.pointerId;
     this.standalonePdfSelectionOrigin = { x: event.clientX, y: event.clientY };
     this.standalonePdfSelectionDragging = false;
     this.standalonePdfSelectionRetainClick = false;
-    this.renderAllStandalonePdfSelectionMarkers();
     return true;
   }
 

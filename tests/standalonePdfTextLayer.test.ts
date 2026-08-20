@@ -64,6 +64,7 @@ test("standalone PDF copy serializes logical text items instead of positioned DO
   expect(frameSource).toContain('event.code === "KeyC"');
   expect(frameSource).toContain("this.copyStandalonePdfSelection()");
   expect(frameSource).toContain("doc.body.focus({ preventScroll: true })");
+  expect(frameSource).not.toContain("this.standalonePdfSelectionRetainClick = false;\n    this.renderAllStandalonePdfSelectionMarkers();");
   expect(frameSource).toContain("hitTestStandalonePdfSelection(");
   expect(frameSource).toContain("standalonePdfSelectionFragments(");
   expect(frameSource).toContain('marker.className = "pdf-selection-marker"');
