@@ -5,9 +5,11 @@ const pdfPatch = await Bun.file("patches/pdfjs-dist@6.2.108.patch").text();
 
 test("standalone PDFs render a logical selectable text layer", () => {
   expect(frameSource).toContain('dataset.previewSurface !== "pdf"');
-  expect(frameSource).toContain("page.streamTextContent({");
+  expect(frameSource).toContain("page.getTextContent({");
   expect(frameSource).toContain("disableNormalization: true");
   expect(frameSource).toContain("preserveLogicalText: true");
+  expect(frameSource).toContain('import("pdfjs-dist/build/pdf.worker.mjs?url")');
+  expect(frameSource).not.toContain('import("pdfjs-dist/build/pdf.worker.min.mjs?url")');
   expect(frameSource).toContain("new pdfjs.TextLayer({");
   expect(frameSource).toContain('container.className = "pdf-text-layer"');
   expect(frameSource).toContain('"--total-scale-factor"');
@@ -33,6 +35,15 @@ test("standalone PDF search uses geometry-only highlights instead of browser Fin
   expect(frameSource).toContain("this.onEditorSearchRequest?.()");
   expect(frameSource).toContain("pdf-search-editor-caret");
   expect(frameSource).toContain('id="pdf-search-next"');
+});
+
+test("standalone PDF copy serializes logical text items instead of positioned DOM text", () => {
+  expect(frameSource).toContain('doc.addEventListener("copy"');
+  expect(frameSource).toContain("serializeStandalonePdfSelection(doc.getSelection())");
+  expect(frameSource).toContain('event.clipboardData?.setData("text/plain", text)');
+  expect(frameSource).toContain("hasEOL: sourceItems[index]?.hasEOL === true");
+  expect(frameSource).toContain("const changedVisualLine =");
+  expect(frameSource).toContain('fragment.text.slice(fragment.from, fragment.to)');
 });
 
 test("the pinned PDF.js worker preserves logical Unicode text", () => {

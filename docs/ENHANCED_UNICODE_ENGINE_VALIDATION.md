@@ -77,7 +77,9 @@ For each case, the harness records:
 | Geometry | PDF.js text items are finite and remain within page bounds. |
 | Unexpected controls | Extracted C0 control characters indicate an invalid Unicode mapping. |
 
-The PDF.js check uses Typsastra's pinned `pdfjs-dist` patch with `preserveLogicalText`. It tests the same logical-text path used by standalone PDF selection and search.
+The PDF.js check uses Typsastra's pinned `pdfjs-dist` patch with `preserveLogicalText`. It tests the logical-text items used by standalone PDF selection, search, and Typsastra's custom clipboard serialization.
+
+The automated geometry result only verifies that PDF.js produces finite rectangles contained by the page. It does not prove that those rectangles align accurately with every painted complex-script glyph. Viewer selection alignment remains part of the manual compatibility matrix.
 
 In this mode, enhanced PDFs preserve authored space glyphs and PDF.js does not
 infer additional spaces from the distance between positioned logical units. The
@@ -100,6 +102,28 @@ The generated report contains an automated PDF.js row and placeholders for manua
 - Google Chrome,
 - Firefox, and
 - macOS Preview.
+
+### Verified Typsastra standalone preview
+
+The current Typsastra standalone preview has been manually verified against the
+enhanced fixture. Its custom clipboard path reproduces the patched PDF.js
+logical extraction result:
+
+| Capability | Result |
+|---|---|
+| Exact copied text | 7/10 cases |
+| Combining Latin, Khmer, Thai, and Lao | Exact |
+| Arabic | Incorrect visual-order sequence |
+| Devanagari | Invalid C0 controls remain |
+| Mixed script | Fails because it contains the Arabic and Devanagari cases |
+| Selection bounds | Remain inside the page |
+| Complex-script rectangle alignment | Fragmented or offset in some clusters |
+
+This confirms that Typsastra's clipboard reconstruction no longer introduces
+the inferred spaces produced by native DOM selection. It does not repair text
+already returned incorrectly by PDF.js. Arabic ordering and Devanagari decoding
+must be resolved in the enhanced PDF/PDF.js integration rather than in the
+clipboard serializer.
 
 For every viewer, manually record:
 

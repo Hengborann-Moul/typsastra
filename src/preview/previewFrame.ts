@@ -112,7 +112,12 @@ type PageDimensions = {
 type StandalonePdfTextLayer = {
   container: HTMLElement;
   textDivs: HTMLElement[];
-  textItems: string[];
+  textItems: Array<{
+    text: string;
+    hasEOL: boolean;
+    baselineY: number | null;
+    height: number | null;
+  }>;
 };
 
 type StandalonePdfSearchMatch = {
@@ -778,7 +783,10 @@ export class PreviewFrame {
     if (!this.pdfJsPromise) {
       this.pdfJsPromise = Promise.all([
         import("pdfjs-dist"),
-        import("pdfjs-dist/build/pdf.worker.min.mjs?url")
+        // The Enhanced Unicode package patch modifies the readable worker.
+        // The generated minified worker otherwise silently ignores
+        // preserveLogicalText even though the main-thread API accepts it.
+        import("pdfjs-dist/build/pdf.worker.mjs?url")
       ]).then(([pdfjs, worker]) => {
         pdfjs.GlobalWorkerOptions.workerSrc = worker.default;
         return pdfjs;
@@ -1361,7 +1369,7 @@ export class PreviewFrame {
       );
       container.style.setProperty("--scale-round-x", "1px");
       container.style.setProperty("--scale-round-y", "1px");
-      const textContentSource = page.streamTextContent({
+      const textContentSource = await page.getTextContent({
         disableNormalization: true,
         preserveLogicalText: true,
       } as any);
@@ -1373,10 +1381,22 @@ export class PreviewFrame {
       await textLayer.render();
       const pageNo = Number(page?.pageNumber ?? 0);
       if (pageNo > 0) {
+        const sourceItems = Array.isArray(textContentSource?.items)
+          ? textContentSource.items.filter((item: any) => typeof item?.str === "string")
+          : [];
         this.standalonePdfTextLayers.set(pageNo, {
           container,
           textDivs: [...textLayer.textDivs] as HTMLElement[],
-          textItems: [...textLayer.textContentItemsStr],
+          textItems: [...textLayer.textContentItemsStr].map((text, index) => ({
+            text,
+            hasEOL: sourceItems[index]?.hasEOL === true,
+            baselineY: Number.isFinite(Number(sourceItems[index]?.transform?.[5]))
+              ? Number(sourceItems[index].transform[5])
+              : null,
+            height: Number.isFinite(Number(sourceItems[index]?.height))
+              ? Math.abs(Number(sourceItems[index].height))
+              : null,
+          })),
         });
         this.renderStandalonePdfSearchMarkers(pageNo);
       }
@@ -1964,6 +1984,16 @@ export class PreviewFrame {
     this.updateGoToFirstPageButton();
     this.debugInverse(`Interaction listener installed: readyState=${doc.readyState}, url=${doc.URL || "(empty)"}.`);
     doc.addEventListener("contextmenu", event => event.preventDefault());
+    doc.addEventListener("copy", event => {
+      if (doc.documentElement.dataset.previewSurface !== "pdf") return;
+      const text = this.serializeStandalonePdfSelection(doc.getSelection());
+      if (text === null) return;
+      event.preventDefault();
+      event.clipboardData?.setData("text/plain", text);
+      void writeText(text).catch(error => {
+        console.warn("Failed to write standalone PDF selection to the native clipboard:", error);
+      });
+    });
     doc.addEventListener("pointerdown", event => {
       if ((event.target as Element | null)?.closest("#preview-go-first")) return;
       this.rememberDraftPointer(event);
@@ -2083,6 +2113,91 @@ export class PreviewFrame {
       },
       { passive: true }
     );
+  }
+
+  private serializeStandalonePdfSelection(selection: Selection | null): string | null {
+    if (!selection || selection.isCollapsed || selection.rangeCount < 1) return null;
+
+    const fragments: Array<{
+      pageNo: number;
+      itemIndex: number;
+      from: number;
+      to: number;
+      text: string;
+      hasEOL: boolean;
+      baselineY: number | null;
+      height: number | null;
+    }> = [];
+
+    for (let rangeIndex = 0; rangeIndex < selection.rangeCount; rangeIndex += 1) {
+      const range = selection.getRangeAt(rangeIndex);
+      for (const [pageNo, layer] of this.standalonePdfTextLayers) {
+        for (let itemIndex = 0; itemIndex < layer.textDivs.length; itemIndex += 1) {
+          const textNode = layer.textDivs[itemIndex]?.firstChild;
+          const item = layer.textItems[itemIndex];
+          if (!item || !textNode || textNode.nodeType !== Node.TEXT_NODE) continue;
+          try {
+            if (!range.intersectsNode(textNode)) continue;
+          } catch {
+            continue;
+          }
+
+          const length = textNode.textContent?.length ?? 0;
+          let from = range.startContainer === textNode ? range.startOffset : 0;
+          let to = range.endContainer === textNode ? range.endOffset : length;
+          from = Math.max(0, Math.min(from, length));
+          to = Math.max(from, Math.min(to, length));
+          if (to <= from) continue;
+          fragments.push({
+            pageNo,
+            itemIndex,
+            from,
+            to,
+            text: item.text,
+            hasEOL: item.hasEOL,
+            baselineY: item.baselineY,
+            height: item.height,
+          });
+        }
+      }
+    }
+
+    if (fragments.length < 1) return null;
+    fragments.sort((left, right) => (
+      left.pageNo - right.pageNo
+      || left.itemIndex - right.itemIndex
+      || left.from - right.from
+    ));
+
+    let result = "";
+    let previousPage = fragments[0].pageNo;
+    let previousFragment: (typeof fragments)[number] | null = null;
+    let previousKey = "";
+    for (const fragment of fragments) {
+      const key = `${fragment.pageNo}:${fragment.itemIndex}:${fragment.from}:${fragment.to}`;
+      if (key === previousKey) continue;
+      const changedPage = fragment.pageNo !== previousPage;
+      const baselineDelta = previousFragment?.baselineY != null && fragment.baselineY != null
+        ? Math.abs(fragment.baselineY - previousFragment.baselineY)
+        : 0;
+      const lineThreshold = Math.max(
+        1,
+        Math.min(
+          previousFragment?.height ?? Number.POSITIVE_INFINITY,
+          fragment.height ?? Number.POSITIVE_INFINITY,
+        ) * 0.45,
+      );
+      const changedVisualLine = !changedPage
+        && baselineDelta > lineThreshold
+        && Number.isFinite(lineThreshold);
+      if ((changedPage || changedVisualLine) && result && !result.endsWith("\n")) result += "\n";
+      result += fragment.text.slice(fragment.from, fragment.to);
+      if (fragment.hasEOL && fragment.to >= fragment.text.length && !result.endsWith("\n")) result += "\n";
+      previousPage = fragment.pageNo;
+      previousFragment = fragment;
+      previousKey = key;
+    }
+    return result;
   }
 
   private updateGoToFirstPageButton(): void {
