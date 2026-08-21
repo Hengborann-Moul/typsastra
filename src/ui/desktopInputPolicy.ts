@@ -1,3 +1,5 @@
+import { installGraphemeTextControl, type GraphemeTextControl } from "./graphemeTextControl";
+
 const TEXT_INPUT_SELECTOR = [
   "input:not([type])",
   'input[type="text"]',
@@ -8,6 +10,17 @@ const TEXT_INPUT_SELECTOR = [
   'input[type="tel"]',
   'input[type="password"]',
   "textarea"
+].join(",");
+
+const GRAPHEME_TEXT_INPUT_SELECTOR = [
+  "input:not([type])",
+  'input[type="text"]',
+  'input[type="search"]',
+  'input[type="email"]',
+  'input[type="url"]',
+  'input[type="tel"]',
+  'input[type="password"]',
+  "textarea",
 ].join(",");
 
 export function desktopInputAttributes(): Readonly<Record<string, string>> {
@@ -22,6 +35,9 @@ export function desktopInputAttributes(): Readonly<Record<string, string>> {
 function applyDesktopInputAttributes(control: Element): void {
   for (const [name, value] of Object.entries(desktopInputAttributes())) {
     control.setAttribute(name, value);
+  }
+  if (control.matches(GRAPHEME_TEXT_INPUT_SELECTOR)) {
+    installGraphemeTextControl(control as GraphemeTextControl);
   }
 }
 
@@ -43,4 +59,9 @@ export function initializeDesktopInputPolicy(doc: Document = document): Mutation
   });
   observer.observe(doc.documentElement, { childList: true, subtree: true });
   return observer;
+}
+
+/** Apply the input policy to a static secondary document such as the PDF iframe. */
+export function applyDesktopInputPolicy(doc: Document): void {
+  applyWithin(doc);
 }

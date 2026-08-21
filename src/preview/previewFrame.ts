@@ -49,6 +49,7 @@ export type PreviewMemorySnapshot = {
 
 import { invoke } from "@tauri-apps/api/core";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { applyDesktopInputPolicy } from "../ui/desktopInputPolicy";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { parsePreviewCompilerDiagnostic, type TypstSourceLocation } from "../compiler/previewError";
 import { PERFORMANCE_BUDGETS, type PerformanceMetric } from "../performance/diagnostics";
@@ -2353,6 +2354,7 @@ export class PreviewFrame {
       this.debugInverse("Interaction installation deferred: iframe document unavailable.");
       return;
     }
+    applyDesktopInputPolicy(doc);
     this.syncTheme();
     if (doc.documentElement.dataset.typsastraInteractions === "true") return;
     doc.documentElement.dataset.typsastraInteractions = "true";

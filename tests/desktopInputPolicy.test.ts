@@ -20,6 +20,7 @@ describe("desktop input policy", () => {
     expect(source).toContain('input[type="number"]');
     expect(source).toContain('"textarea"');
     expect(source).toContain("MutationObserver");
+    expect(source).toContain("installGraphemeTextControl");
   });
 
   test("applies the policy before Typsastra starts and declares it on page navigation", () => {
@@ -35,5 +36,11 @@ describe("desktop input policy", () => {
     expect(pageInput).toContain('autocorrect="off"');
     expect(pageInput).toContain('autocapitalize="off"');
     expect(pageInput).toContain('spellcheck="false"');
+  });
+
+  test("applies the same grapheme policy inside the standalone PDF document", () => {
+    const previewFrame = readFileSync(join(root, "src", "preview", "previewFrame.ts"), "utf8");
+
+    expect(previewFrame).toContain("applyDesktopInputPolicy(doc)");
   });
 });
