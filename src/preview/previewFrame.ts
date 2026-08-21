@@ -1538,6 +1538,7 @@ export class PreviewFrame {
           hasEOL: run.hasEOL,
           baselineY: run.bottom,
           height: Math.abs(run.top - run.bottom),
+          semanticBlockId: run.semanticBlockId,
           searchGeometry: run.glyphs.map((glyph: PdfiumTextGlyph) => ({
             from: glyph.from,
             to: glyph.to,

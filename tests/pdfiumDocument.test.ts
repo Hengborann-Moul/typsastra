@@ -107,4 +107,32 @@ describe("PDFium standalone text runs", () => {
     expect(grouped.at(-1)?.to).toBe(text.length);
     expect(grouped.some(glyph => glyph.to - glyph.from > 1)).toBe(true);
   });
+
+  test("assigns tagged semantic blocks from page-coordinate markers", () => {
+    const fixture = page([
+      char("A", 10, 150, 18, 162),
+      { text: "\n", left: null, bottom: null, right: null, top: null, fontSize: 0 },
+      char("B", 10, 130, 18, 142),
+    ]);
+    fixture.semanticMarkers = [
+      { blockId: 4, x: 10, y: 156 },
+    ];
+
+    expect(buildPdfiumTextRuns(fixture).map(run => run.semanticBlockId)).toEqual([4, 4]);
+  });
+
+  test("changes tagged blocks at authored boundaries and clears page artifacts", () => {
+    const fixture = page([
+      char("A", 10, 150, 18, 162),
+      { text: "\n", left: null, bottom: null, right: null, top: null, fontSize: 0 },
+      char("B", 10, 130, 18, 142),
+    ]);
+    fixture.semanticMarkers = [
+      { blockId: null, x: 10, y: 180 },
+      { blockId: 4, x: 10, y: 156 },
+      { blockId: 5, x: 10, y: 136 },
+    ];
+
+    expect(buildPdfiumTextRuns(fixture).map(run => run.semanticBlockId)).toEqual([4, 5]);
+  });
 });

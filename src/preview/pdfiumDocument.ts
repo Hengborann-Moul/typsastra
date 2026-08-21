@@ -24,6 +24,13 @@ export type PdfiumPageText = {
   width: number;
   height: number;
   chars: PdfiumTextChar[];
+  semanticMarkers?: PdfiumSemanticMarker[];
+};
+
+export type PdfiumSemanticMarker = {
+  blockId: number | null;
+  x: number;
+  y: number;
 };
 
 export type PdfiumTextRun = {
@@ -35,6 +42,7 @@ export type PdfiumTextRun = {
   hasEOL: boolean;
   dir: "ltr" | "rtl";
   glyphs: PdfiumTextGlyph[];
+  semanticBlockId: number | null;
 };
 
 export type PdfiumTextGlyph = {
@@ -267,7 +275,7 @@ export function buildPdfiumTextRuns(page: PdfiumPageText): PdfiumTextRun[] {
   }
   flush(false);
 
-  return lines.flatMap(line => {
+  const runs = lines.flatMap(line => {
     const positioned = line.chars.filter(char => (
       char.left !== null && char.bottom !== null && char.right !== null && char.top !== null
     ));
@@ -299,8 +307,38 @@ export function buildPdfiumTextRuns(page: PdfiumPageText): PdfiumTextRun[] {
       hasEOL: line.hasEOL,
       dir: firstStrongDirection(text),
       glyphs: groupPdfiumGlyphsByGrapheme(text, characterGlyphs),
+      semanticBlockId: null,
     }];
   });
+  assignPdfiumSemanticBlocks(runs, page.semanticMarkers ?? []);
+  return runs;
+}
+
+/**
+ * Tagged PDFs identify logical blocks with marked-content anchors. The
+ * anchor's translation is in the same bottom-up page coordinate system as
+ * PDFium's character boxes, so each visual line inherits the most recent
+ * marker above its baseline. Artifact markers intentionally clear the block
+ * for running headers and footers.
+ */
+function assignPdfiumSemanticBlocks(
+  runs: PdfiumTextRun[],
+  markers: readonly PdfiumSemanticMarker[],
+): void {
+  if (runs.length < 1 || markers.length < 1) return;
+  const ordered = [...markers]
+    .filter(marker => Number.isFinite(marker.y))
+    .sort((left, right) => right.y - left.y);
+  let markerIndex = 0;
+  let activeBlock: number | null = null;
+  for (const run of runs) {
+    const tolerance = Math.max(1, (run.top - run.bottom) * 0.35);
+    while (markerIndex < ordered.length && ordered[markerIndex].y >= run.bottom - tolerance) {
+      activeBlock = ordered[markerIndex].blockId;
+      markerIndex += 1;
+    }
+    run.semanticBlockId = activeBlock;
+  }
 }
 
 /**
