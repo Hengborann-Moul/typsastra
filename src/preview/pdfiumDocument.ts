@@ -47,6 +47,11 @@ export type PdfiumPageText = {
 
 export type PdfiumSemanticMarker = {
   blockId: number | null;
+  role: string | null;
+  tableId: number | null;
+  rowId: number | null;
+  cellId: number | null;
+  figureId: number | null;
   x: number;
   y: number;
 };
@@ -61,6 +66,11 @@ export type PdfiumTextRun = {
   dir: "ltr" | "rtl";
   glyphs: PdfiumTextGlyph[];
   semanticBlockId: number | null;
+  semanticRole: string | null;
+  semanticTableId: number | null;
+  semanticRowId: number | null;
+  semanticCellId: number | null;
+  semanticFigureId: number | null;
   styleRanges: PdfiumTextStyleRange[];
 };
 
@@ -335,6 +345,11 @@ export function buildPdfiumTextRuns(page: PdfiumPageText): PdfiumTextRun[] {
       dir: firstStrongDirection(text),
       glyphs: groupPdfiumGlyphsByGrapheme(text, characterGlyphs),
       semanticBlockId: null,
+      semanticRole: null,
+      semanticTableId: null,
+      semanticRowId: null,
+      semanticCellId: null,
+      semanticFigureId: null,
       styleRanges,
     }];
   });
@@ -378,14 +393,19 @@ function assignPdfiumSemanticBlocks(
     .filter(marker => Number.isFinite(marker.y))
     .sort((left, right) => right.y - left.y);
   let markerIndex = 0;
-  let activeBlock: number | null = null;
+  let active: PdfiumSemanticMarker | null = null;
   for (const run of runs) {
     const tolerance = Math.max(1, (run.top - run.bottom) * 0.35);
     while (markerIndex < ordered.length && ordered[markerIndex].y >= run.bottom - tolerance) {
-      activeBlock = ordered[markerIndex].blockId;
+      active = ordered[markerIndex];
       markerIndex += 1;
     }
-    run.semanticBlockId = activeBlock;
+    run.semanticBlockId = active?.blockId ?? null;
+    run.semanticRole = active?.role ?? null;
+    run.semanticTableId = active?.tableId ?? null;
+    run.semanticRowId = active?.rowId ?? null;
+    run.semanticCellId = active?.cellId ?? null;
+    run.semanticFigureId = active?.figureId ?? null;
   }
 }
 

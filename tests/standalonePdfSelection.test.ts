@@ -409,3 +409,45 @@ test("formatted standalone PDF copy emits editable styled paragraphs and a plain
   expect(selection?.html).not.toContain("<img");
   expect(selection?.html).not.toContain("<canvas");
 });
+
+test("formatted standalone PDF copy preserves tagged headings, captions, and editable tables", () => {
+  const item = (
+    text: string,
+    block: number,
+    role: string,
+    row: number | null = null,
+    cell: number | null = null,
+  ) => ({
+    text,
+    hasEOL: true,
+    baselineY: block * 20,
+    height: 12,
+    semanticBlockId: block,
+    semanticRole: role,
+    semanticTableId: role === "H1" ? null : 5,
+    semanticRowId: row,
+    semanticCellId: cell,
+    searchGeometry: [{ from: 0, to: text.length, left: 10, top: block * 20, width: 60, height: 12 }],
+  });
+  const documentPages = pages([1, [
+    item("Report", 1, "H1"),
+    item("Summary table", 2, "Caption"),
+    item("Name", 3, "TH", 10, 20),
+    item("Value", 4, "TH", 10, 21),
+    item("Khmer", 5, "TD", 11, 22),
+    item("Ready", 6, "TD", 11, 23),
+  ]]);
+
+  const selection = serializeStandalonePdfFormattedSelection(
+    documentPages,
+    { pageNo: 1, itemIndex: 0, geometryIndex: 0 },
+    { pageNo: 1, itemIndex: 5, geometryIndex: 0 },
+  );
+
+  expect(selection?.html).toContain("<h1");
+  expect(selection?.html).toContain("<table");
+  expect(selection?.html).toContain("<th");
+  expect(selection?.html).toContain("<td");
+  expect(selection?.html).toContain("Summary table");
+  expect(selection?.html).not.toContain("<img");
+});

@@ -13,6 +13,11 @@ export type StandalonePdfSelectionItem = {
   baselineY: number | null;
   height: number | null;
   semanticBlockId?: number | null;
+  semanticRole?: string | null;
+  semanticTableId?: number | null;
+  semanticRowId?: number | null;
+  semanticCellId?: number | null;
+  semanticFigureId?: number | null;
   searchGeometry?: StandalonePdfSelectionGeometry[];
   styleRanges?: StandalonePdfSelectionStyleRange[];
 };
@@ -177,49 +182,158 @@ export function serializeStandalonePdfFormattedSelection(
   if (fragments.length < 1 || plainText === null) return null;
 
   const layout = standalonePdfTextLayout(pages);
-  const paragraphs: Array<{ html: string[]; text: string }> = [{ html: [], text: "" }];
+  const entries: FormattedSelectionEntry[] = [];
   let previousPage = fragments[0].pageNo;
   let previousItem: StandalonePdfSelectionItem | null = null;
   for (const fragment of fragments) {
     const item = pages.get(fragment.pageNo)?.textItems[fragment.itemIndex];
     if (!item) continue;
+    let boundary: StandalonePdfTextBoundary = "same-line";
     if (previousItem) {
-      const boundary = standalonePdfTextBoundary(
+      boundary = standalonePdfTextBoundary(
         previousPage,
         previousItem,
         fragment.pageNo,
         item,
         layout,
       );
-      if (boundary === "paragraph") {
-        paragraphs.push({ html: [], text: "" });
-      } else if (boundary === "line") {
-        const paragraph = paragraphs[paragraphs.length - 1];
-        const separator = softLineSeparator(paragraph.text, item.text.slice(fragment.from, fragment.to));
-        if (separator) {
-          paragraph.html.push(escapeHtml(separator));
-          paragraph.text += separator;
-        }
-      }
     }
-    const paragraph = paragraphs[paragraphs.length - 1];
-    paragraph.html.push(...styledHtmlFragments(item, fragment.from, fragment.to));
-    paragraph.text += item.text.slice(fragment.from, fragment.to);
+    entries.push({
+      item,
+      boundary,
+      html: styledHtmlFragments(item, fragment.from, fragment.to).join(""),
+      text: item.text.slice(fragment.from, fragment.to),
+    });
     previousPage = fragment.pageNo;
     previousItem = item;
   }
 
-  const body = paragraphs
-    .filter(paragraph => paragraph.html.length > 0)
-    .map(paragraph => (
-      `<p style="margin:0 0 .75em 0;white-space:pre-wrap">${paragraph.html.join("")}</p>`
-    ))
-    .join("");
+  const body = formattedSelectionHtml(entries);
   if (!body) return null;
   return {
     plainText,
     html: `<div style="white-space:normal">${body}</div>`,
   };
+}
+
+type FormattedSelectionEntry = {
+  item: StandalonePdfSelectionItem;
+  boundary: StandalonePdfTextBoundary;
+  html: string;
+  text: string;
+};
+
+function formattedSelectionHtml(entries: readonly FormattedSelectionEntry[]): string {
+  const blocks: string[] = [];
+  for (let index = 0; index < entries.length;) {
+    const entry = entries[index];
+    const tableId = entry.item.semanticTableId;
+    if (tableId != null) {
+      const end = consumeSemanticGroup(entries, index, item => item.semanticTableId === tableId);
+      blocks.push(formattedTableHtml(entries.slice(index, end)));
+      index = end;
+      continue;
+    }
+    const figureId = entry.item.semanticFigureId;
+    if (figureId != null) {
+      const end = consumeSemanticGroup(entries, index, item => (
+        item.semanticFigureId === figureId && item.semanticTableId == null
+      ));
+      const contents = formattedParagraphsHtml(entries.slice(index, end));
+      blocks.push(
+        `<table role="presentation" style="border:1px solid #808080;border-collapse:collapse;width:100%">`
+        + `<tr><td style="border:1px solid #808080;padding:6pt">${contents}</td></tr></table>`,
+      );
+      index = end;
+      continue;
+    }
+    const end = consumeSemanticGroup(entries, index, item => (
+      item.semanticTableId == null && item.semanticFigureId == null
+    ));
+    blocks.push(formattedParagraphsHtml(entries.slice(index, end)));
+    index = end;
+  }
+  return blocks.join("");
+}
+
+function consumeSemanticGroup(
+  entries: readonly FormattedSelectionEntry[],
+  start: number,
+  matches: (item: StandalonePdfSelectionItem) => boolean,
+): number {
+  let end = start;
+  while (end < entries.length && matches(entries[end].item)) end += 1;
+  return end;
+}
+
+function formattedTableHtml(entries: readonly FormattedSelectionEntry[]): string {
+  const captionEntries = entries.filter(entry => (
+    entry.item.semanticRole === "Caption"
+    && entry.item.semanticRowId == null
+    && entry.item.semanticCellId == null
+  ));
+  const tableEntries = entries.filter(entry => !captionEntries.includes(entry));
+  const rows: Array<{ id: number | null; cells: Array<{ id: number | null; role: string | null; entries: FormattedSelectionEntry[] }> }> = [];
+  for (const entry of tableEntries) {
+    const rowId = entry.item.semanticRowId ?? null;
+    let row = rows[rows.length - 1];
+    if (!row || row.id !== rowId) {
+      row = { id: rowId, cells: [] };
+      rows.push(row);
+    }
+    const cellId = entry.item.semanticCellId ?? null;
+    let cell = row.cells[row.cells.length - 1];
+    if (!cell || cell.id !== cellId) {
+      cell = { id: cellId, role: entry.item.semanticRole ?? null, entries: [] };
+      row.cells.push(cell);
+    }
+    cell.entries.push(entry);
+  }
+  const body = rows.map(row => {
+    const cells = row.cells.map(cell => {
+      const tag = cell.role === "TH" ? "th" : "td";
+      return `<${tag} style="border:1px solid #808080;padding:4pt;vertical-align:top">`
+        + `${formattedParagraphsHtml(cell.entries)}</${tag}>`;
+    }).join("");
+    return `<tr>${cells}</tr>`;
+  }).join("");
+  const caption = captionEntries.length > 0 ? formattedParagraphsHtml(captionEntries) : "";
+  return `${caption}<table style="border-collapse:collapse;width:100%;margin:0 0 .75em 0">${body}</table>`;
+}
+
+function formattedParagraphsHtml(entries: readonly FormattedSelectionEntry[]): string {
+  const paragraphs: Array<{ role: string | null; html: string[]; text: string }> = [];
+  for (const entry of entries) {
+    let paragraph = paragraphs[paragraphs.length - 1];
+    if (!paragraph || entry.boundary === "paragraph") {
+      paragraph = { role: entry.item.semanticRole ?? null, html: [], text: "" };
+      paragraphs.push(paragraph);
+    } else if (entry.boundary === "line") {
+      const separator = softLineSeparator(paragraph.text, entry.text);
+      if (separator) {
+        paragraph.html.push(escapeHtml(separator));
+        paragraph.text += separator;
+      }
+    }
+    paragraph.html.push(entry.html);
+    paragraph.text += entry.text;
+  }
+  return paragraphs
+    .filter(paragraph => paragraph.html.length > 0)
+    .map(paragraph => formattedParagraphHtml(paragraph.role, paragraph.html.join("")))
+    .join("");
+}
+
+function formattedParagraphHtml(role: string | null, contents: string): string {
+  if (/^H[1-6]$/u.test(role ?? "")) {
+    const level = Number(role?.slice(1));
+    return `<h${level} style="margin:.6em 0 .3em 0">${contents}</h${level}>`;
+  }
+  if (role === "H") return `<h2 style="margin:.6em 0 .3em 0">${contents}</h2>`;
+  if (role === "Caption") {
+    return `<p style="margin:.25em 0 .75em 0;text-align:center;font-style:italic">${contents}</p>`;
+  }
+  return `<p style="margin:0 0 .75em 0;white-space:pre-wrap">${contents}</p>`;
 }
 
 function styledHtmlFragments(item: StandalonePdfSelectionItem, from: number, to: number): string[] {

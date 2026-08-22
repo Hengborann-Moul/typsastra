@@ -55,8 +55,23 @@ pub struct PdfiumPageText {
 #[serde(rename_all = "camelCase")]
 pub struct PdfiumSemanticMarker {
     pub block_id: Option<u64>,
+    pub role: Option<String>,
+    pub table_id: Option<u64>,
+    pub row_id: Option<u64>,
+    pub cell_id: Option<u64>,
+    pub figure_id: Option<u64>,
     pub x: f32,
     pub y: f32,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct PdfiumSemanticBlock {
+    block_id: Option<u64>,
+    role: Option<String>,
+    table_id: Option<u64>,
+    row_id: Option<u64>,
+    cell_id: Option<u64>,
+    figure_id: Option<u64>,
 }
 
 enum PdfiumRequest {
@@ -89,6 +104,7 @@ struct OpenPdfiumDocument<'a> {
     path: PathBuf,
     delete_on_close: bool,
     semantic_markers: HashMap<u16, Vec<PdfiumSemanticMarker>>,
+    font_families: HashMap<String, String>,
 }
 
 impl PdfiumPreviewState {
@@ -161,7 +177,7 @@ fn run_pdfium_worker(receiver: mpsc::Receiver<PdfiumRequest>) {
                             height: page.height().value,
                         })
                         .collect();
-                    let semantic_markers = load_semantic_markers(&path).unwrap_or_default();
+                    let (semantic_markers, font_families) = load_pdf_metadata(&path);
                     documents.insert(
                         document_id,
                         OpenPdfiumDocument {
@@ -169,6 +185,7 @@ fn run_pdfium_worker(receiver: mpsc::Receiver<PdfiumRequest>) {
                             path,
                             delete_on_close,
                             semantic_markers,
+                            font_families,
                         },
                     );
                     Ok(PdfiumDocumentInfo {
@@ -292,6 +309,9 @@ fn extract_page_text<'a>(
     page_no: u16,
 ) -> Result<PdfiumPageText, String> {
     let page = get_page(documents, document_id, page_no)?;
+    let font_families = documents
+        .get(&document_id)
+        .map(|document| &document.font_families);
     let page_width = page.width().value;
     let page_height = page.height().value;
     let text = page
@@ -310,7 +330,7 @@ fn extract_page_text<'a>(
                 right: bounds.map(|bounds| bounds.right().value),
                 top: bounds.map(|bounds| bounds.top().value),
                 font_size: char.scaled_font_size().value.abs(),
-                font_family: char.font_name(),
+                font_family: resolved_font_family(&char.font_name(), font_families),
                 font_weight: char.font_weight().map(pdf_font_weight_value),
                 italic: char.font_is_italic(),
                 color: char.fill_color().ok().map(|color| {
@@ -351,12 +371,139 @@ fn pdf_font_weight_value(weight: PdfFontWeight) -> u32 {
     }
 }
 
-fn load_semantic_markers(
+fn resolved_font_family(pdfium_name: &str, families: Option<&HashMap<String, String>>) -> String {
+    let normalized = normalized_pdf_font_name(pdfium_name);
+    families
+        .and_then(|families| families.get(&normalized))
+        .cloned()
+        .unwrap_or(normalized)
+}
+
+fn normalized_pdf_font_name(value: &str) -> String {
+    let without_subset = value
+        .split_once('+')
+        .filter(|(prefix, _)| prefix.len() == 6 && prefix.chars().all(|c| c.is_ascii_uppercase()))
+        .map(|(_, family)| family)
+        .unwrap_or(value);
+    without_subset.trim_start_matches('/').trim().to_string()
+}
+
+fn load_embedded_font_families(document: &lopdf::Document) -> HashMap<String, String> {
+    let mut families = HashMap::new();
+    for object in document.objects.values() {
+        let Some(dictionary) = resolved_dictionary(document, object) else {
+            continue;
+        };
+        let Ok(base_font) = dictionary.get(b"BaseFont") else {
+            continue;
+        };
+        let Some(base_font) = pdf_name_or_string(base_font) else {
+            continue;
+        };
+        let descriptor = font_descriptor(document, dictionary);
+        let family = descriptor
+            .and_then(|descriptor| descriptor.get(b"FontFamily").ok())
+            .and_then(pdf_name_or_string)
+            .or_else(|| {
+                descriptor.and_then(|descriptor| embedded_font_family(document, descriptor))
+            });
+        if let Some(family) = family.filter(|family| !family.trim().is_empty()) {
+            families.insert(normalized_pdf_font_name(&base_font), family);
+        }
+    }
+    families
+}
+
+fn resolved_object<'a>(
+    document: &'a lopdf::Document,
+    object: &'a lopdf::Object,
+) -> Option<&'a lopdf::Object> {
+    match object {
+        lopdf::Object::Reference(id) => document.get_object(*id).ok(),
+        object => Some(object),
+    }
+}
+
+fn resolved_dictionary<'a>(
+    document: &'a lopdf::Document,
+    object: &'a lopdf::Object,
+) -> Option<&'a lopdf::Dictionary> {
+    match resolved_object(document, object)? {
+        lopdf::Object::Dictionary(dictionary) => Some(dictionary),
+        lopdf::Object::Stream(stream) => Some(&stream.dict),
+        _ => None,
+    }
+}
+
+fn font_descriptor<'a>(
+    document: &'a lopdf::Document,
+    font: &'a lopdf::Dictionary,
+) -> Option<&'a lopdf::Dictionary> {
+    if let Ok(descriptor) = font.get(b"FontDescriptor") {
+        return resolved_dictionary(document, descriptor);
+    }
+    let descendants = resolved_object(document, font.get(b"DescendantFonts").ok()?)
+        .and_then(|object| object.as_array().ok())?;
+    let descendant = resolved_dictionary(document, descendants.first()?)?;
+    resolved_dictionary(document, descendant.get(b"FontDescriptor").ok()?)
+}
+
+fn embedded_font_family(
+    document: &lopdf::Document,
+    descriptor: &lopdf::Dictionary,
+) -> Option<String> {
+    let stream = [b"FontFile".as_slice(), b"FontFile2", b"FontFile3"]
+        .into_iter()
+        .find_map(|key| descriptor.get(key).ok())
+        .and_then(|object| resolved_object(document, object))
+        .and_then(|object| object.as_stream().ok())?;
+    let bytes = stream.decompressed_content().ok()?;
+    let face = ttf_parser::Face::parse(&bytes, 0).ok()?;
+    for name_id in [
+        ttf_parser::name_id::TYPOGRAPHIC_FAMILY,
+        ttf_parser::name_id::FAMILY,
+    ] {
+        if let Some(family) = face
+            .names()
+            .into_iter()
+            .find(|name| name.name_id == name_id)
+            .and_then(|name| name.to_string())
+            .filter(|family| !family.trim().is_empty())
+        {
+            return Some(family);
+        }
+    }
+    None
+}
+
+fn pdf_name_or_string(object: &lopdf::Object) -> Option<String> {
+    match object {
+        lopdf::Object::Name(value) | lopdf::Object::String(value, _) => {
+            Some(String::from_utf8_lossy(value).into_owned())
+        }
+        _ => None,
+    }
+}
+
+fn load_pdf_metadata(
     path: &std::path::Path,
+) -> (
+    HashMap<u16, Vec<PdfiumSemanticMarker>>,
+    HashMap<String, String>,
+) {
+    let Ok(document) = lopdf::Document::load(path) else {
+        return (HashMap::new(), HashMap::new());
+    };
+    (
+        load_semantic_markers_from_document(&document).unwrap_or_default(),
+        load_embedded_font_families(&document),
+    )
+}
+
+fn load_semantic_markers_from_document(
+    document: &lopdf::Document,
 ) -> Result<HashMap<u16, Vec<PdfiumSemanticMarker>>, String> {
-    let document = lopdf::Document::load(path)
-        .map_err(|error| format!("Failed to inspect tagged PDF structure: {error}"))?;
-    let semantic_blocks = load_semantic_blocks_from_document(&document)?;
+    let semantic_blocks = load_semantic_blocks_from_document(document)?;
     let mut markers = HashMap::new();
     for (page_index, page_id) in document.get_pages() {
         let Ok(page_no) = u16::try_from(page_index) else {
@@ -432,14 +579,14 @@ impl PdfTransform {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum MarkedContentKind {
-    Semantic(u64),
+    Semantic(PdfiumSemanticBlock),
     Artifact,
     Unmapped,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 struct MarkedContentState {
     kind: MarkedContentKind,
     marker_emitted: bool,
@@ -447,7 +594,7 @@ struct MarkedContentState {
 
 fn semantic_markers_from_operations(
     operations: &[lopdf::content::Operation],
-    blocks: Option<&[Option<u64>]>,
+    blocks: Option<&[Option<PdfiumSemanticBlock>]>,
 ) -> Vec<PdfiumSemanticMarker> {
     let mut markers = Vec::new();
     let mut transform = PdfTransform::IDENTITY;
@@ -496,17 +643,17 @@ fn semantic_markers_from_operations(
                         .and_then(|value| value.as_i64().ok()),
                     _ => None,
                 });
-                let block_id = mcid.and_then(|mcid| {
+                let block = mcid.and_then(|mcid| {
                     usize::try_from(mcid)
                         .ok()
                         .and_then(|index| blocks.and_then(|blocks| blocks.get(index)))
-                        .copied()
+                        .cloned()
                         .flatten()
                 });
                 let kind = if artifact {
                     MarkedContentKind::Artifact
-                } else if let Some(block_id) = block_id {
-                    MarkedContentKind::Semantic(block_id)
+                } else if let Some(block) = block {
+                    MarkedContentKind::Semantic(block)
                 } else {
                     MarkedContentKind::Unmapped
                 };
@@ -525,12 +672,21 @@ fn semantic_markers_from_operations(
                     continue;
                 };
                 let (x, y) = transform.apply(text_matrix.e, text_matrix.f);
-                let block_id = match marked_content[index].kind {
-                    MarkedContentKind::Semantic(block_id) => Some(block_id),
-                    MarkedContentKind::Artifact => None,
+                let block = match &marked_content[index].kind {
+                    MarkedContentKind::Semantic(block) => block.clone(),
+                    MarkedContentKind::Artifact => PdfiumSemanticBlock::default(),
                     MarkedContentKind::Unmapped => unreachable!(),
                 };
-                markers.push(PdfiumSemanticMarker { block_id, x, y });
+                markers.push(PdfiumSemanticMarker {
+                    block_id: block.block_id,
+                    role: block.role,
+                    table_id: block.table_id,
+                    row_id: block.row_id,
+                    cell_id: block.cell_id,
+                    figure_id: block.figure_id,
+                    x,
+                    y,
+                });
                 marked_content[index].marker_emitted = true;
             }
             _ => {}
@@ -550,7 +706,7 @@ fn pdf_number(object: &lopdf::Object) -> Option<f32> {
 
 fn load_semantic_blocks_from_document(
     document: &lopdf::Document,
-) -> Result<HashMap<u16, Vec<Option<u64>>>, String> {
+) -> Result<HashMap<u16, Vec<Option<PdfiumSemanticBlock>>>, String> {
     let pages: HashMap<lopdf::ObjectId, u16> = document
         .get_pages()
         .into_iter()
@@ -566,15 +722,15 @@ fn load_semantic_blocks_from_document(
         .map_err(|error| format!("PDF does not expose a structure tree: {error}"))?
         .clone();
 
-    let mut blocks = HashMap::<u16, BTreeMap<i64, u64>>::new();
-    let mut next_block = 1_u64;
+    let mut blocks = HashMap::<u16, BTreeMap<i64, PdfiumSemanticBlock>>::new();
+    let mut next_id = 1_u64;
     visit_structure_object(
         &document,
         &pages,
         root,
         None,
-        None,
-        &mut next_block,
+        PdfiumSemanticBlock::default(),
+        &mut next_id,
         &mut blocks,
     );
 
@@ -590,9 +746,9 @@ fn load_semantic_blocks_from_document(
                 return (page_no, Vec::new());
             };
             let mut ordered = vec![None; max_mcid + 1];
-            for (mcid, block_id) in mcids {
+            for (mcid, block) in mcids {
                 if let Ok(index) = usize::try_from(mcid) {
-                    ordered[index] = Some(block_id);
+                    ordered[index] = Some(block);
                 }
             }
             (page_no, ordered)
@@ -606,9 +762,9 @@ fn visit_structure_object(
     pages: &HashMap<lopdf::ObjectId, u16>,
     object: lopdf::Object,
     inherited_page: Option<u16>,
-    inherited_block: Option<u64>,
-    next_block: &mut u64,
-    blocks: &mut HashMap<u16, BTreeMap<i64, u64>>,
+    inherited: PdfiumSemanticBlock,
+    next_id: &mut u64,
+    blocks: &mut HashMap<u16, BTreeMap<i64, PdfiumSemanticBlock>>,
 ) {
     use lopdf::Object;
 
@@ -619,8 +775,10 @@ fn visit_structure_object(
     let Some(resolved) = resolved else { return };
     match resolved {
         Object::Integer(mcid) => {
-            if let (Some(page_no), Some(block_id)) = (inherited_page, inherited_block) {
-                blocks.entry(page_no).or_default().insert(mcid, block_id);
+            if let Some(page_no) = inherited_page {
+                if inherited.block_id.is_some() || inherited.role.is_some() {
+                    blocks.entry(page_no).or_default().insert(mcid, inherited);
+                }
             }
         }
         Object::Array(children) => {
@@ -630,8 +788,8 @@ fn visit_structure_object(
                     pages,
                     child,
                     inherited_page,
-                    inherited_block,
-                    next_block,
+                    inherited.clone(),
+                    next_id,
                     blocks,
                 );
             }
@@ -648,17 +806,23 @@ fn visit_structure_object(
                 .ok()
                 .and_then(|kind| kind.as_name().ok())
                 .unwrap_or_default();
-            let block_id = if is_semantic_text_block(kind) {
-                let block_id = *next_block;
-                *next_block += 1;
-                Some(block_id)
-            } else {
-                inherited_block
-            };
+            let mut current = semantic_child_context(kind, inherited, next_id);
+            if kind == b"Div" && structure_has_immediate_role(document, &dictionary, b"Caption") {
+                let id = *next_id;
+                *next_id += 1;
+                current.figure_id = Some(id);
+                current.block_id = Some(id);
+                current.role = Some("Figure".to_string());
+            }
 
             if let Ok(mcid) = dictionary.get(b"MCID").and_then(Object::as_i64) {
-                if let (Some(page_no), Some(block_id)) = (page_no, block_id) {
-                    blocks.entry(page_no).or_default().insert(mcid, block_id);
+                if let Some(page_no) = page_no {
+                    if current.block_id.is_some() || current.role.is_some() {
+                        blocks
+                            .entry(page_no)
+                            .or_default()
+                            .insert(mcid, current.clone());
+                    }
                 }
             }
             if let Ok(children) = dictionary.get(b"K") {
@@ -667,8 +831,8 @@ fn visit_structure_object(
                     pages,
                     children.clone(),
                     page_no,
-                    block_id,
-                    next_block,
+                    current,
+                    next_id,
                     blocks,
                 );
             }
@@ -678,8 +842,8 @@ fn visit_structure_object(
             pages,
             Object::Dictionary(stream.dict),
             inherited_page,
-            inherited_block,
-            next_block,
+            inherited,
+            next_id,
             blocks,
         ),
         _ => {}
@@ -703,9 +867,83 @@ fn is_semantic_text_block(kind: &[u8]) -> bool {
     )
 }
 
+fn semantic_child_context(
+    kind: &[u8],
+    mut context: PdfiumSemanticBlock,
+    next_id: &mut u64,
+) -> PdfiumSemanticBlock {
+    let role = String::from_utf8_lossy(kind).into_owned();
+    let allocate = |next_id: &mut u64| {
+        let id = *next_id;
+        *next_id += 1;
+        id
+    };
+    match kind {
+        b"Table" => {
+            context.table_id = Some(allocate(next_id));
+            context.row_id = None;
+            context.cell_id = None;
+            context.role = Some(role);
+        }
+        b"TR" => {
+            context.row_id = Some(allocate(next_id));
+            context.cell_id = None;
+            context.role = Some(role);
+        }
+        b"TH" | b"TD" => {
+            let id = allocate(next_id);
+            context.cell_id = Some(id);
+            context.block_id = Some(id);
+            context.role = Some(role);
+        }
+        b"Figure" => {
+            let id = allocate(next_id);
+            context.figure_id = Some(id);
+            context.block_id = Some(id);
+            context.role = Some(role);
+        }
+        _ if is_semantic_text_block(kind) => {
+            context.block_id = Some(allocate(next_id));
+            context.role = Some(role);
+        }
+        _ => {}
+    }
+    context
+}
+
+fn structure_has_immediate_role(
+    document: &lopdf::Document,
+    dictionary: &lopdf::Dictionary,
+    expected: &[u8],
+) -> bool {
+    fn matches(document: &lopdf::Document, object: &lopdf::Object, expected: &[u8]) -> bool {
+        match resolved_object(document, object) {
+            Some(lopdf::Object::Array(children)) => children
+                .iter()
+                .any(|child| matches(document, child, expected)),
+            Some(lopdf::Object::Dictionary(child)) => child
+                .get(b"S")
+                .ok()
+                .and_then(|role| role.as_name().ok())
+                .is_some_and(|role| role == expected),
+            Some(lopdf::Object::Stream(stream)) => stream
+                .dict
+                .get(b"S")
+                .ok()
+                .and_then(|role| role.as_name().ok())
+                .is_some_and(|role| role == expected),
+            _ => false,
+        }
+    }
+    dictionary
+        .get(b"K")
+        .ok()
+        .is_some_and(|children| matches(document, children, expected))
+}
+
 #[cfg(test)]
 mod semantic_marker_tests {
-    use super::{semantic_markers_from_operations, PdfTransform};
+    use super::{semantic_markers_from_operations, PdfTransform, PdfiumSemanticBlock};
     use lopdf::content::Operation;
     use lopdf::{Dictionary, Object};
 
@@ -723,6 +961,14 @@ mod semantic_marker_tests {
                 Object::Dictionary(properties),
             ],
         )
+    }
+
+    fn block(id: u64) -> PdfiumSemanticBlock {
+        PdfiumSemanticBlock {
+            block_id: Some(id),
+            role: Some("P".to_string()),
+            ..PdfiumSemanticBlock::default()
+        }
     }
 
     #[test]
@@ -745,7 +991,7 @@ mod semantic_marker_tests {
             Operation::new("EMC", vec![]),
         ];
 
-        let markers = semantic_markers_from_operations(&operations, Some(&[Some(7)]));
+        let markers = semantic_markers_from_operations(&operations, Some(&[Some(block(7))]));
 
         assert_eq!(markers.len(), 1);
         assert_eq!(markers[0].block_id, Some(7));
@@ -771,7 +1017,7 @@ mod semantic_marker_tests {
             Operation::new("EMC", vec![]),
         ];
 
-        let markers = semantic_markers_from_operations(&operations, Some(&[Some(9)]));
+        let markers = semantic_markers_from_operations(&operations, Some(&[Some(block(9))]));
 
         assert_eq!(markers.len(), 1);
         assert_eq!(markers[0].block_id, Some(9));
