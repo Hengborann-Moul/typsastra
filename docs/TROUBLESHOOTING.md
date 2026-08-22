@@ -170,6 +170,14 @@ operating systems, cloud-synchronized directories, and network filesystems may
 report one move as a rename or as separate remove and create events. Events can
 also arrive late or, less commonly, be missed.
 
+A related known issue occurs when a project is opened while an included
+directory is missing and that populated directory is then copied back into the
+workspace while Typsastra remains open. The Explorer may show the new files,
+but Tinymist can retain the earlier `file not found` result and the preview may
+continue to fail. Clearing the cache or requesting another compilation is not a
+reliable recovery for this case. Close and reopen the project after restoring
+the directory. If the error remains, close and reopen Typsastra.
+
 Typsastra validates the render cache during the next preview preparation.
 Source maps are reused only when their source path, generated path, content
 digest, schema version, and preview mode still match. Obsolete mirrored
@@ -179,11 +187,11 @@ moved file normally triggers it through the workspace watcher.
 
 If a watcher event is missed, stale disposable artifacts may remain in the
 machine-local workspace cache until the next compilation, manual recompile,
-main-file change, or workspace restart. They must not be treated as authoritative after
-that preparation cycle. If preview synchronization still refers to an old
-location, manually recompile or restart the workspace. Deleting `.typsastra`
-does not clear the machine-local render cache and should be reserved for
-resetting project configuration or workspace state.
+main-file change, or workspace restart. They must not be treated as
+authoritative after that preparation cycle. If preview synchronization still
+refers to an old location, manually recompile or restart the workspace.
+Deleting `.typsastra` does not clear the machine-local render cache and should
+be reserved for resetting project configuration or workspace state.
 
 A future hardening pass should introduce a serialized workspace-structure
 revision. Every accepted create, remove, or rename event would invalidate
