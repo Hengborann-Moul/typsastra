@@ -36,6 +36,10 @@ pub struct PdfiumTextChar {
     pub right: Option<f32>,
     pub top: Option<f32>,
     pub font_size: f32,
+    pub font_family: String,
+    pub font_weight: Option<u32>,
+    pub italic: bool,
+    pub color: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -306,6 +310,17 @@ fn extract_page_text<'a>(
                 right: bounds.map(|bounds| bounds.right().value),
                 top: bounds.map(|bounds| bounds.top().value),
                 font_size: char.scaled_font_size().value.abs(),
+                font_family: char.font_name(),
+                font_weight: char.font_weight().map(pdf_font_weight_value),
+                italic: char.font_is_italic(),
+                color: char.fill_color().ok().map(|color| {
+                    format!(
+                        "#{:02x}{:02x}{:02x}",
+                        color.red(),
+                        color.green(),
+                        color.blue()
+                    )
+                }),
             })
         })
         .collect();
@@ -319,6 +334,21 @@ fn extract_page_text<'a>(
             .cloned()
             .unwrap_or_default(),
     })
+}
+
+fn pdf_font_weight_value(weight: PdfFontWeight) -> u32 {
+    match weight {
+        PdfFontWeight::Weight100 => 100,
+        PdfFontWeight::Weight200 => 200,
+        PdfFontWeight::Weight300 => 300,
+        PdfFontWeight::Weight400Normal => 400,
+        PdfFontWeight::Weight500 => 500,
+        PdfFontWeight::Weight600 => 600,
+        PdfFontWeight::Weight700Bold => 700,
+        PdfFontWeight::Weight800 => 800,
+        PdfFontWeight::Weight900 => 900,
+        PdfFontWeight::Custom(value) => value,
+    }
 }
 
 fn load_semantic_markers(

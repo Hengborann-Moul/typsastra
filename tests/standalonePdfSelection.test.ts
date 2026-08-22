@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import {
   hitTestStandalonePdfSelection,
+  serializeStandalonePdfFormattedSelection,
   serializeStandalonePdfSelection,
   standalonePdfSelectionFragments,
   type StandalonePdfSelectionItem,
@@ -333,4 +334,78 @@ test("standalone PDF selection keeps a tagged paragraph continuous across pages"
     { pageNo: 1, itemIndex: 0, geometryIndex: 0 },
     { pageNo: 2, itemIndex: 0, geometryIndex: 0 },
   )).toBe("Paragraph crosses the page boundary.");
+});
+
+test("formatted standalone PDF copy emits editable styled paragraphs and a plain fallback", () => {
+  const documentPages = pages([1, [
+    {
+      text: "Story & heading",
+      hasEOL: true,
+      baselineY: 20,
+      height: 18,
+      semanticBlockId: 1,
+      styleRanges: [{
+        from: 0,
+        to: 15,
+        fontFamily: "ABCDEF+MiSans Khmer",
+        fontSize: 18,
+        fontWeight: 700,
+        italic: false,
+        color: "#8b001f",
+        direction: "ltr",
+      }],
+      searchGeometry: [{ from: 0, to: 15, left: 10, top: 2, width: 120, height: 18 }],
+    },
+    {
+      text: "First visual line",
+      hasEOL: true,
+      baselineY: 48,
+      height: 11,
+      semanticBlockId: 2,
+      styleRanges: [{
+        from: 0,
+        to: 17,
+        fontFamily: "MiSans Khmer",
+        fontSize: 11,
+        fontWeight: 400,
+        italic: false,
+        color: "#111111",
+        direction: "ltr",
+      }],
+      searchGeometry: [{ from: 0, to: 17, left: 10, top: 37, width: 100, height: 11 }],
+    },
+    {
+      text: "continues here.",
+      hasEOL: false,
+      baselineY: 62,
+      height: 11,
+      semanticBlockId: 2,
+      styleRanges: [{
+        from: 0,
+        to: 15,
+        fontFamily: "MiSans Khmer",
+        fontSize: 11,
+        fontWeight: 400,
+        italic: false,
+        color: "#111111",
+        direction: "ltr",
+      }],
+      searchGeometry: [{ from: 0, to: 15, left: 10, top: 51, width: 90, height: 11 }],
+    },
+  ]]);
+
+  const selection = serializeStandalonePdfFormattedSelection(
+    documentPages,
+    { pageNo: 1, itemIndex: 0, geometryIndex: 0 },
+    { pageNo: 1, itemIndex: 2, geometryIndex: 0 },
+  );
+
+  expect(selection?.plainText).toBe("Story & heading\nFirst visual line continues here.");
+  expect(selection?.html).toContain("Story &amp; heading</span></p><p");
+  expect(selection?.html).toContain("font-family:'MiSans Khmer'");
+  expect(selection?.html).toContain("font-size:18.00pt");
+  expect(selection?.html).toContain("font-weight:700");
+  expect(selection?.html).toContain("color:#8b001f");
+  expect(selection?.html).not.toContain("<img");
+  expect(selection?.html).not.toContain("<canvas");
 });

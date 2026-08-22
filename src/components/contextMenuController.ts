@@ -97,6 +97,7 @@ export class ContextMenuController {
   private selectedText = "";
   private contextText = "";
   private previewSelectionText = "";
+  private previewSelectionHtml = "";
   private readonly menu = document.getElementById("context-menu")!;
   private spellingIssue: SpellingIssue | null = null;
   private spellingDictionaryWords: string[] = [];
@@ -259,6 +260,21 @@ export class ContextMenuController {
       case "ctx-native-copy": return this.copyNativeText();
       case "ctx-preview-copy-selection":
         if (this.previewSelectionText) await writeText(this.previewSelectionText);
+        return;
+      case "ctx-preview-copy-selection-formatted":
+        if (this.previewSelectionText && this.previewSelectionHtml) {
+          try {
+            await invoke("write_formatted_clipboard", {
+              plainText: this.previewSelectionText,
+              html: this.previewSelectionHtml,
+            });
+          } catch (error) {
+            await message(String(error), {
+              title: "Copy with Formatting Failed",
+              kind: "error",
+            });
+          }
+        }
         return;
       case "ctx-native-cut": return this.cutNativeText();
       case "ctx-native-paste": return this.pasteNativeText();
@@ -723,6 +739,7 @@ export class ContextMenuController {
       x?: unknown;
       y?: unknown;
       selectedText?: unknown;
+      selectedHtml?: unknown;
     } | null;
     if (data?.type === "HIDE_CONTEXT_MENU") {
       this.hide();
@@ -740,6 +757,7 @@ export class ContextMenuController {
     }
 
     this.previewSelectionText = data.selectedText;
+    this.previewSelectionHtml = typeof data.selectedHtml === "string" ? data.selectedHtml : "";
     const frameRect = frame.getBoundingClientRect();
     this.show(
       this.previewSelectionItems(),
@@ -751,7 +769,10 @@ export class ContextMenuController {
   }
 
   private previewSelectionItems(): string {
-    return '<div class="dropdown-item" id="ctx-preview-copy-selection">Copy <span class="hotkey" data-shortcut="Mod+C">Ctrl+C</span></div>';
+    const formatted = this.previewSelectionHtml
+      ? '<div class="dropdown-item" id="ctx-preview-copy-selection-formatted">Copy with Formatting</div>'
+      : "";
+    return `<div class="dropdown-item" id="ctx-preview-copy-selection">Copy <span class="hotkey" data-shortcut="Mod+C">Ctrl+C</span></div>${formatted}`;
   }
 
   private explorerItems(): string {

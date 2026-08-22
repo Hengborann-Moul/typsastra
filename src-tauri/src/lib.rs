@@ -19,6 +19,7 @@ mod compatibility;
 mod enhanced_unicode_toolchain;
 mod examples;
 mod font_store;
+mod formatted_clipboard;
 mod pdfium_preview;
 mod project_archive;
 mod render_prepare;
@@ -28,6 +29,7 @@ mod toolchain;
 mod webview_storage;
 use compatibility::{get_linux_renderer_compatibility, prepare_linux_renderer_relaunch};
 use examples::prepare_examples_workspace;
+use formatted_clipboard::write_formatted_clipboard;
 use pdfium_preview::{
     close_pdfium_document, get_pdfium_page_text, open_pdfium_document, render_pdfium_page,
     PdfiumPreviewState,
@@ -5326,6 +5328,7 @@ pub fn run() {
             render_pdfium_page,
             get_pdfium_page_text,
             close_pdfium_document,
+            write_formatted_clipboard,
             stage_pdf_preview_generation,
             remove_preview_generation_file,
             read_workspace_text_prefix,

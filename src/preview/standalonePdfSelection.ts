@@ -14,6 +14,23 @@ export type StandalonePdfSelectionItem = {
   height: number | null;
   semanticBlockId?: number | null;
   searchGeometry?: StandalonePdfSelectionGeometry[];
+  styleRanges?: StandalonePdfSelectionStyleRange[];
+};
+
+export type StandalonePdfSelectionStyleRange = {
+  from: number;
+  to: number;
+  fontFamily?: string | null;
+  fontSize?: number | null;
+  fontWeight?: number | null;
+  italic?: boolean;
+  color?: string | null;
+  direction?: "ltr" | "rtl";
+};
+
+export type StandalonePdfFormattedSelection = {
+  plainText: string;
+  html: string;
 };
 
 export type StandalonePdfSelectionEndpoint = {
@@ -143,6 +160,117 @@ export function serializeStandalonePdfSelection(
     previousItem = item;
   }
   return result || null;
+}
+
+/**
+ * Serializes the custom PDF selection as editable HTML plus the same logical
+ * plain-text fallback used by ordinary Copy. The HTML contains only semantic
+ * paragraphs and styled text runs; rendered page images are never copied.
+ */
+export function serializeStandalonePdfFormattedSelection(
+  pages: ReadonlyMap<number, StandalonePdfSelectionPage>,
+  anchor: StandalonePdfSelectionEndpoint,
+  focus: StandalonePdfSelectionEndpoint,
+): StandalonePdfFormattedSelection | null {
+  const fragments = standalonePdfSelectionFragments(pages, anchor, focus);
+  const plainText = serializeStandalonePdfSelection(pages, anchor, focus);
+  if (fragments.length < 1 || plainText === null) return null;
+
+  const layout = standalonePdfTextLayout(pages);
+  const paragraphs: Array<{ html: string[]; text: string }> = [{ html: [], text: "" }];
+  let previousPage = fragments[0].pageNo;
+  let previousItem: StandalonePdfSelectionItem | null = null;
+  for (const fragment of fragments) {
+    const item = pages.get(fragment.pageNo)?.textItems[fragment.itemIndex];
+    if (!item) continue;
+    if (previousItem) {
+      const boundary = standalonePdfTextBoundary(
+        previousPage,
+        previousItem,
+        fragment.pageNo,
+        item,
+        layout,
+      );
+      if (boundary === "paragraph") {
+        paragraphs.push({ html: [], text: "" });
+      } else if (boundary === "line") {
+        const paragraph = paragraphs[paragraphs.length - 1];
+        const separator = softLineSeparator(paragraph.text, item.text.slice(fragment.from, fragment.to));
+        if (separator) {
+          paragraph.html.push(escapeHtml(separator));
+          paragraph.text += separator;
+        }
+      }
+    }
+    const paragraph = paragraphs[paragraphs.length - 1];
+    paragraph.html.push(...styledHtmlFragments(item, fragment.from, fragment.to));
+    paragraph.text += item.text.slice(fragment.from, fragment.to);
+    previousPage = fragment.pageNo;
+    previousItem = item;
+  }
+
+  const body = paragraphs
+    .filter(paragraph => paragraph.html.length > 0)
+    .map(paragraph => (
+      `<p style="margin:0 0 .75em 0;white-space:pre-wrap">${paragraph.html.join("")}</p>`
+    ))
+    .join("");
+  if (!body) return null;
+  return {
+    plainText,
+    html: `<div style="white-space:normal">${body}</div>`,
+  };
+}
+
+function styledHtmlFragments(item: StandalonePdfSelectionItem, from: number, to: number): string[] {
+  const ranges = item.styleRanges ?? [];
+  if (ranges.length < 1) return [escapeHtml(item.text.slice(from, to))];
+  const result: string[] = [];
+  let offset = from;
+  for (const range of ranges) {
+    const start = Math.max(from, range.from);
+    const end = Math.min(to, range.to);
+    if (end <= start) continue;
+    if (start > offset) result.push(escapeHtml(item.text.slice(offset, start)));
+    const text = escapeHtml(item.text.slice(start, end));
+    const style = selectionCss(range);
+    const direction = range.direction === "rtl" ? ' dir="rtl"' : "";
+    result.push(style || direction ? `<span${direction}${style ? ` style="${style}"` : ""}>${text}</span>` : text);
+    offset = end;
+  }
+  if (offset < to) result.push(escapeHtml(item.text.slice(offset, to)));
+  return result;
+}
+
+function selectionCss(style: StandalonePdfSelectionStyleRange): string {
+  const declarations: string[] = [];
+  const family = normalizedFontFamily(style.fontFamily);
+  if (family) declarations.push(`font-family:'${escapeCssString(family)}'`);
+  if (style.fontSize != null && Number.isFinite(style.fontSize)) {
+    declarations.push(`font-size:${Math.max(1, Math.min(200, style.fontSize)).toFixed(2)}pt`);
+  }
+  if (style.fontWeight != null && Number.isFinite(style.fontWeight)) {
+    declarations.push(`font-weight:${Math.max(100, Math.min(900, Math.round(style.fontWeight / 100) * 100))}`);
+  }
+  if (style.italic) declarations.push("font-style:italic");
+  if (/^#[0-9a-f]{6}$/iu.test(style.color ?? "")) declarations.push(`color:${style.color}`);
+  return declarations.join(";");
+}
+
+function normalizedFontFamily(value: string | null | undefined): string {
+  return (value ?? "").replace(/^[A-Z]{6}\+/u, "").trim();
+}
+
+function escapeCssString(value: string): string {
+  return value.replace(/\\/gu, "\\\\").replace(/'/gu, "\\'").replace(/[\r\n]/gu, " ");
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/gu, "&amp;")
+    .replace(/</gu, "&lt;")
+    .replace(/>/gu, "&gt;")
+    .replace(/"/gu, "&quot;");
 }
 
 type StandalonePdfTextBoundary = "same-line" | "line" | "paragraph";

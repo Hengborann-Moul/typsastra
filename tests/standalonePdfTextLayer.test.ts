@@ -91,6 +91,10 @@ test("standalone PDF selections expose the logical text through the app context 
   expect(frameSource).toContain("selectedText,");
   expect(contextMenuSource).toContain('id="ctx-preview-copy-selection"');
   expect(contextMenuSource).toContain("await writeText(this.previewSelectionText)");
+  expect(contextMenuSource).toContain('id="ctx-preview-copy-selection-formatted"');
+  expect(contextMenuSource).toContain('await invoke("write_formatted_clipboard"');
+  expect(frameSource).toContain("serializeStandalonePdfFormattedSelection(");
+  expect(frameSource).toContain("selectedHtml: formattedSelection?.html");
   expect(contextMenuSource).toContain("frameRect.left + data.x");
   expect(contextMenuSource).toContain("frameRect.top + data.y");
 });

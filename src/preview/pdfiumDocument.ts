@@ -18,6 +18,24 @@ export type PdfiumTextChar = {
   right: number | null;
   top: number | null;
   fontSize: number;
+  fontFamily: string;
+  fontWeight: number | null;
+  italic: boolean;
+  color: string | null;
+};
+
+export type PdfiumTextStyle = {
+  fontFamily: string | null;
+  fontSize: number | null;
+  fontWeight: number | null;
+  italic: boolean;
+  color: string | null;
+  direction: "ltr" | "rtl";
+};
+
+export type PdfiumTextStyleRange = PdfiumTextStyle & {
+  from: number;
+  to: number;
 };
 
 export type PdfiumPageText = {
@@ -43,6 +61,7 @@ export type PdfiumTextRun = {
   dir: "ltr" | "rtl";
   glyphs: PdfiumTextGlyph[];
   semanticBlockId: number | null;
+  styleRanges: PdfiumTextStyleRange[];
 };
 
 export type PdfiumTextGlyph = {
@@ -283,10 +302,18 @@ export function buildPdfiumTextRuns(page: PdfiumPageText): PdfiumTextRun[] {
     const ordered = orderPdfiumLineChars(line.chars);
     let text = "";
     const characterGlyphs: PdfiumTextGlyph[] = [];
+    const styleRanges: PdfiumTextStyleRange[] = [];
     for (const char of ordered) {
       const from = text.length;
       text += char.text;
       const to = text.length;
+      const style = pdfiumTextStyle(char);
+      const previousStyle = styleRanges[styleRanges.length - 1];
+      if (previousStyle && samePdfiumTextStyle(previousStyle, style)) {
+        previousStyle.to = to;
+      } else {
+        styleRanges.push({ from, to, ...style });
+      }
       if (char.left !== null && char.bottom !== null && char.right !== null && char.top !== null) {
         characterGlyphs.push({
           from,
@@ -308,10 +335,31 @@ export function buildPdfiumTextRuns(page: PdfiumPageText): PdfiumTextRun[] {
       dir: firstStrongDirection(text),
       glyphs: groupPdfiumGlyphsByGrapheme(text, characterGlyphs),
       semanticBlockId: null,
+      styleRanges,
     }];
   });
   assignPdfiumSemanticBlocks(runs, page.semanticMarkers ?? []);
   return runs;
+}
+
+function pdfiumTextStyle(char: PdfiumTextChar): PdfiumTextStyle {
+  return {
+    fontFamily: char.fontFamily || null,
+    fontSize: Number.isFinite(char.fontSize) ? Math.abs(char.fontSize) : null,
+    fontWeight: Number.isFinite(char.fontWeight) ? char.fontWeight : null,
+    italic: char.italic === true,
+    color: /^#[0-9a-f]{6}$/iu.test(char.color ?? "") ? char.color : null,
+    direction: firstStrongDirection(char.text),
+  };
+}
+
+function samePdfiumTextStyle(left: PdfiumTextStyle, right: PdfiumTextStyle): boolean {
+  return left.fontFamily === right.fontFamily
+    && left.fontSize === right.fontSize
+    && left.fontWeight === right.fontWeight
+    && left.italic === right.italic
+    && left.color === right.color
+    && left.direction === right.direction;
 }
 
 /**

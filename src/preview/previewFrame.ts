@@ -96,6 +96,7 @@ import {
 } from "./pdfiumDocument";
 import {
   hitTestStandalonePdfSelection,
+  serializeStandalonePdfFormattedSelection,
   serializeStandalonePdfSelection,
   standalonePdfSelectionFragments,
   type StandalonePdfSelectionEndpoint,
@@ -1548,6 +1549,7 @@ export class PreviewFrame {
             width: Math.max(0, (glyph.right - glyph.left) * viewportScale),
             height: Math.max(0, (glyph.top - glyph.bottom) * viewportScale),
           })),
+          styleRanges: run.styleRanges,
         });
       }
 
@@ -2285,6 +2287,15 @@ export class PreviewFrame {
     );
   }
 
+  private standalonePdfFormattedSelection(): { plainText: string; html: string } | null {
+    if (!this.standalonePdfSelectionAnchor || !this.standalonePdfSelectionFocus) return null;
+    return serializeStandalonePdfFormattedSelection(
+      this.standalonePdfTextLayers,
+      this.standalonePdfSelectionAnchor,
+      this.standalonePdfSelectionFocus,
+    );
+  }
+
   private copyStandalonePdfSelection(): boolean {
     const text = this.standalonePdfSelectionText();
     if (text === null) return false;
@@ -2397,6 +2408,7 @@ export class PreviewFrame {
         return;
       }
       const selectedText = this.standalonePdfSelectionText();
+      const formattedSelection = this.standalonePdfFormattedSelection();
       if (selectedText === null || selectedText.length === 0) {
         window.postMessage({ type: "HIDE_CONTEXT_MENU" }, "*");
         return;
@@ -2406,6 +2418,7 @@ export class PreviewFrame {
         x: event.clientX,
         y: event.clientY,
         selectedText,
+        selectedHtml: formattedSelection?.html ?? "",
       }, "*");
     });
     doc.addEventListener("copy", event => {
