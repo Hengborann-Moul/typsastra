@@ -113,7 +113,8 @@ describe("cross-platform scrollbar design", () => {
     expect(activation).toContain("!sameActivePath && !previewActivation.presentationReused");
     expect(activation).toContain("deps.queuePreviewScrollPosition(deps.previewScrollTopForTab(tab))");
     expect(source).toContain("queueTabScrollPosition(scrollTop?: number)");
-    expect(source).toContain("const restoringSavedPosition = this.pendingRestoredScrollTop !== null");
+    expect(source).toContain("const restoringSavedPosition = restoredViewportAnchor !== null");
+    expect(source).toContain("|| this.pendingRestoredScrollTop !== null");
   });
 
   test("provides an accessible floating control to return to the first page", async () => {

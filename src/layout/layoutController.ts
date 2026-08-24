@@ -24,7 +24,9 @@ export class LayoutController {
     private readonly onHideLogConsole: () => void,
     private readonly onDebug: (message: string) => void = () => {},
     private readonly onEditorWidthResizeStart: () => void = () => {},
-    private readonly onEditorWidthResizeEnd: () => void = () => {}
+    private readonly onEditorWidthResizeEnd: () => void = () => {},
+    private readonly onPreviewUndocking: () => void = () => {},
+    private readonly onPreviewDocked: () => void = () => {}
   ) {}
 
   public initialize(): void {
@@ -172,6 +174,7 @@ export class LayoutController {
       ? `after class="${previewWrapper.className}", inline="${previewWrapper.style.display}", computed="${getComputedStyle(previewWrapper).display}", rect=${Math.round(previewWrapper.getBoundingClientRect().width)}x${Math.round(previewWrapper.getBoundingClientRect().height)}`
       : "after missing preview wrapper";
     this.onDebug(`Dock preview requested: ${before}; ${after}.`);
+    requestAnimationFrame(() => this.onPreviewDocked());
   }
 
   private initializeResizers(): void {
@@ -240,6 +243,7 @@ export class LayoutController {
 
     undock.addEventListener("click", async () => {
       this.captureDockedPaneSize();
+      this.onPreviewUndocking();
       this.previewUndocked = true;
       previewWrapper.style.display = "none";
       if (resizer) resizer.style.display = "none";

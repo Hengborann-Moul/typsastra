@@ -16,11 +16,12 @@ import {
   nativeFilePath,
   relativeFilePath,
 } from "../platform/paths";
-import type { PreviewRenderMode } from "../settings";
+import type { PreviewColorMode, PreviewRenderMode } from "../settings";
 import type { TypographyController } from "../typography/typographyController";
 import type { WorkspaceResumeController } from "../platform/workspaceResumeController";
 import type { DraftImageAsset, DraftPreviewController, PreviewContentMode } from "./draftPreviewController";
 import type { PreviewFrame, PreviewSurface } from "./previewFrame";
+import type { PreviewViewportAnchor } from "./previewViewportAnchor";
 import {
   PdfPreviewPreparationController,
   PreviewPreparationInterrupted,
@@ -44,6 +45,9 @@ export type PdfUpdatePayload = {
   identity: string;
   sessionKey: string;
   surface: PreviewSurface;
+  scrollTop?: number;
+  viewportAnchor?: PreviewViewportAnchor | null;
+  previewColorMode?: PreviewColorMode;
   contentMode?: PreviewContentMode;
   draftAssets?: DraftImageAsset[];
   draftAssetRootPath?: string;
@@ -461,6 +465,7 @@ export class PdfPreviewRenderController {
           identity: previewPath,
           sessionKey: this.deps.getPreviewSessionKey() ?? previewPath,
           surface: "live",
+          previewColorMode: this.deps.previewFrame.colorMode,
           contentMode: generationContentMode,
           draftAssets: generationContentMode === "draft"
             ? [...this.deps.draftPreview.assets.values()]

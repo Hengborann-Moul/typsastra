@@ -4,8 +4,15 @@ import type { PreviewColorMode, ThemeName } from "../settings";
 import type { PdfUpdatePayload } from "./pdfPreviewRenderController";
 import type { DraftPreviewController } from "./draftPreviewController";
 import type { PreviewFrame } from "./previewFrame";
+import type { PreviewViewportAnchor } from "./previewViewportAnchor";
 
 export type UndockedPreviewAction = "export-pdf" | "open-external";
+
+export interface PreviewScrollPositionPayload {
+  sessionKey: string;
+  scrollTop: number;
+  viewportAnchor: PreviewViewportAnchor | null;
+}
 
 export interface PreviewWindowDependencies {
   loadSettings(): Promise<void>;
@@ -38,6 +45,7 @@ export class PreviewWindowController {
 
     await deps.loadSettings();
     await applyUIThemeVariables(deps.theme());
+    deps.previewFrame.setColorMode(deps.previewColorMode());
     deps.previewFrame.syncTheme();
 
     document.getElementById("preview-zoom-in-btn")?.addEventListener("click", () => deps.zoomIn());
@@ -48,7 +56,9 @@ export class PreviewWindowController {
     const undockBtn = document.getElementById("undock-preview-btn");
     if (undockBtn) {
       undockBtn.title = "Dock Preview";
-      undockBtn.addEventListener("click", () => { void getCurrentWindow().close(); });
+      undockBtn.addEventListener("click", () => {
+        void this.publishCurrentScrollPosition().finally(() => getCurrentWindow().close());
+      });
     }
 
     const previewWrapper = document.getElementById("preview-container-wrapper");
@@ -80,6 +90,7 @@ export class PreviewWindowController {
 
     await listen<PreviewColorMode>("preview-color-mode-update", event => {
       deps.setPreviewColorMode(event.payload);
+      deps.previewFrame.setColorMode(event.payload);
     });
 
     await listen<string | PdfUpdatePayload>("pdf-update", event => {
@@ -87,6 +98,10 @@ export class PreviewWindowController {
       const update = typeof event.payload === "string"
         ? { path: event.payload, identity: fallbackIdentity, sessionKey: fallbackIdentity, surface: "live" as const }
         : event.payload;
+      if (update.previewColorMode) {
+        deps.setPreviewColorMode(update.previewColorMode);
+        deps.previewFrame.setColorMode(update.previewColorMode);
+      }
       deps.draftPreview.installPresentedState({
         mode: update.contentMode ?? "normal",
         assets: update.draftAssets ?? [],
@@ -94,6 +109,11 @@ export class PreviewWindowController {
         generation: update.draftThumbnailGeneration ?? 0,
       });
       deps.setWorkspaceRootPath(update.draftAssetRootPath ?? null);
+      if (update.viewportAnchor) {
+        deps.previewFrame.queueViewportAnchor(update.viewportAnchor);
+      } else if (typeof update.scrollTop === "number" && Number.isFinite(update.scrollTop)) {
+        deps.previewFrame.queueTabScrollPosition(update.scrollTop);
+      }
       const toggle = document.getElementById("preview-content-mode-toggle") as HTMLButtonElement | null;
       toggle?.classList.remove("hidden");
       deps.loadPdfPath(update.path, update.identity, update.sessionKey, update.surface);
@@ -104,6 +124,29 @@ export class PreviewWindowController {
     });
 
     void emit("preview-window-ready");
+  }
+
+  publishScrollPosition(scrollTop: number): void {
+    const sessionKey = this.deps.previewFrame.currentSessionKey;
+    if (!sessionKey || !Number.isFinite(scrollTop)) return;
+    void import("@tauri-apps/api/event")
+      .then(({ emit }) => emit("preview-scroll-position-changed", {
+        sessionKey,
+        scrollTop: Math.max(0, scrollTop),
+        viewportAnchor: this.deps.previewFrame.currentViewportAnchor,
+      } satisfies PreviewScrollPositionPayload))
+      .catch(error => console.error("Failed to publish undocked preview position", error));
+  }
+
+  private async publishCurrentScrollPosition(): Promise<void> {
+    const sessionKey = this.deps.previewFrame.currentSessionKey;
+    if (!sessionKey) return;
+    const { emit } = await import("@tauri-apps/api/event");
+    await emit("preview-scroll-position-changed", {
+      sessionKey,
+      scrollTop: this.deps.previewFrame.currentScrollTop,
+      viewportAnchor: this.deps.previewFrame.currentViewportAnchor,
+    } satisfies PreviewScrollPositionPayload);
   }
 
   private initializeOptions(

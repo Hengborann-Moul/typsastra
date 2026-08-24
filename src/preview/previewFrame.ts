@@ -212,6 +212,7 @@ export class PreviewFrame {
   private draftPointerPosition: { x: number; y: number } | null = null;
   private draftHoverRetargetTimer: number | null = null;
   private pendingRestoredScrollTop: number | null = null;
+  private pendingRestoredViewportAnchor: PreviewViewportAnchor | null = null;
   private previewPointerInside = false;
   private previewLinkModifierHeld = false;
   private previewColorMode: PreviewColorMode = "document";
@@ -304,6 +305,14 @@ export class PreviewFrame {
     return this.isFitToWidth;
   }
 
+  public get currentScrollTop(): number {
+    return this.captureScrollPosition();
+  }
+
+  public get currentViewportAnchor(): PreviewViewportAnchor | null {
+    return this.captureScrollAnchor();
+  }
+
   public restoreWorkspaceScrollPosition(scrollTop: number): void {
     this.pendingRestoredScrollTop = Number.isFinite(scrollTop)
       ? Math.max(0, scrollTop)
@@ -314,6 +323,10 @@ export class PreviewFrame {
     this.pendingRestoredScrollTop = typeof scrollTop === "number" && Number.isFinite(scrollTop)
       ? Math.max(0, scrollTop)
       : null;
+  }
+
+  public queueViewportAnchor(anchor?: PreviewViewportAnchor | null): void {
+    this.pendingRestoredViewportAnchor = anchor ?? null;
   }
 
   public syncTheme(): void {
@@ -577,7 +590,9 @@ export class PreviewFrame {
     const obsoleteLoadingTask = this.pendingPdfLoadingTask;
     this.pendingPdfLoadingTask = null;
     if (obsoleteLoadingTask) void obsoleteLoadingTask.destroy().catch(() => {});
-    const restoringSavedPosition = this.pendingRestoredScrollTop !== null;
+    const restoredViewportAnchor = this.pendingRestoredViewportAnchor;
+    const restoringSavedPosition = restoredViewportAnchor !== null
+      || this.pendingRestoredScrollTop !== null;
     const previousScrollTop = restoringSavedPosition
       ? this.pendingRestoredScrollTop!
       : this.captureScrollPosition();
@@ -805,7 +820,11 @@ export class PreviewFrame {
       this.updateHorizontalOverflow();
       this.setupIframeInteractions();
       this.installPageObserver(iframe);
-      this.restoreScrollPosition(previousScrollTop);
+      if (restoredViewportAnchor) {
+        this.restoreScrollAnchor(restoredViewportAnchor, true);
+      } else {
+        this.restoreScrollPosition(previousScrollTop);
+      }
       await this.onLoadStage?.("viewer installed", {
         transport: transportStats.transport,
         pdfBytes: pdfByteLength,
@@ -813,7 +832,10 @@ export class PreviewFrame {
         rangeRequests: transportStats.rangeRequests,
         pageCount: pdfDoc.numPages
       });
-      if (restoringSavedPosition) this.pendingRestoredScrollTop = null;
+      if (restoringSavedPosition) {
+        this.pendingRestoredScrollTop = null;
+        this.pendingRestoredViewportAnchor = null;
+      }
       this.reportPageStatus(this.visiblePageNumber());
       void this.hydratePageDimensions(pdfDoc, generation).catch(error => {
         if (generation === this.pdfGeneration && this.pdfDoc === pdfDoc) {
@@ -2715,7 +2737,12 @@ export class PreviewFrame {
   public activateSession(sessionKey: string): boolean {
     if (!this.pdfDoc || this.mountedSessionKey !== sessionKey) return false;
     this.clearMessageHost();
-    if (this.pendingRestoredScrollTop !== null) {
+    if (this.pendingRestoredViewportAnchor) {
+      const anchor = this.pendingRestoredViewportAnchor;
+      this.pendingRestoredViewportAnchor = null;
+      this.pendingRestoredScrollTop = null;
+      this.restoreScrollAnchor(anchor, true);
+    } else if (this.pendingRestoredScrollTop !== null) {
       const scrollTop = this.pendingRestoredScrollTop;
       this.pendingRestoredScrollTop = null;
       this.restoreScrollPosition(scrollTop);

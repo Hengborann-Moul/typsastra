@@ -42,8 +42,12 @@ import { PreviewSyncController } from "./preview/previewSyncController";
 import { PreviewSourceNavigationController } from "./preview/previewSourceNavigationController";
 import { PreviewUiController } from "./preview/previewUiController";
 import { PreviewContentController } from "./preview/previewContentController";
-import { PreviewWindowController } from "./preview/previewWindowController";
+import {
+  PreviewWindowController,
+  type PreviewScrollPositionPayload,
+} from "./preview/previewWindowController";
 import { PreviewSessionController } from "./preview/previewSessionController";
+import type { PreviewViewportAnchor } from "./preview/previewViewportAnchor";
 import { TinymistPreviewRecoveryController } from "./preview/tinymistPreviewRecoveryController";
 import { SourceMapSessionController } from "./preview/sourceMapSessionController";
 import { ImagePreviewController } from "./preview/imagePreviewController";
@@ -354,6 +358,7 @@ export class TypsastraWorkspaceController {
   private get blockedLargePreviewRoot(): string | null { return this.largePreviewGuardController.blockedRoot; }
   private set blockedLargePreviewRoot(rootPath: string | null) { this.largePreviewGuardController.blockedRoot = rootPath; }
   private previewScrollTop = 0;
+  private previewViewportAnchor: PreviewViewportAnchor | null = null;
   private previewScrollSaveTimer: number | null = null;
   private recommendedWorkspaceToolchain: { tinymistVersion: string; typstVersion: string } | null = null;
   private selectedWorkspaceToolchain: { tinymistVersion: string; typstVersion: string } | null = null;
@@ -689,31 +694,7 @@ export class TypsastraWorkspaceController {
     },
     onPageChanged: status => this.updatePreviewPageStatus(status),
     loadDraftImage: id => this.draftPreviewController.loadImage(id),
-    onScrollPositionChanged: scrollTop => {
-      this.previewScrollTop = Math.max(0, scrollTop);
-      const activeTab = this.getActiveTab();
-      const previewOwnerPath = activeTab?.previewMainPath
-        ?? activeTab?.previewRootPath
-        ?? this.previewMainPath
-        ?? this.previewRootPath;
-      if (previewOwnerPath) {
-        const ownerKey = filePathKey(previewOwnerPath);
-        for (const tab of this.openTabs) {
-          const tabOwnerPath = tab.previewMainPath ?? tab.previewRootPath;
-          if (tabOwnerPath && filePathKey(tabOwnerPath) === ownerKey) {
-            tab.previewScrollTop = this.previewScrollTop;
-          }
-        }
-      } else if (activeTab) {
-        activeTab.previewScrollTop = this.previewScrollTop;
-      }
-      if (!this.workspaceRootPath || !this.workspaceMetadata) return;
-      if (this.previewScrollSaveTimer !== null) window.clearTimeout(this.previewScrollSaveTimer);
-      this.previewScrollSaveTimer = window.setTimeout(() => {
-        this.previewScrollSaveTimer = null;
-        void this.saveWorkspaceState();
-      }, 750);
-    },
+    onScrollPositionChanged: scrollTop => this.handlePreviewScrollPositionChanged(scrollTop),
     onLoadStage: (stage, detail) => {
       // Preview-only windows skip the workspace bootstrap. Their PDF lifecycle
       // is already represented by the main window's diagnostics.
@@ -860,7 +841,9 @@ export class TypsastraWorkspaceController {
     () => this.logConsoleController.setVisible(false),
     message => this.appendDeveloperLog({ kind: "info", source: "preview layout", message }),
     () => this.workspaceResumeController.beginHorizontalResize(),
-    () => this.workspaceResumeController.endHorizontalResize()
+    () => this.workspaceResumeController.endHorizontalResize(),
+    () => this.captureDockedPreviewViewport(),
+    () => this.restoreDockedPreviewScrollPosition()
   );
   private readonly workspaceController = new WorkspaceController({
     dockPreview: () => this.layoutController.dockPreview(),
@@ -2315,6 +2298,75 @@ export class TypsastraWorkspaceController {
     );
   }
 
+  private handlePreviewScrollPositionChanged(scrollTop: number): void {
+    if (this.previewWindowController.isPreviewOnlyWindow()) {
+      this.previewWindowController.publishScrollPosition(scrollTop);
+      return;
+    }
+    this.recordPreviewScrollPosition(scrollTop);
+  }
+
+  private recordPreviewScrollPosition(scrollTop: number): void {
+    this.previewScrollTop = Math.max(0, scrollTop);
+    const activeTab = this.getActiveTab();
+    const previewOwnerPath = activeTab?.previewMainPath
+      ?? activeTab?.previewRootPath
+      ?? this.previewMainPath
+      ?? this.previewRootPath;
+    if (previewOwnerPath) {
+      const ownerKey = filePathKey(previewOwnerPath);
+      for (const tab of this.openTabs) {
+        const tabOwnerPath = tab.previewMainPath ?? tab.previewRootPath;
+        if (tabOwnerPath && filePathKey(tabOwnerPath) === ownerKey) {
+          tab.previewScrollTop = this.previewScrollTop;
+        }
+      }
+    } else if (activeTab) {
+      activeTab.previewScrollTop = this.previewScrollTop;
+    }
+    if (!this.workspaceRootPath || !this.workspaceMetadata) return;
+    if (this.previewScrollSaveTimer !== null) window.clearTimeout(this.previewScrollSaveTimer);
+    this.previewScrollSaveTimer = window.setTimeout(() => {
+      this.previewScrollSaveTimer = null;
+      void this.saveWorkspaceState();
+    }, 750);
+  }
+
+  private restoreUndockedPreviewScrollPosition(position: PreviewScrollPositionPayload): void {
+    if (this.previewWindowController.isPreviewOnlyWindow()) return;
+    const mountedSessionKey = this.previewFrame.currentSessionKey;
+    const expectedSessionKey = mountedSessionKey
+      || this.lastPdfSessionKey
+      || this.previewSessionKey;
+    if (!expectedSessionKey || position.sessionKey !== expectedSessionKey) return;
+    this.recordPreviewScrollPosition(position.scrollTop);
+    this.previewViewportAnchor = position.viewportAnchor;
+    if (position.viewportAnchor) {
+      this.previewFrame.queueViewportAnchor(position.viewportAnchor);
+    } else {
+      this.previewFrame.queueTabScrollPosition(position.scrollTop);
+    }
+    if (mountedSessionKey === position.sessionKey) {
+      this.previewFrame.activateSession(position.sessionKey);
+    }
+  }
+
+  private captureDockedPreviewViewport(): void {
+    this.recordPreviewScrollPosition(this.previewFrame.currentScrollTop);
+    this.previewViewportAnchor = this.previewFrame.currentViewportAnchor;
+  }
+
+  private restoreDockedPreviewScrollPosition(): void {
+    const sessionKey = this.previewFrame.currentSessionKey;
+    if (!sessionKey) return;
+    if (this.previewViewportAnchor) {
+      this.previewFrame.queueViewportAnchor(this.previewViewportAnchor);
+    } else {
+      this.previewFrame.queueTabScrollPosition(this.previewScrollTop);
+    }
+    this.previewFrame.activateSession(sessionKey);
+  }
+
   private schedulePdfPreview(
     contents: string,
     delayMs = this.settingsController.value.preview.syncDebounceMs
@@ -2752,6 +2804,9 @@ export class TypsastraWorkspaceController {
           identity: this.lastPdfIdentity || this.pdfPreviewSourceMapRootPath || this.previewRootPath || "preview",
           sessionKey: this.lastPdfSessionKey || this.previewSessionKey || this.lastPdfIdentity || "preview",
           surface: this.lastPdfSurface,
+          scrollTop: this.previewScrollTop,
+          viewportAnchor: this.previewViewportAnchor ?? this.previewFrame.currentViewportAnchor,
+          previewColorMode: this.settingsController.value.preview.colorMode,
           contentMode: this.draftPreviewController.presentedMode,
           draftAssets: this.draftPreviewController.presentedMode === "draft"
             ? [...this.draftPreviewController.assets.values()]
@@ -2763,6 +2818,9 @@ export class TypsastraWorkspaceController {
             ? this.draftPreviewController.thumbnailGeneration
             : undefined,
         };
+      },
+      restoreUndockedPreviewScrollPosition: position => {
+        this.restoreUndockedPreviewScrollPosition(position);
       },
       changePreviewContentMode: mode => this.draftPreviewController.changeMode(mode),
       changePreviewColorMode: mode => this.settingsController.update(settings => {

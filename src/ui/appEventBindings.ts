@@ -5,6 +5,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { confirm, open, save } from "@tauri-apps/plugin-dialog";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 import type { PreviewClickPoint } from "../preview/previewFrame";
+import type { PreviewScrollPositionPayload } from "../preview/previewWindowController";
 import type { PreviewContentMode } from "../preview/draftPreviewController";
 import type { PreviewColorMode } from "../settings";
 import { recentProjectShortcutIndex } from "../workspace/recentProjectsController";
@@ -18,6 +19,7 @@ export type PreviewWindowUpdate = Record<string, unknown> & { path: string };
 
 export interface AppEventActions {
   previewWindowUpdate: () => PreviewWindowUpdate | null;
+  restoreUndockedPreviewScrollPosition: (position: PreviewScrollPositionPayload) => void;
   changePreviewContentMode: (mode: PreviewContentMode) => Promise<void> | void;
   changePreviewColorMode: (mode: PreviewColorMode) => void;
   previewContentMode: () => PreviewContentMode;
@@ -285,6 +287,9 @@ export function bindAppEvents(actions: AppEventActions): void {
     void listenEvent("preview-window-ready", () => {
       const update = actions.previewWindowUpdate();
       if (update) void emitEvent("pdf-update", update);
+    });
+    void listenEvent<PreviewScrollPositionPayload>("preview-scroll-position-changed", event => {
+      actions.restoreUndockedPreviewScrollPosition(event.payload);
     });
     void listenEvent<PreviewContentMode>("preview-content-mode-request", event => {
       void actions.changePreviewContentMode(event.payload);
