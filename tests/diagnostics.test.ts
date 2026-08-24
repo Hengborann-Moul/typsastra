@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { Text } from "@codemirror/state";
+import { EditorState, Text } from "@codemirror/state";
 import { looksLikeStalePrefixDiagnostic } from "../src/editor/diagnostics";
 import {
   countedLogTotals,
@@ -77,6 +77,54 @@ describe("diagnostic log deduplication", () => {
       { channel: "dev", message: "file not found" },
       diagnostics
     )).toBe(false);
+  });
+});
+
+describe("diagnostic navigation", () => {
+  test("reveals same-file locations after the selection transaction settles", async () => {
+    const path = String.raw`C:\project\main.typ`;
+    let state = EditorState.create({ doc: "first\nsecond\nthird" });
+    const dispatches: unknown[] = [];
+    let focused = false;
+    const editor = {
+      get state() { return state; },
+      dispatch(spec: Parameters<EditorView["dispatch"]>[0]) {
+        dispatches.push(spec);
+        state = state.update(spec).state;
+      },
+      focus() { focused = true; },
+    } as unknown as EditorView;
+    const controller = new DiagnosticsController({} as LogConsoleController, {
+      editor: () => editor,
+      client: () => undefined,
+      activeFilePath: () => path,
+      pathKey: value => value.toLowerCase(),
+      mapToOriginalPath: value => value,
+      isRenderCachePath: () => false,
+      previewImported: () => false,
+      previewStandalone: () => false,
+      latestDocumentVersion: () => 1,
+      hasPendingSync: () => false,
+      spellcheck: () => ({}) as never,
+      recordFirstDiagnostics: () => {},
+      logDeveloper: () => {},
+      acceptedDiagnosticsChanged: () => {},
+      openDiagnosticFile: async () => {},
+      activeTabContentLoaded: () => true,
+      editorPositionFromSourceLocation: () => 13,
+    });
+
+    await controller.navigateToLogEntry({
+      kind: "error",
+      message: "problem",
+      filePath: path,
+      line: 3,
+      column: 1,
+    });
+
+    expect(dispatches).toHaveLength(2);
+    expect(state.selection.main.head).toBe(13);
+    expect(focused).toBe(true);
   });
 });
 

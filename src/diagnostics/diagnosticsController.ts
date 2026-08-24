@@ -329,15 +329,42 @@ export class DiagnosticsController {
     const selectionEnd = entry.toOffset === undefined
       ? cursor
       : Math.max(cursor, Math.min(entry.toOffset, editor.state.doc.length));
-    const effects = [EditorView.scrollIntoView(cursor, { y: "center" })];
+    let foldedRange: { from: number; to: number } | null = null;
     foldedRanges(editor.state).between(
       Math.max(0, cursor - 1),
       Math.min(editor.state.doc.length, Math.max(cursor + 1, selectionEnd)),
       (from, to) => {
-        if (from <= cursor && to >= cursor) effects.unshift(unfoldEffect.of({ from, to }));
+        if (from <= cursor && to >= cursor) foldedRange = { from, to };
       },
     );
-    editor.dispatch({ selection: { anchor: cursor, head: selectionEnd }, effects });
+    editor.dispatch({
+      selection: { anchor: cursor, head: selectionEnd },
+      effects: foldedRange ? unfoldEffect.of(foldedRange) : undefined,
+    });
+
+    // Same-file navigation runs synchronously inside the Problems-panel click
+    // handler. Revealing in that transaction can be overwritten by the click's
+    // remaining focus/layout work, and folded content has not been measured at
+    // its expanded height yet. Wait for the next frame, then issue a dedicated
+    // reveal transaction against the settled editor layout.
+    await new Promise<void>(resolve => {
+      if (typeof requestAnimationFrame === "function") {
+        requestAnimationFrame(() => resolve());
+      } else {
+        setTimeout(resolve, 0);
+      }
+    });
+    if (
+      this.editor() !== editor
+      || !this.port.activeTabContentLoaded()
+      || (
+        entry.filePath
+        && this.port.pathKey(entry.filePath) !== this.port.pathKey(this.port.activeFilePath() ?? "")
+      )
+    ) return;
+    editor.dispatch({
+      effects: EditorView.scrollIntoView(editor.state.selection.main, { y: "center" }),
+    });
     editor.focus();
   }
 
