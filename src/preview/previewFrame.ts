@@ -508,10 +508,27 @@ export class PreviewFrame {
     this.previewZoomPercent = percent;
     this.onZoomChanged?.(percent);
     this.cancelAllPageRenders();
+    this.invalidateZoomSensitiveOverlays();
     this.layoutPageSlots({ preserveExistingPages: true });
     this.restoreScrollAnchor(anchor);
     requestAnimationFrame(() => this.renderVisiblePages());
     return percent;
+  }
+
+  private invalidateZoomSensitiveOverlays(): void {
+    const doc = this.iframe?.contentDocument;
+    if (!doc) return;
+    // The retained page canvas scales with its page slot while the sharp
+    // replacement raster is prepared. Text, annotation, search, and custom
+    // selection geometry is expressed in CSS pixels for one specific zoom,
+    // however, so retaining it would briefly paint old rectangles over the
+    // newly sized page. Remove those coordinate-sensitive layers now. The
+    // page render recreates them from PDF document coordinates at the new
+    // viewport scale and restores persistent search/selection markers.
+    this.standalonePdfTextLayers.clear();
+    doc.querySelectorAll(
+      ".pdf-text-layer,.annotation-link,.pdf-search-marker,.pdf-selection-marker,.forward-sync-ripple",
+    ).forEach(element => element.remove());
   }
 
   private updateHorizontalOverflow(): void {

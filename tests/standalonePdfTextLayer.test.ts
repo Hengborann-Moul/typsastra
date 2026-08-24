@@ -27,6 +27,20 @@ test("standalone PDFium pages keep a sharp backing raster at fractional zoom", (
   expect(pdfiumSource).toContain("height: Math.max(1, Math.min(65_535, canvas.height))");
 });
 
+test("zoom invalidates coordinate-sensitive PDF overlays before rerendering", () => {
+  const invalidation = frameSource.indexOf("this.invalidateZoomSensitiveOverlays();");
+  const relayout = frameSource.indexOf(
+    "this.layoutPageSlots({ preserveExistingPages: true });",
+    invalidation,
+  );
+  expect(invalidation).toBeGreaterThan(-1);
+  expect(relayout).toBeGreaterThan(invalidation);
+  expect(frameSource).toContain("this.standalonePdfTextLayers.clear();");
+  expect(frameSource).toContain(
+    '".pdf-text-layer,.annotation-link,.pdf-search-marker,.pdf-selection-marker,.forward-sync-ripple"',
+  );
+});
+
 test("standalone text selection does not trigger source inverse sync", () => {
   expect(frameSource).toContain(
     'if (doc.documentElement.dataset.previewSurface === "pdf") return;',
