@@ -339,21 +339,44 @@ function formattedParagraphHtml(role: string | null, contents: string): string {
 function styledHtmlFragments(item: StandalonePdfSelectionItem, from: number, to: number): string[] {
   const ranges = item.styleRanges ?? [];
   if (ranges.length < 1) return [escapeHtml(item.text.slice(from, to))];
-  const result: string[] = [];
+  const segments: Array<{
+    text: string;
+    style: StandalonePdfSelectionStyleRange | null;
+  }> = [];
   let offset = from;
   for (const range of ranges) {
     const start = Math.max(from, range.from);
     const end = Math.min(to, range.to);
     if (end <= start) continue;
-    if (start > offset) result.push(escapeHtml(item.text.slice(offset, start)));
-    const text = escapeHtml(item.text.slice(start, end));
-    const style = selectionCss(range);
-    const direction = range.direction === "rtl" ? ' dir="rtl"' : "";
-    result.push(style || direction ? `<span${direction}${style ? ` style="${style}"` : ""}>${text}</span>` : text);
+    if (start > offset) segments.push({ text: item.text.slice(offset, start), style: null });
+    segments.push({ text: item.text.slice(start, end), style: range });
     offset = end;
   }
-  if (offset < to) result.push(escapeHtml(item.text.slice(offset, to)));
-  return result;
+  if (offset < to) segments.push({ text: item.text.slice(offset, to), style: null });
+
+  // PDF font fallback commonly gives a painted space its own style range.
+  // Word drops a whitespace-only inline element when importing clipboard
+  // HTML. Move leading and isolated spaces into the preceding visible run so
+  // the same ordinary, breakable characters remain part of actual text.
+  const normalized: typeof segments = [];
+  for (const segment of segments) {
+    let text = segment.text;
+    const leading = text.match(/^ +/u)?.[0] ?? "";
+    if (leading && normalized.length > 0) {
+      normalized[normalized.length - 1].text += leading;
+      text = text.slice(leading.length);
+    }
+    if (!text) continue;
+    normalized.push({ ...segment, text });
+  }
+
+  return normalized.map(segment => {
+    const text = escapeHtml(segment.text);
+    if (!segment.style) return text;
+    const style = selectionCss(segment.style);
+    const direction = segment.style.direction === "rtl" ? ' dir="rtl"' : "";
+    return style || direction ? `<span${direction}${style ? ` style="${style}"` : ""}>${text}</span>` : text;
+  });
 }
 
 function selectionCss(style: StandalonePdfSelectionStyleRange): string {

@@ -401,13 +401,46 @@ test("formatted standalone PDF copy emits editable styled paragraphs and a plain
   );
 
   expect(selection?.plainText).toBe("Story & heading\nFirst visual line continues here.");
-  expect(selection?.html).toContain("Story &amp; heading</span></p><p");
+  expect(selection?.html).toContain("heading</span></p><p");
   expect(selection?.html).toContain("font-family:'MiSans Khmer'");
   expect(selection?.html).toContain("font-size:18.00pt");
   expect(selection?.html).toContain("font-weight:700");
   expect(selection?.html).toContain("color:#8b001f");
+  expect(selection?.html).toContain("Story &amp; heading");
+  expect(selection?.html).toContain("line</span> <span");
   expect(selection?.html).not.toContain("<img");
   expect(selection?.html).not.toContain("<canvas");
+});
+
+test("formatted standalone PDF copy preserves spaces across style boundaries", () => {
+  const documentPages = pages([1, [{
+    text: "Khmer phrase keeps spaces",
+    hasEOL: false,
+    baselineY: 20,
+    height: 12,
+    styleRanges: [
+      { from: 0, to: 5, fontWeight: 700 },
+      { from: 5, to: 6, fontFamily: "Space fallback" },
+      { from: 6, to: 12, fontWeight: 400 },
+      { from: 12, to: 13, fontFamily: "Space fallback" },
+      { from: 13, to: 18, italic: true },
+      { from: 18, to: 19, fontFamily: "Space fallback" },
+      { from: 19, to: 25, italic: true },
+    ],
+    searchGeometry: [{ from: 0, to: 25, left: 10, top: 8, width: 140, height: 12 }],
+  }]]);
+
+  const selection = serializeStandalonePdfFormattedSelection(
+    documentPages,
+    { pageNo: 1, itemIndex: 0, geometryIndex: 0 },
+    { pageNo: 1, itemIndex: 0, geometryIndex: 0 },
+  );
+
+  expect(selection?.plainText).toBe("Khmer phrase keeps spaces");
+  expect(selection?.html).toContain("Khmer </span><span");
+  expect(selection?.html).toContain("phrase </span><span");
+  expect(selection?.html).toContain("keeps </span><span");
+  expect(selection?.html).not.toContain("Space fallback");
 });
 
 test("formatted standalone PDF copy preserves tagged headings, captions, and editable tables", () => {
@@ -448,6 +481,6 @@ test("formatted standalone PDF copy preserves tagged headings, captions, and edi
   expect(selection?.html).toContain("<table");
   expect(selection?.html).toContain("<th");
   expect(selection?.html).toContain("<td");
-  expect(selection?.html).toContain("Summary table");
+  expect(selection?.plainText).toContain("Summary table");
   expect(selection?.html).not.toContain("<img");
 });
