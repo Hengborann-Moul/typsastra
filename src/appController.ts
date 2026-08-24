@@ -726,6 +726,10 @@ export class TypsastraWorkspaceController {
     },
     resolveMarkdownImage: (documentPath, source) => this.resolveMarkdownImage(documentPath, source),
     openMarkdownLink: (documentPath, href) => this.openMarkdownLink(documentPath, href),
+    onStandalonePdfOutlineChanged: items => {
+      if (items === null) this.documentOutlineController.clearStandalonePdfOutline();
+      else this.documentOutlineController.setStandalonePdfOutline(items);
+    },
   });
   private get previewFrame(): PreviewFrame { return this.previewController.pdf; }
   private get markdownPreviewFrame(): MarkdownPreviewFrame { return this.previewController.markdown; }
@@ -1188,7 +1192,12 @@ export class TypsastraWorkspaceController {
   private readonly documentOutlineController = new DocumentOutlineController(
     document.getElementById("document-outline-tree")!,
     document.getElementById("document-outline-section")!,
-    heading => void this.navigateToOutlineHeading(heading)
+    heading => void this.navigateToOutlineHeading(heading),
+    destination => void this.previewFrame.revealDocumentPosition({
+      page_no: destination.pageNo,
+      x: destination.x ?? 0,
+      y: destination.y ?? 0,
+    }, { ripple: true }),
   );
   private readonly outlineNavigationController = new OutlineNavigationController({
     activeTab: () => this.getActiveTab(),

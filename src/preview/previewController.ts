@@ -10,6 +10,7 @@ import {
   MarkdownPreviewFrame,
   type MarkdownResource,
 } from "./markdownPreviewFrame";
+import type { PdfiumOutlineItem } from "./pdfiumDocument";
 
 export interface PreviewControllerPort {
   onPreviewClick(point: PreviewClickPoint): void;
@@ -26,6 +27,7 @@ export interface PreviewControllerPort {
   openEditorSearch(): void;
   resolveMarkdownImage(documentPath: string, source: string): Promise<MarkdownResource | null>;
   openMarkdownLink(documentPath: string, href: string): Promise<void>;
+  onStandalonePdfOutlineChanged(items: readonly PdfiumOutlineItem[] | null): void;
 }
 
 /** Owns the mutually exclusive PDF and Markdown preview surfaces. */
@@ -45,6 +47,7 @@ export class PreviewController {
       scrollTop => port.onScrollPositionChanged(scrollTop),
       (stage, detail) => port.onLoadStage(stage, detail),
       () => port.openEditorSearch(),
+      items => port.onStandalonePdfOutlineChanged(items),
     );
     this.markdown = new MarkdownPreviewFrame(pane, {
       resolveImage: (documentPath, source) => port.resolveMarkdownImage(documentPath, source),

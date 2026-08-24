@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   buildPdfiumTextRuns,
   groupPdfiumGlyphsByGrapheme,
+  PdfiumPage,
   type PdfiumPageText,
 } from "../src/preview/pdfiumDocument";
 
@@ -14,6 +15,37 @@ function char(text: string, left: number, bottom: number, right: number, top: nu
 }
 
 describe("PDFium standalone text runs", () => {
+  test("exposes standalone links in PDF coordinates", async () => {
+    const page = new PdfiumPage(7, 2, { width: 200, height: 300 }, [
+      {
+        rect: [10, 220, 80, 240],
+        url: null,
+        destination: { pageNo: 5, x: 14, y: 32 },
+      },
+      {
+        rect: [90, 220, 150, 240],
+        url: "https://typst.app",
+        destination: null,
+      },
+    ]);
+
+    expect(page.getViewport({ scale: 2 }).convertToViewportPoint(10, 240)).toEqual([20, 120]);
+    expect(await page.getAnnotations()).toEqual([
+      {
+        subtype: "Link",
+        rect: [10, 220, 80, 240],
+        url: undefined,
+        typsastraDestination: { pageNo: 5, x: 14, y: 32 },
+      },
+      {
+        subtype: "Link",
+        rect: [90, 220, 150, 240],
+        url: "https://typst.app",
+        typsastraDestination: undefined,
+      },
+    ]);
+  });
+
   test("combines positioned characters into selectable visual lines", () => {
     const runs = buildPdfiumTextRuns(page([
       char("H", 10, 150, 18, 162),

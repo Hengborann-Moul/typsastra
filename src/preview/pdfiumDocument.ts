@@ -5,10 +5,30 @@ export type PdfiumPageDimensions = {
   height: number;
 };
 
+export type PdfiumDestination = {
+  pageNo: number;
+  x: number | null;
+  y: number | null;
+};
+
+export type PdfiumLink = {
+  rect: [number, number, number, number];
+  url: string | null;
+  destination: PdfiumDestination | null;
+};
+
+export type PdfiumOutlineItem = {
+  title: string;
+  destination: PdfiumDestination | null;
+  children: PdfiumOutlineItem[];
+};
+
 type PdfiumDocumentInfo = {
   documentId: number;
   byteLength: number;
   pages: PdfiumPageDimensions[];
+  links: PdfiumLink[][];
+  outline: PdfiumOutlineItem[];
 };
 
 export type PdfiumTextChar = {
@@ -89,6 +109,7 @@ type PdfiumViewport = {
   scale: number;
   pageWidth: number;
   pageHeight: number;
+  convertToViewportPoint(x: number, y: number): [number, number];
 };
 
 type PdfiumRenderTask = {
@@ -107,6 +128,8 @@ export class PdfiumDocument {
   public readonly numPages: number;
   public readonly byteLength: number;
   public readonly pageDimensions: readonly PdfiumPageDimensions[];
+  public readonly outline: readonly PdfiumOutlineItem[];
+  private readonly pageLinks: readonly PdfiumLink[][];
   private readonly pages = new Map<number, PdfiumPage>();
   private closed = false;
 
@@ -117,6 +140,8 @@ export class PdfiumDocument {
     this.numPages = info.pages.length;
     this.byteLength = info.byteLength;
     this.pageDimensions = info.pages;
+    this.pageLinks = info.links ?? [];
+    this.outline = info.outline ?? [];
   }
 
   public static async open(path: string, deleteOnClose = false): Promise<PdfiumDocument> {
@@ -134,7 +159,12 @@ export class PdfiumDocument {
     }
     let page = this.pages.get(pageNo);
     if (!page) {
-      page = new PdfiumPage(this.documentId, pageNo, this.pageDimensions[pageNo - 1]);
+      page = new PdfiumPage(
+        this.documentId,
+        pageNo,
+        this.pageDimensions[pageNo - 1],
+        this.pageLinks[pageNo - 1] ?? [],
+      );
       this.pages.set(pageNo, page);
     }
     return page;
@@ -160,6 +190,7 @@ export class PdfiumPage {
     private readonly documentId: number,
     public readonly pageNumber: number,
     private readonly dimensions: PdfiumPageDimensions,
+    private readonly links: readonly PdfiumLink[] = [],
   ) {}
 
   public get height(): number {
@@ -173,7 +204,20 @@ export class PdfiumPage {
       scale,
       pageWidth: this.dimensions.width,
       pageHeight: this.dimensions.height,
+      convertToViewportPoint: (x, y) => [
+        x * scale,
+        (this.dimensions.height - y) * scale,
+      ],
     };
+  }
+
+  public async getAnnotations(): Promise<Array<Record<string, unknown>>> {
+    return this.links.map(link => ({
+      subtype: "Link",
+      rect: link.rect,
+      url: link.url ?? undefined,
+      typsastraDestination: link.destination ?? undefined,
+    }));
   }
 
   public render({ canvas }: PdfiumRenderOptions): PdfiumRenderTask {

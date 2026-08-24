@@ -15,6 +15,17 @@ describe("PDF preview links", () => {
       kind: "destination",
       destination: "chapter-two"
     });
+    expect(previewLinkTarget({
+      subtype: "Link",
+      typsastraDestination: { pageNo: 4, x: 27.5, y: 83 },
+    })).toEqual({
+      kind: "direct-destination",
+      destination: { pageNo: 4, x: 27.5, y: 83 },
+    });
+    expect(previewLinkTarget({
+      subtype: "Link",
+      typsastraDestination: { pageNo: 0, x: null, y: null },
+    })).toBeNull();
     expect(previewLinkTarget({ subtype: "Text", dest: "chapter-two" })).toBeNull();
   });
 

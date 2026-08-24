@@ -25,6 +25,32 @@ pub struct PdfiumDocumentInfo {
     pub document_id: u64,
     pub byte_length: u64,
     pub pages: Vec<PdfiumPageDimensions>,
+    pub links: Vec<Vec<PdfiumLinkInfo>>,
+    pub outline: Vec<PdfiumOutlineItem>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PdfiumDestinationInfo {
+    pub page_no: u16,
+    pub x: Option<f32>,
+    pub y: Option<f32>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PdfiumLinkInfo {
+    pub rect: [f32; 4],
+    pub url: Option<String>,
+    pub destination: Option<PdfiumDestinationInfo>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PdfiumOutlineItem {
+    pub title: String,
+    pub destination: Option<PdfiumDestinationInfo>,
+    pub children: Vec<PdfiumOutlineItem>,
 }
 
 #[derive(Debug, Serialize)]
@@ -177,6 +203,8 @@ fn run_pdfium_worker(receiver: mpsc::Receiver<PdfiumRequest>) {
                             height: page.height().value,
                         })
                         .collect();
+                    let links = extract_document_links(&document);
+                    let outline = extract_document_outline(&document);
                     let (semantic_markers, font_families) = load_pdf_metadata(&path);
                     documents.insert(
                         document_id,
@@ -192,6 +220,8 @@ fn run_pdfium_worker(receiver: mpsc::Receiver<PdfiumRequest>) {
                         document_id,
                         byte_length,
                         pages,
+                        links,
+                        outline,
                     })
                 })();
                 let _ = response.send(result);
@@ -240,6 +270,116 @@ fn reject_request(request: PdfiumRequest, message: &str) {
             let _ = response.send(Err(message.to_string()));
         }
     }
+}
+
+fn extract_document_links(document: &PdfDocument<'_>) -> Vec<Vec<PdfiumLinkInfo>> {
+    document
+        .pages()
+        .iter()
+        .map(|page| {
+            page.links()
+                .iter()
+                .filter_map(|link| {
+                    let rect = link.rect().ok()?;
+                    let action = link.action();
+                    let url = action
+                        .as_ref()
+                        .and_then(|action| action.as_uri_action())
+                        .and_then(|action| action.uri().ok());
+                    let destination = link
+                        .destination()
+                        .and_then(|destination| destination_info(document, destination))
+                        .or_else(|| {
+                            action
+                                .as_ref()
+                                .and_then(|action| action.as_local_destination_action())
+                                .and_then(|action| action.destination().ok())
+                                .and_then(|destination| destination_info(document, destination))
+                        });
+                    if url.is_none() && destination.is_none() {
+                        return None;
+                    }
+                    Some(PdfiumLinkInfo {
+                        rect: [
+                            rect.left().value,
+                            rect.bottom().value,
+                            rect.right().value,
+                            rect.top().value,
+                        ],
+                        url,
+                        destination,
+                    })
+                })
+                .collect()
+        })
+        .collect()
+}
+
+fn extract_document_outline(document: &PdfDocument<'_>) -> Vec<PdfiumOutlineItem> {
+    extract_bookmark_siblings(document, document.bookmarks().root())
+}
+
+fn extract_bookmark_siblings(
+    document: &PdfDocument<'_>,
+    first: Option<PdfBookmark<'_>>,
+) -> Vec<PdfiumOutlineItem> {
+    let mut items = Vec::new();
+    let mut current = first;
+    while let Some(bookmark) = current {
+        let next = bookmark.next_sibling();
+        let children = extract_bookmark_siblings(document, bookmark.first_child());
+        let destination = bookmark
+            .destination()
+            .and_then(|destination| destination_info(document, destination))
+            .or_else(|| {
+                bookmark
+                    .action()
+                    .as_ref()
+                    .and_then(|action| action.as_local_destination_action())
+                    .and_then(|action| action.destination().ok())
+                    .and_then(|destination| destination_info(document, destination))
+            });
+        items.push(PdfiumOutlineItem {
+            title: bookmark
+                .title()
+                .unwrap_or_else(|| "Untitled bookmark".to_string()),
+            destination,
+            children,
+        });
+        current = next;
+    }
+    items
+}
+
+fn destination_info(
+    document: &PdfDocument<'_>,
+    destination: PdfDestination<'_>,
+) -> Option<PdfiumDestinationInfo> {
+    let page_index = destination.page_index().ok()?;
+    let page = document.pages().get(page_index).ok()?;
+    let page_height = page.height().value;
+    let (x, pdf_y) = match destination.view_settings().ok()? {
+        PdfDestinationViewSettings::SpecificCoordinatesAndZoom(x, y, _) => {
+            (x.map(|value| value.value), y.map(|value| value.value))
+        }
+        PdfDestinationViewSettings::FitPageHorizontallyToWindow(y)
+        | PdfDestinationViewSettings::FitBoundsHorizontallyToWindow(y) => {
+            (None, y.map(|value| value.value))
+        }
+        PdfDestinationViewSettings::FitPageVerticallyToWindow(x)
+        | PdfDestinationViewSettings::FitBoundsVerticallyToWindow(x) => {
+            (x.map(|value| value.value), None)
+        }
+        PdfDestinationViewSettings::FitPageToRectangle(rect) => {
+            (Some(rect.left().value), Some(rect.top().value))
+        }
+        _ => (None, None),
+    };
+    Some(PdfiumDestinationInfo {
+        page_no: u16::try_from(page_index).ok()?.saturating_add(1),
+        x,
+        y: pdf_y.map(|value| page_height - value),
+    })
 }
 
 fn close_document<'a>(

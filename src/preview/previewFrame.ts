@@ -93,6 +93,7 @@ import {
   isPdfiumDocument,
   isPdfiumPage,
   type PdfiumTextGlyph,
+  type PdfiumOutlineItem,
 } from "./pdfiumDocument";
 import {
   hitTestStandalonePdfSelection,
@@ -241,6 +242,9 @@ export class PreviewFrame {
       detail: Record<string, number | string | boolean>
     ) => void | Promise<void>,
     private readonly onEditorSearchRequest?: () => void,
+    private readonly onStandalonePdfOutlineChanged?: (
+      items: readonly PdfiumOutlineItem[] | null,
+    ) => void,
   ) {
     this.pane.addEventListener("wheel", event => {
       if (event.ctrlKey) {
@@ -585,6 +589,9 @@ export class PreviewFrame {
     if (!iframeDoc) throw new Error("PDF preview document is unavailable.");
     iframe.dataset.previewSurface = surface;
     iframeDoc.documentElement.dataset.previewSurface = surface;
+    // Do not leave bookmarks from the previously mounted standalone PDF in
+    // the Outline panel while a replacement document is still loading.
+    this.onStandalonePdfOutlineChanged?.(surface === "pdf" ? [] : null);
 
     let nextPdfDoc: any = null;
     let nextLoadingTask: PdfLoadingHandle | null = null;
@@ -790,6 +797,9 @@ export class PreviewFrame {
       this.currentPdfTransport = transportStats.transport;
       this.mountedUrl = identity;
       this.mountedSessionKey = sessionKey;
+      this.onStandalonePdfOutlineChanged?.(
+        surface === "pdf" && isPdfiumDocument(pdfDoc) ? pdfDoc.outline : null,
+      );
       if (this.isFitToWidth) this.previewZoomPercent = this.computeFitToWidthPercent();
       this.createPageSlots(iframeDoc, true);
       this.updateHorizontalOverflow();
@@ -2639,6 +2649,14 @@ export class PreviewFrame {
       }
       return;
     }
+    if (target.kind === "direct-destination") {
+      await this.revealDocumentPosition({
+        page_no: target.destination.pageNo,
+        x: target.destination.x ?? 0,
+        y: target.destination.y ?? 0,
+      });
+      return;
+    }
     await this.jumpToPdfDestination(target.destination);
   }
 
@@ -2713,6 +2731,7 @@ export class PreviewFrame {
     this.iframe = null;
     this.mountedUrl = "";
     this.mountedSessionKey = "";
+    this.onStandalonePdfOutlineChanged?.(null);
     this.currentPdfBytes = 0;
     this.currentPdfBytesRead = 0;
     this.currentPdfRangeRequests = 0;

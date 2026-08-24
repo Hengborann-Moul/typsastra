@@ -1,13 +1,21 @@
+import type { PdfiumDestination } from "./pdfiumDocument";
+
 export type PreviewLinkTarget =
   | { kind: "external"; url: string }
   | { kind: "destination"; destination: string | unknown[] }
+  | { kind: "direct-destination"; destination: PdfiumDestination }
   | { kind: "draft-image"; id: string };
 
 const DRAFT_IMAGE_LINK_PREFIX = "https://draft-preview.typsastra.invalid/";
 
 export function previewLinkTarget(annotation: unknown): PreviewLinkTarget | null {
   if (!annotation || typeof annotation !== "object") return null;
-  const candidate = annotation as { subtype?: unknown; url?: unknown; dest?: unknown };
+  const candidate = annotation as {
+    subtype?: unknown;
+    url?: unknown;
+    dest?: unknown;
+    typsastraDestination?: unknown;
+  };
   if (candidate.subtype !== "Link") return null;
   if (typeof candidate.url === "string" && candidate.url.length > 0) {
     if (candidate.url.startsWith(DRAFT_IMAGE_LINK_PREFIX)) {
@@ -19,7 +27,19 @@ export function previewLinkTarget(annotation: unknown): PreviewLinkTarget | null
   if (typeof candidate.dest === "string" || Array.isArray(candidate.dest)) {
     return { kind: "destination", destination: candidate.dest };
   }
+  if (isPdfiumDestination(candidate.typsastraDestination)) {
+    return { kind: "direct-destination", destination: candidate.typsastraDestination };
+  }
   return null;
+}
+
+function isPdfiumDestination(value: unknown): value is PdfiumDestination {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<PdfiumDestination>;
+  return Number.isInteger(candidate.pageNo)
+    && Number(candidate.pageNo) >= 1
+    && (candidate.x === null || Number.isFinite(candidate.x))
+    && (candidate.y === null || Number.isFinite(candidate.y));
 }
 
 export function previewLinkModifierPressed(event: Pick<MouseEvent | KeyboardEvent, "ctrlKey" | "metaKey">): boolean {

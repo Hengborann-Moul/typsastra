@@ -1,5 +1,6 @@
 import type { PreviewDocumentPosition, TinymistDocumentOutlineItem } from "../compiler/lsp";
 import { createAppIcon } from "../ui/icons";
+import type { PdfiumDestination, PdfiumOutlineItem } from "../preview/pdfiumDocument";
 
 export type DocumentHeading = {
   id: string;
@@ -162,6 +163,25 @@ function flattenRenderedOutline(items: readonly TinymistDocumentOutlineItem[]): 
   return items.flatMap(item => [item, ...flattenRenderedOutline(item.children)]);
 }
 
+type StandalonePdfOutlineItem = PdfiumOutlineItem & {
+  id: string;
+  children: StandalonePdfOutlineItem[];
+};
+
+function identifyPdfOutline(
+  items: readonly PdfiumOutlineItem[],
+  prefix = "pdf",
+): StandalonePdfOutlineItem[] {
+  return items.map((item, index) => {
+    const id = `${prefix}:${index}`;
+    return { ...item, id, children: identifyPdfOutline(item.children, id) };
+  });
+}
+
+function flattenPdfOutline(items: readonly StandalonePdfOutlineItem[]): StandalonePdfOutlineItem[] {
+  return items.flatMap(item => [item, ...flattenPdfOutline(item.children)]);
+}
+
 function comparableTitle(title: string): string {
   return title
     .replace(/^\s*\d+(?:\.\d+)*[.:]?\s+/u, "")
@@ -177,11 +197,14 @@ export class DocumentOutlineController {
   private activePath: string | null = null;
   private activeHeadingKey: string | null = null;
   private selectedHeadingId: string | null = null;
+  private pdfOutline: StandalonePdfOutlineItem[] | null = null;
+  private flatPdfOutline: StandalonePdfOutlineItem[] = [];
 
   constructor(
     private readonly container: HTMLElement,
     private readonly section: HTMLElement,
-    private readonly onNavigate: (heading: DocumentHeading) => void
+    private readonly onNavigate: (heading: DocumentHeading) => void,
+    private readonly onNavigatePdf?: (destination: PdfiumDestination) => void,
   ) {}
 
   public initialize(): void {
@@ -199,6 +222,8 @@ export class DocumentOutlineController {
   }
 
   public async update(path: string | null, source: string, workspaceRoot: string, readFile: (path: string) => Promise<string | null>): Promise<void> {
+    this.pdfOutline = null;
+    this.flatPdfOutline = [];
     this.activePath = path;
     this.headings = path?.toLowerCase().endsWith(".typ") ? await parseDocumentOutline(path, source, workspaceRoot, readFile) : [];
     this.flatHeadings = flattenHeadings(this.headings);
@@ -218,11 +243,14 @@ export class DocumentOutlineController {
     this.activePath = null;
     this.activeHeadingKey = null;
     this.selectedHeadingId = null;
+    this.pdfOutline = null;
+    this.flatPdfOutline = [];
     this.collapsed.clear();
     this.render();
   }
 
   public setCursorPosition(cursor: number, activePath: string | null = this.activePath): void {
+    if (this.pdfOutline !== null) return;
     this.cursor = cursor;
     this.activePath = activePath;
     let active: DocumentHeading | undefined;
@@ -277,10 +305,42 @@ export class DocumentOutlineController {
     }
   }
 
+  public setStandalonePdfOutline(items: readonly PdfiumOutlineItem[]): void {
+    this.pdfOutline = identifyPdfOutline(items);
+    this.flatPdfOutline = flattenPdfOutline(this.pdfOutline);
+    this.selectedHeadingId = null;
+    this.activeHeadingKey = null;
+    this.collapsed.clear();
+    this.render();
+  }
+
+  public clearStandalonePdfOutline(): void {
+    if (this.pdfOutline === null) return;
+    this.pdfOutline = null;
+    this.flatPdfOutline = [];
+    this.selectedHeadingId = null;
+    this.render();
+    this.setCursorPosition(this.cursor);
+  }
+
   private render(): void {
     this.activeHeadingKey = null;
     const count = document.getElementById("document-outline-count");
-    if (count) count.textContent = String(this.flatHeadings.length);
+    if (count) count.textContent = String(
+      this.pdfOutline === null ? this.flatHeadings.length : this.flatPdfOutline.length,
+    );
+    if (this.pdfOutline !== null) {
+      if (!this.pdfOutline.length) {
+        this.selectedHeadingId = null;
+        const empty = document.createElement("div");
+        empty.className = "outline-empty";
+        empty.textContent = "No bookmarks in this PDF.";
+        this.container.replaceChildren(empty);
+        return;
+      }
+      this.container.replaceChildren(this.renderPdfLevel(this.pdfOutline));
+      return;
+    }
     if (!this.headings.length) {
       this.selectedHeadingId = null;
       const empty = document.createElement("div");
@@ -332,6 +392,11 @@ export class DocumentOutlineController {
     else if (event.key === "Home") this.selectRow(rows[0]);
     else if (event.key === "End") this.selectRow(rows[rows.length - 1]);
     else if (event.key === "Enter") {
+      if (this.pdfOutline !== null) {
+        const item = this.flatPdfOutline.find(item => item.id === selected.dataset.outlineId);
+        if (item?.destination) this.onNavigatePdf?.(item.destination);
+        return;
+      }
       const heading = this.findHeading(selected.dataset.outlineId ?? "");
       if (heading) this.onNavigate(heading);
     } else if (event.key === "ArrowRight") {
@@ -401,6 +466,69 @@ export class DocumentOutlineController {
       if (heading.children.length) {
         const children = this.renderLevel(heading.children);
         children.classList.toggle("hidden", this.collapsed.has(heading.id));
+        item.appendChild(children);
+      }
+      list.appendChild(item);
+    }
+    return list;
+  }
+
+  private renderPdfLevel(items: readonly StandalonePdfOutlineItem[]): HTMLUListElement {
+    const list = document.createElement("ul");
+    list.className = "outline-list";
+    for (const outlineItem of items) {
+      const item = document.createElement("li");
+      item.className = "outline-node";
+      const row = document.createElement("div");
+      row.className = `outline-item${this.selectedHeadingId === outlineItem.id ? " keyboard-selected" : ""}`;
+      row.dataset.outlineId = outlineItem.id;
+      row.setAttribute("role", "treeitem");
+      row.setAttribute("aria-selected", String(this.selectedHeadingId === outlineItem.id));
+      row.title = outlineItem.destination
+        ? `${outlineItem.title} (page ${outlineItem.destination.pageNo})`
+        : outlineItem.title;
+
+      const disclosure = document.createElement("button");
+      disclosure.type = "button";
+      disclosure.tabIndex = -1;
+      disclosure.className = "outline-disclosure";
+      if (outlineItem.children.length) {
+        const isCollapsed = this.collapsed.has(outlineItem.id);
+        disclosure.appendChild(createAppIcon("chevronDown", { size: 14 }));
+        disclosure.classList.toggle("collapsed", isCollapsed);
+        disclosure.setAttribute("aria-label", `${isCollapsed ? "Expand" : "Collapse"} ${outlineItem.title}`);
+        disclosure.setAttribute("aria-expanded", String(!isCollapsed));
+        disclosure.addEventListener("click", event => {
+          event.stopPropagation();
+          this.selectedHeadingId = outlineItem.id;
+          if (isCollapsed) this.collapsed.delete(outlineItem.id);
+          else this.collapsed.add(outlineItem.id);
+          this.render();
+        });
+      } else {
+        disclosure.classList.add("placeholder");
+        disclosure.disabled = true;
+        disclosure.setAttribute("aria-hidden", "true");
+      }
+
+      const label = document.createElement("button");
+      label.type = "button";
+      label.tabIndex = -1;
+      label.className = "outline-label";
+      label.textContent = outlineItem.title;
+      if (outlineItem.destination) {
+        label.addEventListener("click", () => {
+          this.selectedHeadingId = outlineItem.id;
+          this.onNavigatePdf?.(outlineItem.destination!);
+        });
+      } else {
+        label.setAttribute("aria-disabled", "true");
+      }
+      row.append(disclosure, label);
+      item.appendChild(row);
+      if (outlineItem.children.length) {
+        const children = this.renderPdfLevel(outlineItem.children);
+        children.classList.toggle("hidden", this.collapsed.has(outlineItem.id));
         item.appendChild(children);
       }
       list.appendChild(item);
