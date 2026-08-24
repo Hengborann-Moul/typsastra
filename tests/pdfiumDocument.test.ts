@@ -135,4 +135,42 @@ describe("PDFium standalone text runs", () => {
 
     expect(buildPdfiumTextRuns(fixture).map(run => run.semanticBlockId)).toEqual([4, 5]);
   });
+
+  test("splits one painted baseline into tagged table cells", () => {
+    const fixture = page([
+      char("A", 10, 150, 18, 162),
+      char("1", 18, 150, 24, 162),
+      char("B", 110, 150, 118, 162),
+      char("2", 118, 150, 124, 162),
+    ]);
+    fixture.semanticMarkers = [
+      {
+        blockId: 10,
+        role: "TH",
+        tableId: 2,
+        rowId: 3,
+        cellId: 4,
+        figureId: null,
+        x: 10,
+        y: 156,
+      },
+      {
+        blockId: 11,
+        role: "TH",
+        tableId: 2,
+        rowId: 3,
+        cellId: 5,
+        figureId: null,
+        x: 110,
+        y: 156,
+      },
+    ];
+
+    const runs = buildPdfiumTextRuns(fixture);
+
+    expect(runs.map(run => run.text)).toEqual(["A1", "B2"]);
+    expect(runs.map(run => run.semanticCellId)).toEqual([4, 5]);
+    expect(runs.map(run => run.semanticRole)).toEqual(["TH", "TH"]);
+    expect(runs.map(run => run.hasEOL)).toEqual([false, false]);
+  });
 });

@@ -304,57 +304,138 @@ export function buildPdfiumTextRuns(page: PdfiumPageText): PdfiumTextRun[] {
   }
   flush(false);
 
+  const markers = page.semanticMarkers ?? [];
   const runs = lines.flatMap(line => {
-    const positioned = line.chars.filter(char => (
-      char.left !== null && char.bottom !== null && char.right !== null && char.top !== null
-    ));
-    if (positioned.length < 1) return [];
-    const ordered = orderPdfiumLineChars(line.chars);
-    let text = "";
-    const characterGlyphs: PdfiumTextGlyph[] = [];
-    const styleRanges: PdfiumTextStyleRange[] = [];
-    for (const char of ordered) {
-      const from = text.length;
-      text += char.text;
-      const to = text.length;
-      const style = pdfiumTextStyle(char);
-      const previousStyle = styleRanges[styleRanges.length - 1];
-      if (previousStyle && samePdfiumTextStyle(previousStyle, style)) {
-        previousStyle.to = to;
-      } else {
-        styleRanges.push({ from, to, ...style });
-      }
-      if (char.left !== null && char.bottom !== null && char.right !== null && char.top !== null) {
-        characterGlyphs.push({
-          from,
-          to,
-          left: char.left,
-          bottom: char.bottom,
-          right: char.right,
-          top: char.top,
-        });
-      }
-    }
-    return [{
-      text,
-      left: Math.min(...positioned.map(char => Number(char.left))),
-      bottom: Math.min(...positioned.map(char => Number(char.bottom))),
-      right: Math.max(...positioned.map(char => Number(char.right))),
-      top: Math.max(...positioned.map(char => Number(char.top))),
-      hasEOL: line.hasEOL,
-      dir: firstStrongDirection(text),
-      glyphs: groupPdfiumGlyphsByGrapheme(text, characterGlyphs),
-      semanticBlockId: null,
-      semanticRole: null,
-      semanticTableId: null,
-      semanticRowId: null,
-      semanticCellId: null,
-      semanticFigureId: null,
-      styleRanges,
-    }];
+    const segments = semanticTableLineSegments(line.chars, markers);
+    return segments.flatMap((segment, index) => {
+      const run = pdfiumTextRun(
+        segment.chars,
+        line.hasEOL && index === segments.length - 1,
+      );
+      if (!run) return [];
+      if (segment.marker) applyPdfiumSemanticMarker(run, segment.marker);
+      return [run];
+    });
   });
-  assignPdfiumSemanticBlocks(runs, page.semanticMarkers ?? []);
+  assignPdfiumSemanticBlocks(runs, markers);
   return runs;
+}
+
+function pdfiumTextRun(chars: PdfiumTextChar[], hasEOL: boolean): PdfiumTextRun | null {
+  const positioned = chars.filter(char => (
+    char.left !== null && char.bottom !== null && char.right !== null && char.top !== null
+  ));
+  if (positioned.length < 1) return null;
+  const ordered = orderPdfiumLineChars(chars);
+  let text = "";
+  const characterGlyphs: PdfiumTextGlyph[] = [];
+  const styleRanges: PdfiumTextStyleRange[] = [];
+  for (const char of ordered) {
+    const from = text.length;
+    text += char.text;
+    const to = text.length;
+    const style = pdfiumTextStyle(char);
+    const previousStyle = styleRanges[styleRanges.length - 1];
+    if (previousStyle && samePdfiumTextStyle(previousStyle, style)) {
+      previousStyle.to = to;
+    } else {
+      styleRanges.push({ from, to, ...style });
+    }
+    if (char.left !== null && char.bottom !== null && char.right !== null && char.top !== null) {
+      characterGlyphs.push({
+        from,
+        to,
+        left: char.left,
+        bottom: char.bottom,
+        right: char.right,
+        top: char.top,
+      });
+    }
+  }
+  return {
+    text,
+    left: Math.min(...positioned.map(char => Number(char.left))),
+    bottom: Math.min(...positioned.map(char => Number(char.bottom))),
+    right: Math.max(...positioned.map(char => Number(char.right))),
+    top: Math.max(...positioned.map(char => Number(char.top))),
+    hasEOL,
+    dir: firstStrongDirection(text),
+    glyphs: groupPdfiumGlyphsByGrapheme(text, characterGlyphs),
+    semanticBlockId: null,
+    semanticRole: null,
+    semanticTableId: null,
+    semanticRowId: null,
+    semanticCellId: null,
+    semanticFigureId: null,
+    styleRanges,
+  };
+}
+
+type PdfiumSemanticLineSegment = {
+  chars: PdfiumTextChar[];
+  marker: PdfiumSemanticMarker | null;
+};
+
+/**
+ * PDFium returns one character stream for a painted baseline, even when that
+ * baseline contains several tagged table cells. Split only tagged table rows
+ * here, before text/style offsets are built, so the clipboard serializer can
+ * reconstruct real editable rows and cells instead of one flattened line.
+ */
+function semanticTableLineSegments(
+  chars: PdfiumTextChar[],
+  markers: readonly PdfiumSemanticMarker[],
+): PdfiumSemanticLineSegment[] {
+  const positioned = chars.filter(char => char.bottom !== null);
+  if (positioned.length < 1) return [{ chars, marker: null }];
+  const baseline = Math.min(...positioned.map(char => Number(char.bottom)));
+  const height = Math.max(...positioned.map(char => (
+    char.top !== null && char.bottom !== null ? Math.abs(char.top - char.bottom) : Math.abs(char.fontSize)
+  )));
+  const eligible = markers.filter(marker => Number.isFinite(marker.y) && marker.y >= baseline - Math.max(1, height * 0.35));
+  if (eligible.length < 1) return [{ chars, marker: null }];
+  const active = eligible.reduce((closest, marker) => marker.y < closest.y ? marker : closest);
+  if (active.tableId == null || active.rowId == null || active.cellId == null) {
+    return [{ chars, marker: null }];
+  }
+  const rowMarkers = markers
+    .filter(marker => (
+      marker.tableId === active.tableId
+      && marker.rowId === active.rowId
+      && marker.cellId != null
+      && Number.isFinite(marker.x)
+    ))
+    .sort((left, right) => left.x - right.x);
+  const uniqueCells = rowMarkers.filter((marker, index) => (
+    index === 0 || marker.cellId !== rowMarkers[index - 1].cellId
+  ));
+  if (uniqueCells.length < 2) return [{ chars, marker: active }];
+
+  const groups = uniqueCells.map(marker => ({ chars: [] as PdfiumTextChar[], marker }));
+  let lastGroup = 0;
+  for (const char of chars) {
+    if (char.left === null || char.right === null) {
+      groups[lastGroup].chars.push(char);
+      continue;
+    }
+    const center = (char.left + char.right) / 2;
+    let group = 0;
+    for (let index = 1; index < uniqueCells.length; index += 1) {
+      if (center >= uniqueCells[index].x - Math.max(0.5, height * 0.08)) group = index;
+    }
+    groups[group].chars.push(char);
+    lastGroup = group;
+  }
+  return groups.filter(group => group.chars.length > 0);
+}
+
+function applyPdfiumSemanticMarker(run: PdfiumTextRun, marker: PdfiumSemanticMarker): void {
+  run.semanticBlockId = marker.blockId;
+  run.semanticRole = marker.role;
+  run.semanticTableId = marker.tableId;
+  run.semanticRowId = marker.rowId;
+  run.semanticCellId = marker.cellId;
+  run.semanticFigureId = marker.figureId;
 }
 
 function pdfiumTextStyle(char: PdfiumTextChar): PdfiumTextStyle {
@@ -395,17 +476,13 @@ function assignPdfiumSemanticBlocks(
   let markerIndex = 0;
   let active: PdfiumSemanticMarker | null = null;
   for (const run of runs) {
+    if (run.semanticCellId != null) continue;
     const tolerance = Math.max(1, (run.top - run.bottom) * 0.35);
     while (markerIndex < ordered.length && ordered[markerIndex].y >= run.bottom - tolerance) {
       active = ordered[markerIndex];
       markerIndex += 1;
     }
-    run.semanticBlockId = active?.blockId ?? null;
-    run.semanticRole = active?.role ?? null;
-    run.semanticTableId = active?.tableId ?? null;
-    run.semanticRowId = active?.rowId ?? null;
-    run.semanticCellId = active?.cellId ?? null;
-    run.semanticFigureId = active?.figureId ?? null;
+    if (active) applyPdfiumSemanticMarker(run, active);
   }
 }
 

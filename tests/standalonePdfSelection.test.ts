@@ -484,3 +484,40 @@ test("formatted standalone PDF copy preserves tagged headings, captions, and edi
   expect(selection?.plainText).toContain("Summary table");
   expect(selection?.html).not.toContain("<img");
 });
+
+test("formatted standalone PDF copy preserves a tagged figure as an editable bordered box", () => {
+  const documentPages = pages([1, [
+    {
+      text: "Input -> process -> output",
+      hasEOL: true,
+      baselineY: 20,
+      height: 12,
+      semanticBlockId: 20,
+      semanticRole: "Figure",
+      semanticFigureId: 8,
+      searchGeometry: [{ from: 0, to: 26, left: 10, top: 8, width: 150, height: 12 }],
+    },
+    {
+      text: "Figure 1: Editable workflow",
+      hasEOL: false,
+      baselineY: 40,
+      height: 12,
+      semanticBlockId: 21,
+      semanticRole: "Caption",
+      semanticFigureId: 8,
+      searchGeometry: [{ from: 0, to: 27, left: 20, top: 28, width: 140, height: 12 }],
+    },
+  ]]);
+
+  const selection = serializeStandalonePdfFormattedSelection(
+    documentPages,
+    { pageNo: 1, itemIndex: 0, geometryIndex: 0 },
+    { pageNo: 1, itemIndex: 1, geometryIndex: 0 },
+  );
+
+  expect(selection?.html).toContain('table role="presentation"');
+  expect(selection?.html).toContain("border:1px solid #808080");
+  expect(selection?.html).toContain("Input -&gt; process -&gt; output");
+  expect(selection?.html).toContain("text-align:center;font-style:italic");
+  expect(selection?.html).not.toContain("<img");
+});
