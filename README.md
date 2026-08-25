@@ -337,7 +337,7 @@ installation is not required for normal use.
 - [Markdown live preview](./docs/tutorials/MARKDOWN_PREVIEW.md)
 - [Image Tools](./docs/tutorials/IMAGE_TOOLS.md)
 - [Enhanced Unicode Engine validation](./docs/ENHANCED_UNICODE_ENGINE_VALIDATION.md)
-- [Enhanced Unicode Engine v0.1.0 release notes](./docs/ENHANCED_UNICODE_ENGINE_RELEASE_NOTES_V0.1.0.md)
+- [Enhanced Unicode Engine v0.2.0 release notes](./docs/ENHANCED_UNICODE_ENGINE_RELEASE_NOTES_V0.2.0.md)
 - [Roadmap](./docs/ROADMAP.md)
 - [Troubleshooting](./docs/TROUBLESHOOTING.md)
 - [Typsastra v0.7.0 release notes](./docs/RELEASE_NOTES_V0.7.0.md)

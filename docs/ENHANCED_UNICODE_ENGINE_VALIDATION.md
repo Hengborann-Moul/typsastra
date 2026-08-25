@@ -86,7 +86,7 @@ engine release, or a compatible local build, for an explicit **Export PDF**
 operation:
 
 1. Download and extract the package for the current platform from the
-   `enhanced-unicode-v0.1.0` release, or build the pinned enhanced Typst fork.
+   `enhanced-unicode-v0.2.0` release, or build the pinned enhanced Typst fork.
 2. Open **Settings > Developer** and enable **Developer mode**.
 3. Under **Enhanced Unicode PDF engine**, choose the local executable.
 4. Leave **Use for PDF export** enabled and export the document normally.
@@ -165,16 +165,45 @@ For every viewer, manually record:
 
 This matrix describes viewer compatibility; a viewer failure does not by itself prove that the exported PDF is invalid. A regression shared by multiple independent viewers is stronger evidence of an export defect.
 
-## Engine release 0.1.0
+## Automated PDF standards validation
 
-The first reproducible engine packages are defined by
-[`release-v0.1.0.json`](../toolchains/enhanced-unicode/release-v0.1.0.json) and
+The engine release workflow compiles the standards fixture with every PDF
+standard supported by the pinned Typst revision:
+
+- PDF 1.4, 1.5, 1.6, 1.7, and 2.0;
+- PDF/A-1a, PDF/A-1b, PDF/A-2a, PDF/A-2b, PDF/A-2u, PDF/A-3a, PDF/A-3b,
+  PDF/A-3u, PDF/A-4, PDF/A-4e, and PDF/A-4f;
+- PDF/UA-1; and
+- combined PDF/A-2a+PDF/UA-1 and PDF/A-3a+PDF/UA-1 output.
+
+Base PDF versions are checked against their binary headers on every release
+platform. The Linux x64 release package is additionally validated with
+veraPDF 1.30.2, pinned by archive checksum. The release cannot be published
+unless veraPDF reports every claimed PDF/A and PDF/UA profile compliant.
+
+Run the same matrix locally with:
+
+```powershell
+python scripts/validate-enhanced-unicode-pdf-standards.py `
+  --typst C:\path\to\typst.exe `
+  --output-dir $env:TEMP\typsastra-pdf-standards `
+  --verapdf C:\path\to\verapdf.bat
+```
+
+Conformance validation complements, rather than replaces, the viewer matrix:
+standards validators test the PDF's declared structure while manual viewer
+tests expose selection, search, clipboard, and geometry interoperability.
+
+## Engine release 0.2.0
+
+The current reproducible engine packages are defined by
+[`release-v0.2.0.json`](../toolchains/enhanced-unicode/release-v0.2.0.json) and
 published from this repository under the scoped tag
-`enhanced-unicode-v0.1.0`. Keeping the artifacts in the Typsastra repository
+`enhanced-unicode-v0.2.0`. Keeping the artifacts in the Typsastra repository
 avoids presenting the Typst fork as an unrelated or official upstream binary.
 
 The release remains explicitly opt-in and separate from Tinymist. It is used
 only for explicit PDF exports and never replaces live preview, LSP,
 autocomplete, diagnostics, or source synchronization. See the
-[v0.1.0 engine release notes](ENHANCED_UNICODE_ENGINE_RELEASE_NOTES_V0.1.0.md)
+[v0.2.0 engine release notes](ENHANCED_UNICODE_ENGINE_RELEASE_NOTES_V0.2.0.md)
 for pinned source revisions, supported packages, and current validation scope.

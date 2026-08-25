@@ -12,7 +12,7 @@ function spec(): EnhancedUnicodeReleaseSpec {
     schemaVersion: 1,
     engine: {
       name: "Typsastra Enhanced Unicode Engine",
-      version: "0.1.0",
+      version: "0.2.0",
       typstVersion: "0.15.1",
       typstRepository: "Sovichea/typst",
       typstCommit: "e".repeat(40),
@@ -22,13 +22,13 @@ function spec(): EnhancedUnicodeReleaseSpec {
     },
     release: {
       repository: "Sovichea/typsastra",
-      tag: "enhanced-unicode-v0.1.0",
+      tag: "enhanced-unicode-v0.2.0",
       notes: "docs/notes.md",
     },
     targets: [
       {
         target: "example-target",
-        archive: "typsastra-enhanced-unicode-v0.1.0-example-target.zip",
+        archive: "typsastra-enhanced-unicode-v0.2.0-example-target.zip",
         executable: "typst",
       },
     ],
@@ -54,7 +54,7 @@ describe("Enhanced Unicode release manifest", () => {
       executable: "typst",
       bytes: 14,
       sha256: "707748c22ceaddb5a1057403c94a835994a72bbebfbec8bca82c0beb00fa8313",
-      downloadUrl: `https://github.com/Sovichea/typsastra/releases/download/enhanced-unicode-v0.1.0/${archive}`,
+      downloadUrl: `https://github.com/Sovichea/typsastra/releases/download/enhanced-unicode-v0.2.0/${archive}`,
     });
   });
 
@@ -63,7 +63,7 @@ describe("Enhanced Unicode release manifest", () => {
     await expect(createEnhancedUnicodeReleaseManifest(spec(), directory)).rejects.toThrow("Missing release archive");
 
     const mismatched = spec();
-    mismatched.release.tag = "enhanced-unicode-v0.2.0";
+    mismatched.release.tag = "enhanced-unicode-v0.1.0";
     await expect(createEnhancedUnicodeReleaseManifest(mismatched, directory)).rejects.toThrow("does not match");
   });
 });
