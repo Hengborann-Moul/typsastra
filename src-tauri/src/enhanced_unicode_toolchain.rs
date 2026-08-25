@@ -12,10 +12,10 @@ use crate::toolchain::ToolchainInstallProgress;
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
-const MANIFEST_URL: &str = "https://github.com/Sovichea/typsastra/releases/download/enhanced-unicode-v0.1.0/enhanced-unicode-manifest.json";
+const MANIFEST_URL: &str = "https://github.com/Sovichea/typsastra/releases/download/enhanced-unicode-v0.2.0/enhanced-unicode-manifest.json";
 const RELEASE_REPOSITORY: &str = "Sovichea/typsastra";
-const RELEASE_TAG: &str = "enhanced-unicode-v0.1.0";
-const ENGINE_VERSION: &str = "0.1.0";
+const RELEASE_TAG: &str = "enhanced-unicode-v0.2.0";
+const ENGINE_VERSION: &str = "0.2.0";
 const DOWNLOAD_ATTEMPTS: usize = 3;
 const MAX_DOWNLOAD_BYTES: u64 = 128 * 1024 * 1024;
 const DOWNLOAD_STALL_TIMEOUT: Duration = Duration::from_secs(60);
@@ -31,38 +31,38 @@ struct PinnedAsset {
 const PINNED_ASSETS: &[PinnedAsset] = &[
     PinnedAsset {
         target: "x86_64-pc-windows-msvc",
-        archive: "typsastra-enhanced-unicode-v0.1.0-x86_64-pc-windows-msvc.zip",
+        archive: "typsastra-enhanced-unicode-v0.2.0-x86_64-pc-windows-msvc.zip",
         executable: "typst.exe",
-        bytes: 23_305_822,
-        sha256: "8619a3bc3d0c9a013b7c777f7bb9054a900f4ff3b3c974c1a0dcd8a8a93e68f3",
+        bytes: 23_311_245,
+        sha256: "32b51356c8655925b6780c508afa00688dbf6d7203d6551150b5d70f084c909b",
     },
     PinnedAsset {
         target: "x86_64-unknown-linux-gnu",
-        archive: "typsastra-enhanced-unicode-v0.1.0-x86_64-unknown-linux-gnu.zip",
+        archive: "typsastra-enhanced-unicode-v0.2.0-x86_64-unknown-linux-gnu.zip",
         executable: "typst",
-        bytes: 23_386_480,
-        sha256: "b460c0bdd23eea7e5b28a9a6949811b34e5e5b434a7bab657f058d825d870ca9",
+        bytes: 23_389_188,
+        sha256: "7264f3b79e59b53f5c808087ad58989629b22aa9eb0a56cadabb568317ba1088",
     },
     PinnedAsset {
         target: "aarch64-unknown-linux-gnu",
-        archive: "typsastra-enhanced-unicode-v0.1.0-aarch64-unknown-linux-gnu.zip",
+        archive: "typsastra-enhanced-unicode-v0.2.0-aarch64-unknown-linux-gnu.zip",
         executable: "typst",
-        bytes: 22_494_419,
-        sha256: "b6b4a0ca14ff85f283ee9b0040f1da3bc9ab9efdde559f8938f3ab92dcc859e9",
+        bytes: 22_492_025,
+        sha256: "1873246967bf863d5aba2c4fb5d62fc9ba8da09aed60e2a8090102399eefccfd",
     },
     PinnedAsset {
         target: "x86_64-apple-darwin",
-        archive: "typsastra-enhanced-unicode-v0.1.0-x86_64-apple-darwin.zip",
+        archive: "typsastra-enhanced-unicode-v0.2.0-x86_64-apple-darwin.zip",
         executable: "typst",
-        bytes: 22_924_192,
-        sha256: "e19ddc918a15a14756aabbb86d72ec2edab9835d3ba1f9a9f0c1ee94eba14690",
+        bytes: 22_925_826,
+        sha256: "3df498bd9a9daf683929f4be167a25859fd7ea70f1302b2ea477d1a792d6ba29",
     },
     PinnedAsset {
         target: "aarch64-apple-darwin",
-        archive: "typsastra-enhanced-unicode-v0.1.0-aarch64-apple-darwin.zip",
+        archive: "typsastra-enhanced-unicode-v0.2.0-aarch64-apple-darwin.zip",
         executable: "typst",
-        bytes: 22_046_062,
-        sha256: "62428ddfb1bacaa6ee201701aab83733abe07c89c72b934a35d645202bbf6a58",
+        bytes: 22_054_316,
+        sha256: "52fd8d0db4b0a03380305e14bec7171bf01e6a977c6d806848e64d21c170b445",
     },
 ];
 
@@ -141,7 +141,7 @@ fn platform_target() -> Result<&'static str, String> {
         ("macos", "x86_64") => Ok("x86_64-apple-darwin"),
         ("macos", "aarch64") => Ok("aarch64-apple-darwin"),
         (os, arch) => Err(format!(
-            "Enhanced Unicode Engine 0.1.0 is not published for {os} {arch}. Choose a compatible local executable instead."
+            "Enhanced Unicode Engine {ENGINE_VERSION} is not published for {os} {arch}. Choose a compatible local executable instead."
         )),
     }
 }
@@ -190,24 +190,25 @@ fn select_asset(manifest: &ReleaseManifest) -> Result<ManifestAsset, String> {
         || manifest.release.repository != RELEASE_REPOSITORY
         || manifest.release.tag != RELEASE_TAG
     {
-        return Err(
-            "The Enhanced Unicode release manifest does not describe the trusted 0.1.0 release."
-                .into(),
-        );
+        return Err(format!(
+            "The Enhanced Unicode release manifest does not describe the trusted {ENGINE_VERSION} release."
+        ));
     }
     let target = platform_target()?;
     let pinned = PINNED_ASSETS
         .iter()
         .find(|asset| asset.target == target)
         .ok_or_else(|| {
-            format!("Enhanced Unicode Engine 0.1.0 has no pinned asset for {target}.")
+            format!("Enhanced Unicode Engine {ENGINE_VERSION} has no pinned asset for {target}.")
         })?;
     let asset = manifest
         .assets
         .iter()
         .find(|asset| asset.target == target)
         .cloned()
-        .ok_or_else(|| format!("Enhanced Unicode Engine 0.1.0 has no asset for {target}."))?;
+        .ok_or_else(|| {
+            format!("Enhanced Unicode Engine {ENGINE_VERSION} has no asset for {target}.")
+        })?;
     if asset.archive != pinned.archive
         || asset.executable != pinned.executable
         || asset.bytes != pinned.bytes
