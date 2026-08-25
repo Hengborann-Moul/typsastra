@@ -23,7 +23,7 @@ page, then follow the narrowly scoped workaround in the
 [installation guide](./docs/INSTALL.md#open-an-unsigned-macos-release).
 Do not disable Gatekeeper globally.
 
-[![Release](https://img.shields.io/github/v/release/Sovichea/typsastra?include_prereleases)](https://github.com/Sovichea/typsastra/releases)
+[![Release](https://img.shields.io/github/v/release/Sovichea/typsastra?include_prereleases)](https://github.com/Sovichea/typsastra/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![Built with Tauri](https://img.shields.io/badge/Built%20with-Tauri-24C8DB)](https://tauri.app/)
 
