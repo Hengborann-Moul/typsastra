@@ -59,6 +59,13 @@ Devanagari, Thai, Lao, mixed-script text, punctuation, search, selection, and
 clipboard workflows. The new architecture is intended to improve extraction
 scalability without changing document layout.
 
+The [v0.2.0 prose benchmark](ENHANCED_UNICODE_ENGINE_BENCHMARKS_V0.2.0.md)
+shows that the size benefit is workload-dependent rather than universal.
+Unique Khmer and Devanagari prose becomes substantially smaller, while the
+current conservative serializer makes English and Arabic output larger. See
+the [v0.3.0 implementation plan](ENHANCED_UNICODE_ENGINE_V0.3.0_IMPLEMENTATION_PLAN.md)
+for the proposed text-state, positioning, RTL, and controlled-benchmark work.
+
 ## Scope
 
 This optional engine is used only for explicit PDF export. Tinymist remains
