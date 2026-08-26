@@ -133,6 +133,8 @@ describe("cross-platform scrollbar design", () => {
     expect(source).toContain('"internal-reference"');
     expect(source).toContain(".preview-link-modifier .annotation-link.internal-reference");
     expect(source).toContain(".preview-link-modifier .annotation-link.external-link");
+    expect(source).toContain("text-decoration:none;pointer-events:none");
+    expect(source).toContain(".preview-link-modifier .annotation-link,.annotation-link.draft-image-link{pointer-events:auto}");
     expect(source).toContain("box-shadow:inset 3px 0");
     expect(source).toContain("outline:2px dashed");
     expect(source).toContain("this.previewPointerInside && this.previewLinkModifierHeld");

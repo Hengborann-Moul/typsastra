@@ -995,7 +995,8 @@ export class PreviewFrame {
       :root[data-preview-color-mode="inverted"] .pdf-page-canvas-original{filter:invert(1)}
       .forward-sync-ripple{position:fixed;z-index:2147483647;box-sizing:border-box;width:18px;height:18px;margin:-9px 0 0 -9px;border:2px solid ${TYPSASTRA_GREEN};border-radius:999px;background:${TYPSASTRA_GREEN_RIPPLE_FILL};box-shadow:0 0 0 0 ${TYPSASTRA_GREEN_RIPPLE_SHADOW};pointer-events:none;animation:typsastra-forward-ripple 900ms ease-out forwards}
       @keyframes typsastra-forward-ripple{0%{opacity:0;transform:scale(.55);box-shadow:0 0 0 0 rgba(61,180,137,.38)}12%{opacity:1}100%{opacity:0;transform:scale(3.1);box-shadow:0 0 0 14px rgba(61,180,137,0)}}
-      .annotation-link{position:absolute;z-index:2;display:block;box-sizing:border-box;cursor:default;text-decoration:none}
+      .annotation-link{position:absolute;z-index:2;display:block;box-sizing:border-box;cursor:default;text-decoration:none;pointer-events:none}
+      .preview-link-modifier .annotation-link,.annotation-link.draft-image-link{pointer-events:auto}
       .preview-link-modifier .annotation-link.internal-reference{cursor:pointer;background:color-mix(in srgb,var(--preview-ui-accent) 15%,transparent);box-shadow:inset 3px 0 color-mix(in srgb,var(--preview-ui-accent) 88%,var(--preview-ui-header))}
       .preview-link-modifier .annotation-link.external-link{cursor:pointer;outline:2px dashed color-mix(in srgb,var(--preview-ui-accent) 78%,var(--preview-ui-header));outline-offset:-2px;background:color-mix(in srgb,var(--preview-ui-accent) 34%,transparent)}
       .preview-link-modifier .annotation-link.internal-reference:hover{outline:2px solid color-mix(in srgb,var(--preview-ui-accent) 88%,var(--preview-ui-header));outline-offset:-2px;background:color-mix(in srgb,var(--preview-ui-accent) 34%,transparent)}

@@ -94,6 +94,14 @@ test("standalone PDF drag selection scrolls beyond viewport edges", () => {
   expect(frameSource).toContain("this.stopStandalonePdfSelectionAutoScroll()");
 });
 
+test("standalone PDF links release text selection until Ctrl or Cmd is held", () => {
+  expect(frameSource).toContain("text-decoration:none;pointer-events:none");
+  expect(frameSource).toContain(
+    ".preview-link-modifier .annotation-link,.annotation-link.draft-image-link{pointer-events:auto}",
+  );
+  expect(frameSource).toContain('event.target as Element | null)?.closest("#pdf-search-panel,.annotation-link")');
+});
+
 test("overlapping standalone PDF selection boxes share one tint", () => {
   expect(frameSource).toContain(
     ".pdf-selection-layer{position:absolute;inset:0;z-index:3;overflow:hidden;opacity:.52;pointer-events:none}",
