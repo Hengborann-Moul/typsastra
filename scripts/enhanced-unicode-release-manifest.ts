@@ -102,7 +102,7 @@ export async function createEnhancedUnicodeReleaseManifest(
 }
 
 async function main(): Promise<void> {
-  const specPath = resolve(process.argv[2] ?? "toolchains/enhanced-unicode/release-v0.3.0.json");
+  const specPath = resolve(process.argv[2] ?? "toolchains/enhanced-unicode/release-v0.3.1.json");
   const assetsDirectory = resolve(process.argv[3] ?? "release-assets");
   const outputPath = resolve(process.argv[4] ?? join(assetsDirectory, "enhanced-unicode-manifest.json"));
   const spec = await Bun.file(specPath).json() as EnhancedUnicodeReleaseSpec;

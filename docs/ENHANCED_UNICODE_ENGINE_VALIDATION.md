@@ -86,7 +86,7 @@ engine release, or a compatible local build, for an explicit **Export PDF**
 operation:
 
 1. Download and extract the package for the current platform from the
-   `enhanced-unicode-v0.3.0` release, or build the pinned enhanced Typst fork.
+   `enhanced-unicode-v0.3.1` release, or build the pinned enhanced Typst fork.
 2. Open **Settings > Developer** and enable **Developer mode**.
 3. Under **Enhanced Unicode PDF engine**, choose the local executable.
 4. Leave **Use for PDF export** enabled and export the document normally.
@@ -194,16 +194,16 @@ Conformance validation complements, rather than replaces, the viewer matrix:
 standards validators test the PDF's declared structure while manual viewer
 tests expose selection, search, clipboard, and geometry interoperability.
 
-## Engine release 0.3.0
+## Engine release 0.3.1
 
 The current reproducible engine packages are defined by
-[`release-v0.3.0.json`](../toolchains/enhanced-unicode/release-v0.3.0.json) and
+[`release-v0.3.1.json`](../toolchains/enhanced-unicode/release-v0.3.1.json) and
 published from this repository under the scoped tag
-`enhanced-unicode-v0.3.0`. Keeping the artifacts in the Typsastra repository
+`enhanced-unicode-v0.3.1`. Keeping the artifacts in the Typsastra repository
 avoids presenting the Typst fork as an unrelated or official upstream binary.
 
 The release remains explicitly opt-in and separate from Tinymist. It is used
 only for explicit PDF exports and never replaces live preview, LSP,
 autocomplete, diagnostics, or source synchronization. See the
-[v0.3.0 engine release notes](ENHANCED_UNICODE_ENGINE_RELEASE_NOTES_V0.3.0.md)
+[v0.3.1 engine release notes](ENHANCED_UNICODE_ENGINE_RELEASE_NOTES_V0.3.1.md)
 for pinned source revisions, supported packages, and current validation scope.
