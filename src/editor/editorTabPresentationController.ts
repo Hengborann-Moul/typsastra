@@ -39,7 +39,7 @@ export interface EditorTabPresentationDependencies {
   workspaceLoading(): boolean;
   logSyntax(message: string): void;
   updatePreviewActionsToolbar(path: string): void;
-  renderNonTextPlaceholder(path: string, unsupported: boolean): void;
+  renderNonTextPlaceholder(path: string, unsupported: boolean, source?: string): void;
   renderInteractiveImageViewer(source: string): void;
   loadPdfPath(path: string): void;
   applyFoldRanges(ranges: { from: number; to: number }[]): void;
@@ -83,7 +83,7 @@ export class EditorTabPresentationController {
     codeRenderPane?.classList.add("hidden");
     imageViewerPane?.classList.remove("hidden");
     if (imageViewerImg) imageViewerImg.style.display = "none";
-    this.deps.renderNonTextPlaceholder(path, unsupportedFile);
+    this.deps.renderNonTextPlaceholder(path, unsupportedFile, tab.content);
     document.getElementById("wysiwym-editor-pane")?.classList.add("hidden");
     this.deps.imagePreview().clear();
     beforePreviewActivation();

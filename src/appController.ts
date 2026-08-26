@@ -237,7 +237,7 @@ export class TypsastraWorkspaceController {
       message,
     }),
     updatePreviewActionsToolbar: path => this.updatePreviewActionsToolbar(path),
-    renderNonTextPlaceholder: (path, unsupported) => this.renderNonTextEditorPlaceholder(path, unsupported),
+    renderNonTextPlaceholder: (path, unsupported, source) => this.renderNonTextEditorPlaceholder(path, unsupported, source),
     renderInteractiveImageViewer: source => this.renderInteractiveImageViewer(source),
     loadPdfPath: path => { void this.loadPdfPath(path, path); },
     applyFoldRanges: ranges => this.applyFoldRanges(ranges),
@@ -2487,6 +2487,9 @@ export class TypsastraWorkspaceController {
 
   private updatePreviewPageStatus(status: PreviewPageStatus): void {
     this.previewUiController.updatePageStatus(status);
+    if (this.activeFilePath) {
+      this.editorFileGuardController.updatePdfPageCount(this.activeFilePath, status.pageCount);
+    }
   }
 
   private updatePreviewActionsToolbar(path: string | null): void {
@@ -2681,8 +2684,8 @@ export class TypsastraWorkspaceController {
     return this.previewContentController.disabledPreviewMessage();
   }
 
-  private renderNonTextEditorPlaceholder(path: string, unsupported: boolean): void {
-    this.editorFileGuardController.renderNonTextPlaceholder(path, unsupported);
+  private renderNonTextEditorPlaceholder(path: string, unsupported: boolean, source?: string): void {
+    this.editorFileGuardController.renderNonTextPlaceholder(path, unsupported, source);
   }
 
   private showLargeFileConfirmation(tab: EditorTab, notice: LargeFileOpeningNotice): void {

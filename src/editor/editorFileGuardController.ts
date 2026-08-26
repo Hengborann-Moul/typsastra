@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { message } from "@tauri-apps/plugin-dialog";
-import { fileExtension, isTypstDocumentPath } from "../platform/fileTypes";
+import { fileExtension, isBinaryImagePath, isTypstDocumentPath } from "../platform/fileTypes";
 import { fileNameFromPath } from "../platform/paths";
 import type { PreviewFrame } from "../preview/previewFrame";
 import { formatFileSize, type LargeFileOpeningNotice } from "../workspace/largeFileOpening";
@@ -22,13 +22,16 @@ export class EditorFileGuardController {
 
   constructor(private readonly deps: EditorFileGuardDependencies) {}
 
-  renderNonTextPlaceholder(path: string, unsupported: boolean): void {
+  renderNonTextPlaceholder(path: string, unsupported: boolean, source?: string): void {
     const info = document.getElementById("image-viewer-info");
     if (!info) return;
 
     const placeholder = document.createElement("div");
     placeholder.className = "preview-disabled-placeholder editor-file-placeholder";
-    const isPdf = fileExtension(path) === "pdf";
+    placeholder.dataset.filePath = path;
+    const extension = fileExtension(path);
+    const isPdf = extension === "pdf";
+    const isImage = isBinaryImagePath(path);
 
     const icon = document.createElement("div");
     icon.className = "preview-disabled-icon";
@@ -36,7 +39,13 @@ export class EditorFileGuardController {
 
     const title = document.createElement("div");
     title.className = "preview-disabled-title";
-    title.textContent = isPdf ? "PDF Document" : (unsupported ? "Unsupported File" : "Binary File");
+    title.textContent = isPdf
+      ? "PDF Document"
+      : isImage
+        ? "Image File"
+        : unsupported
+          ? "Unsupported File"
+          : "Binary File";
 
     const fileName = document.createElement("div");
     fileName.className = "editor-file-placeholder-name";
@@ -46,11 +55,54 @@ export class EditorFileGuardController {
     description.className = "preview-disabled-msg";
     description.textContent = isPdf
       ? "This document is displayed in the live preview pane."
-      : unsupported
-        ? "This file format cannot be displayed in Typsastra."
-        : "Cannot load raw binary in the text editor.";
+      : isImage
+        ? "This image is displayed in the interactive preview pane."
+        : unsupported
+          ? "This file format cannot be displayed in Typsastra."
+          : "Cannot load raw binary in the text editor.";
 
-    placeholder.append(icon, title, fileName, description);
+    const metadata = document.createElement("dl");
+    metadata.className = "editor-file-metadata";
+    const addMetadata = (label: string, value: string, key?: string): HTMLElement => {
+      const row = document.createElement("div");
+      const term = document.createElement("dt");
+      const detail = document.createElement("dd");
+      term.textContent = label;
+      detail.textContent = value;
+      if (key) detail.dataset.fileMetadata = key;
+      row.append(term, detail);
+      metadata.append(row);
+      return detail;
+    };
+    addMetadata("Type", fileTypeLabel(extension, isPdf, isImage));
+    const size = addMetadata("Size", "Loading…", "size");
+    if (isPdf) addMetadata("Pages", "Loading…", "pages");
+    if (isImage) {
+      const dimensions = addMetadata("Dimensions", "Loading…", "dimensions");
+      if (source) {
+        const image = new Image();
+        image.addEventListener("load", () => {
+          if (placeholder.isConnected) {
+            dimensions.textContent = `${image.naturalWidth.toLocaleString()} × ${image.naturalHeight.toLocaleString()} px`;
+          }
+        }, { once: true });
+        image.addEventListener("error", () => {
+          if (placeholder.isConnected) dimensions.textContent = "Unavailable";
+        }, { once: true });
+        image.src = source;
+      } else {
+        dimensions.textContent = "Unavailable";
+      }
+    }
+    addMetadata("Location", path, "location");
+
+    void invoke<number>("workspace_file_size", { path }).then(bytes => {
+      if (placeholder.isConnected) size.textContent = formatFileSize(bytes);
+    }).catch(() => {
+      if (placeholder.isConnected) size.textContent = "Unavailable";
+    });
+
+    placeholder.append(icon, title, fileName, description, metadata);
     if (unsupported || isPdf) {
       const openButton = document.createElement("button");
       openButton.type = "button";
@@ -60,6 +112,13 @@ export class EditorFileGuardController {
       placeholder.appendChild(openButton);
     }
     info.replaceChildren(placeholder);
+  }
+
+  updatePdfPageCount(path: string, pageCount: number): void {
+    const placeholder = document.querySelector<HTMLElement>(".editor-file-placeholder[data-file-path]");
+    if (!placeholder || placeholder.dataset.filePath !== path) return;
+    const pages = placeholder.querySelector<HTMLElement>('[data-file-metadata="pages"]');
+    if (pages) pages.textContent = pageCount.toLocaleString();
   }
 
   showLargeFileConfirmation(tab: EditorTab, notice: LargeFileOpeningNotice): void {
@@ -234,4 +293,10 @@ export class EditorFileGuardController {
       if (button?.isConnected) button.disabled = false;
     }
   }
+}
+
+function fileTypeLabel(extension: string, isPdf: boolean, isImage: boolean): string {
+  if (isPdf) return "PDF document";
+  const format = extension ? extension.toUpperCase() : "Unknown";
+  return isImage ? `${format} image` : `${format} file`;
 }

@@ -4965,13 +4965,61 @@ button.welcome-item:disabled {
 }
 
 .editor-file-placeholder-name {
-  max-width: min(420px, 80vw);
+  max-width: min(520px, 80vw);
   margin: 0 0 8px;
   overflow: hidden;
   color: var(--ui-text);
   font: 12px var(--editor-code-font), monospace;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.editor-file-metadata {
+  display: grid;
+  width: min(520px, 80vw);
+  margin: 6px 0 0;
+  overflow: hidden;
+  border: 1px solid var(--ui-border);
+  border-radius: 5px;
+  background: var(--ui-hover);
+  text-align: left;
+}
+
+.editor-file-metadata > div {
+  display: grid;
+  grid-template-columns: minmax(88px, 0.32fr) minmax(0, 1fr);
+  min-height: 34px;
+  border-bottom: 1px solid var(--ui-border);
+}
+
+.editor-file-metadata > div:last-child {
+  border-bottom: 0;
+}
+
+.editor-file-metadata dt,
+.editor-file-metadata dd {
+  display: flex;
+  align-items: center;
+  margin: 0;
+  padding: 7px 10px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.editor-file-metadata dt {
+  color: var(--ui-header-text);
+  font-weight: 600;
+}
+
+.editor-file-metadata dd {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--ui-text);
+}
+
+.editor-file-metadata [data-file-metadata="location"] {
+  font-family: var(--editor-code-font), monospace;
+  user-select: text;
 }
 
 .editor-file-placeholder-action {
