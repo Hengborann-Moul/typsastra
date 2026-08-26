@@ -10,12 +10,12 @@ permissions:
   contents: write
 
 env:
-  ENGINE_VERSION: "0.2.0"
-  ENGINE_TAG: "enhanced-unicode-v0.2.0"
+  ENGINE_VERSION: "0.3.0"
+  ENGINE_TAG: "enhanced-unicode-v0.3.0"
   ENGINE_REPOSITORY: "Sovichea/typst"
-  ENGINE_COMMIT: "ed70c365edc912efd0f30cbce8ddbbbc0551243e"
+  ENGINE_COMMIT: "102a9d2b473da71f45122afb72dba512022993c6"
   KRILLA_REPOSITORY: "Sovichea/krilla"
-  KRILLA_COMMIT: "0cf4da659c6bae966fcec71e26d6d937185c95c9"
+  KRILLA_COMMIT: "d05158cf3ebead248745f846d0397e84dfb9f2d0"
   EXPECTED_TYPST_VERSION: "0.15.1"
 
 jobs:
@@ -247,7 +247,7 @@ jobs:
       - name: Generate checksummed release manifest
         run: >-
           bun scripts/enhanced-unicode-release-manifest.ts
-          toolchains/enhanced-unicode/release-v0.2.0.json
+          toolchains/enhanced-unicode/release-v0.3.0.json
           release-assets
           release-assets/enhanced-unicode-manifest.json
 
@@ -256,7 +256,7 @@ jobs:
         with:
           tag_name: ${{ env.ENGINE_TAG }}
           name: Typsastra Enhanced Unicode Engine v${{ env.ENGINE_VERSION }}
-          body_path: docs/ENHANCED_UNICODE_ENGINE_RELEASE_NOTES_V0.2.0.md
+          body_path: docs/ENHANCED_UNICODE_ENGINE_RELEASE_NOTES_V0.3.0.md
           draft: false
           prerelease: false
           fail_on_unmatched_files: true
