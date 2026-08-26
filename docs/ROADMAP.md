@@ -175,10 +175,11 @@ manageable without changing the portable Typst source model.
   hover overlays, cache behavior, and known layout and retained-memory
   limitations.
 
-## Deferred autocomplete snippets (moved to v0.8.0)
+## Deferred autocomplete snippets
 
 v0.6.3 added contextual starter values and type-aware Tab stops. The remaining
-broader snippet library was not released as v0.6.4 and now belongs to v0.8.0:
+broader snippet library is deferred until it can fit a focused future milestone
+without delaying release stabilization:
 
 - Add commonly used set rules, functions, paragraph formatting, figures,
   images, tables, grids, references, and mathematics constructs incrementally.
@@ -221,54 +222,46 @@ against the repository changes since v0.6.3 rather than the earlier plan.
 The Markdown scope, security boundaries, lifecycle, and release gates are in
 the [v0.7.0 Markdown live preview implementation plan](./V0_7_0_MARKDOWN_LIVE_PREVIEW_IMPLEMENTATION_PLAN.md).
 
-## v0.8.0 — portable full and active-file preview
+## v0.8.0 — Unicode PDF reliability and interoperability
 
-Build the portable preview architecture needed for responsive work on both
-individual chapters and complete long documents.
+Stabilize the end-to-end multilingual PDF workflow introduced after v0.7.0
+without adding another large editor or preview-root architecture.
 
-- Add explicit **Full Document** and **Active File** preview modes.
-- Restrict Active File preview to the configured main file and documents
-  directly or transitively reachable through `#include`.
-- Replace the preview with an unavailable-state message for import-only,
-  unrelated, and unsupported files instead of showing stale output.
-- Create visible, standard Typst preview entry points backed by a common
-  template; never require hidden `.typsastra` source to compile them.
-- Warn when an included file has no common formatting entry point or no
-  explicit preceding page break, while allowing intentional continuous flow.
-- Replace rather than retain the full-document Tinymist context so Active File
-  mode delivers a measurable, bounded memory reduction.
-- Provide a lightweight project reference catalog for completion and source
-  navigation in isolated previews.
-- Render known cross-chapter references as portable placeholders while keeping
-  unknown or misspelled labels as errors.
-- Preserve and clearly communicate the last successful preview when switching
-  preview scope or when an isolated preview fails to compile.
-- Publish qualification results for migration, source synchronization,
-  reference behavior, repeated scope switching, compilation latency, and
-  bounded memory.
+- Productize the optional, managed Enhanced Unicode Engine v0.3.1 for explicit
+  PDF export while keeping Tinymist authoritative for live services.
+- Lock the multilingual extraction, PDF-standard, and wide repeated-fill
+  regressions into engine release validation on every supported platform.
+- Harden standalone PDFium rendering, cancellation, document replacement,
+  search, semantic selection, links, outline navigation, zoom, and docking.
+- Qualify plain and formatted clipboard reconstruction across complex scripts,
+  paragraphs, boxes, and tables.
+- Record independent-viewer interoperability instead of inferring it from one
+  extraction library.
+- Make engine installation, validation, repair, export provenance, and failure
+  recovery explicit and actionable.
+- Measure first-page latency, zoom recovery, rendered-page residency, repeated
+  open/close behavior, and native memory in release builds.
+- Preserve ordinary Tinymist export, PDF.js live preview, Markdown, project
+  interchange, Khmer, Lao, and global grapheme behavior through regression
+  gates.
 
-Complete resource-workflow work deferred from the original v0.7.0 plan:
+The work and acceptance criteria are in the
+[v0.8.0 Unicode PDF Reliability implementation plan](./V0_8_0_UNICODE_PDF_RELIABILITY_IMPLEMENTATION_PLAN.md).
+Release evidence is tracked separately in the
+[v0.8.0 qualification checklist](./V0_8_0_RELEASE_QUALIFICATION.md).
 
-- Add confirmed, atomic, recoverable replacement of an original image and a
-  choice between rewriting one selected static reference or all exact static
-  references. v0.7.0 saves optimized copies and can update all indexed exact
-  references only.
-- Revisit document-language inheritance and provider assignment without
-  weakening deterministic routing.
-- Expand toolchain status into validation and recovery workflows, and add
-  font-dependency health for missing, moved, ambiguous, or unavailable fonts.
-- Publish resource-workflow benchmarks covering image operations, language
-  configuration, toolchain behavior, and Markdown preview.
-- Continue the curated portable autocomplete snippet library beyond the
-  contextual starter values delivered in v0.6.3.
+Portable Full Document/Active File preview, a broader font manager, resource
+workflow expansion, language-provider inheritance redesign, and broad snippet
+expansion are not part of v0.8.0. The portable-preview architecture remains in
+its [deferred implementation plan](./V0_8_0_ACTIVE_FILE_PREVIEW_IMPLEMENTATION_PLAN.md)
+and will receive a release number only when it is scheduled.
 
-The architecture, migration, reference, memory, and qualification work is in
-the [v0.8.0 Active File preview implementation plan](./V0_8_0_ACTIVE_FILE_PREVIEW_IMPLEMENTATION_PLAN.md).
+## Future pre-1.0 milestone — right-to-left writing
 
-## v0.9.0 — pre-release hardening and right-to-left writing
-
-Introduce first-class right-to-left (RTL) editing as a pre-release milestone
-covering Arabic-family scripts, Hebrew, and mixed-direction research documents.
+Introduce first-class right-to-left (RTL) editing in a dedicated pre-1.0
+milestone covering Arabic-family scripts, Hebrew, and mixed-direction research
+documents. Its version number remains unassigned until preceding stabilization
+work is complete.
 
 - Establish an RTL conformance suite before adding custom behavior, including Arabic and Hebrew prose, combining marks, selections, cursor movement, deletion, search, copy/paste, and multi-cursor edits.
 - Support automatic, LTR, and RTL paragraph direction without reimplementing the Unicode Bidirectional Algorithm.
@@ -305,6 +298,24 @@ covering Arabic-family scripts, Hebrew, and mixed-direction research documents.
 - Signed update detection, About information, and macOS traffic-light controls.
 - Portable `.typsastra` state and font-free schema-v2 project archives.
 - Explicit Tinymist termination and restart across project ownership changes.
+
+## Pre-1.0 versioning and maturity policy
+
+Typsastra will not declare v1.0 because a particular v0.x number has been
+reached. Additional focused releases may continue through v0.10.0, v0.20.0,
+v0.99.0, or any other valid pre-1.0 version needed to reach the release gates.
+
+- Assign each v0.x release one coherent product or stabilization theme.
+- Prefer bug-fix and qualification releases over combining unrelated unfinished
+  subsystems.
+- Do not reduce acceptance criteria to fit an announced version number.
+- Move unfinished features forward rather than weakening their safety,
+  portability, performance, or interoperability contracts.
+- Promote to v1.0 only when the v1.0 implementation plan's data-safety,
+  migration, accessibility, platform, packaging, project, and long-document
+  gates pass in release candidates.
+- Treat semantic-version progression as communication, not a deadline or a
+  maturity score.
 
 ## v1.0 priorities
 
@@ -347,6 +358,7 @@ The long-term research tasks and gates are in the [v2 implementation plan](./V2_
 ## Current release status
 
 Typsastra is beta software. The latest release is v0.7.0; see the
-[release notes](./RELEASE_NOTES_V0.7.0.md). Planned development continues with
-v0.8.0 portable preview scopes and deferred resource-workflow refinements,
-followed by v0.9.0 prerelease RTL hardening.
+[release notes](./RELEASE_NOTES_V0.7.0.md). Current development targets v0.8.0
+Unicode PDF reliability and interoperability. Later pre-1.0 milestones remain
+unassigned until their scope is ready, and v1.0 is gated by demonstrated
+maturity rather than a predetermined version sequence.

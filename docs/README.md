@@ -56,9 +56,11 @@ the reference documents when you need exact behavior or contributor contracts.
 - [v0.5.1 implementation plan](V0_5_1_EXAMPLES_DOCUMENTATION_IMPLEMENTATION_PLAN.md)
 - [v0.6.0 Draft Preview implementation plan](V0_6_0_DRAFT_PREVIEW_IMPLEMENTATION_PLAN.md)
 - [v0.7.0 Markdown live preview implementation plan](V0_7_0_MARKDOWN_LIVE_PREVIEW_IMPLEMENTATION_PLAN.md)
-- [v0.8.0 Active File preview implementation plan](V0_8_0_ACTIVE_FILE_PREVIEW_IMPLEMENTATION_PLAN.md)
+- [v0.8.0 Unicode PDF Reliability implementation plan](V0_8_0_UNICODE_PDF_RELIABILITY_IMPLEMENTATION_PLAN.md)
+- [v0.8.0 release qualification](V0_8_0_RELEASE_QUALIFICATION.md)
+- [Deferred portable Active File preview plan](V0_8_0_ACTIVE_FILE_PREVIEW_IMPLEMENTATION_PLAN.md)
 - [v1.0 implementation plan](V1_RELEASE_IMPLEMENTATION_PLAN.md)
 
-First-class RTL editor behavior is planned for v0.9.0. Current Arabic and
-Hebrew examples demonstrate Typst rendering and text direction, not a completed
-RTL editing conformance claim.
+First-class RTL editor behavior remains a future pre-1.0 milestone. Current
+Arabic and Hebrew examples demonstrate Typst rendering and text direction, not
+a completed RTL editing conformance claim.

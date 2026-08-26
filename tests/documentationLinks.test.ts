@@ -36,4 +36,33 @@ describe("documentation links", () => {
 
     expect(missing).toEqual([]);
   });
+
+  test("current v0.8 planning remains PDF-focused and stability-gated", async () => {
+    const root = resolve(import.meta.dir, "..");
+    const roadmap = await Bun.file(resolve(root, "docs", "ROADMAP.md")).text();
+    const plan = await Bun.file(resolve(
+      root,
+      "docs",
+      "V0_8_0_UNICODE_PDF_RELIABILITY_IMPLEMENTATION_PLAN.md",
+    )).text();
+    const qualification = await Bun.file(resolve(
+      root,
+      "docs",
+      "V0_8_0_RELEASE_QUALIFICATION.md",
+    )).text();
+    const deferredPreview = await Bun.file(resolve(
+      root,
+      "docs",
+      "V0_8_0_ACTIVE_FILE_PREVIEW_IMPLEMENTATION_PLAN.md",
+    )).text();
+
+    expect(roadmap).toContain("## v0.8.0 — Unicode PDF reliability and interoperability");
+    expect(roadmap).toContain("## Pre-1.0 versioning and maturity policy");
+    expect(roadmap).not.toContain("## v0.8.0 — portable full and active-file preview");
+    expect(plan).toContain("The optional Enhanced Unicode Engine remains experimental and opt-in.");
+    expect(plan).toContain("portable Full Document and Active File preview modes");
+    expect(qualification).toContain("**In preparation.**");
+    expect(qualification).toContain("- [ ] **Approved for v0.8.0**");
+    expect(deferredPreview).toContain("**Status:** Deferred beyond v0.8.0.");
+  });
 });

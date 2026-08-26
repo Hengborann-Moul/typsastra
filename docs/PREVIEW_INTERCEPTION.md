@@ -108,7 +108,7 @@ Typsastra will continue qualifying the current PDF-on-type implementation.
 Separate SVG live-preview research is deferred until after v1.0 and is not part
 of the v0.x release path.
 
-Imported files currently preview through their configured main document. Independent standalone roots remain disabled pending the portable v0.8.0 Full Document/Active File implementation plan; `V1X-P.1` owns later qualification and hardening.
+Imported files currently preview through their configured main document. Independent standalone roots remain disabled pending a dedicated future portable Full Document/Active File milestone; that work is not part of v0.8.0.
 
 v0.5.3 profiles statically discoverable supported raster references without
 decoding or changing them. It reports aggregate image pressure and navigable

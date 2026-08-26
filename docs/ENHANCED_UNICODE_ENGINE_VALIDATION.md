@@ -85,17 +85,18 @@ Developer mode can use the enhanced `typst` executable from the Typsastra
 engine release, or a compatible local build, for an explicit **Export PDF**
 operation:
 
-1. Download and extract the package for the current platform from the
-   `enhanced-unicode-v0.3.1` release, or build the pinned enhanced Typst fork.
-2. Open **Settings > Developer** and enable **Developer mode**.
-3. Under **Enhanced Unicode PDF engine**, choose the local executable.
+1. Open **Settings > Developer** and enable **Developer mode**.
+2. Enable **Enhanced Unicode PDF engine** to download and install the pinned,
+   checksummed v0.3.1 package for the current platform.
+3. Alternatively, choose a compatible local executable built from the pinned
+   enhanced Typst fork.
 4. Leave **Use for PDF export** enabled and export the document normally.
 
-Typsastra validates that the selected file is an executable compatible with
-`typst --version` each time it is selected and again before export. The setting
-stores only its absolute local path. Version 0.1.0 remains a manual download;
-managed installation will use the checksummed release manifest in a later
-Typsastra update.
+Typsastra validates a locally selected executable with `typst --version` when
+it is selected and again before export. Managed installation verifies the
+release archive's expected byte length and SHA-256 before extracting it into
+Typsastra's application-local toolchain directory. The setting stores only the
+validated executable's absolute local path.
 
 This integration intentionally has a narrow boundary:
 
@@ -201,6 +202,11 @@ The current reproducible engine packages are defined by
 published from this repository under the scoped tag
 `enhanced-unicode-v0.3.1`. Keeping the artifacts in the Typsastra repository
 avoids presenting the Typst fork as an unrelated or official upstream binary.
+
+The release workflow also compiles
+`tests/fixtures/enhanced-unicode/wide-repeated-fill.typ` with every platform
+binary. This locks the v0.3.1 fallback for logical units that would otherwise
+exceed signed 16-bit TrueType component coordinates.
 
 The release remains explicitly opt-in and separate from Tinymist. It is used
 only for explicit PDF exports and never replaces live preview, LSP,

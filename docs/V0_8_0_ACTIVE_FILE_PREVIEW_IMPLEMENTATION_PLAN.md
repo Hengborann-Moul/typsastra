@@ -1,4 +1,9 @@
-# Typsastra v0.8.0 Active File Preview Implementation Plan
+# Deferred Portable Active File Preview Implementation Plan
+
+> **Status:** Deferred beyond v0.8.0. The filename is retained to preserve
+> existing links and planning history. No target release is assigned yet; this
+> architecture should receive a dedicated milestone rather than being combined
+> with v0.8.0 Unicode PDF stabilization or assumed to be a v1.0 prerequisite.
 
 ## Objective
 
@@ -28,14 +33,17 @@ short responsive document     -> PDF after typing pauses
 long/resource-heavy document  -> PDF on save
 ```
 
-v0.8.0 retains the qualified PDF renderer for both preview scopes. A separate
-SVG live renderer is outside this milestone and may be reconsidered only after
-v1.0 using measured compiled-output and runtime-resource budgets.
+The eventual milestone retains the qualified PDF renderer for both preview
+scopes. A separate SVG live renderer is outside this work and may be
+reconsidered only after v1.0 using measured compiled-output and runtime-resource
+budgets.
 
 ### Deferred v0.7 resource workflows
 
 The original v0.7 roadmap included work that was not part of the actual v0.7.0
-implementation. v0.8.0 also owns these explicitly separate workstreams:
+implementation. The original plan also listed these explicitly separate workstreams. They are
+not owned by the deferred portable-preview milestone and must be scheduled
+independently:
 
 - confirmed, atomic, recoverable replacement of an original image;
 - choosing one selected static image reference or all exact references when

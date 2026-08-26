@@ -82,7 +82,7 @@ jobs:
         working-directory: enhanced-typst
         run: cargo build --release --locked --package typst-cli --target "${{ matrix.target }}"
 
-      - name: Validate executable and compile Unicode fixture
+      - name: Validate executable and compile regression fixtures
         shell: bash
         run: |
           executable="enhanced-typst/target/${{ matrix.target }}/release/${{ matrix.executable }}"
@@ -93,6 +93,10 @@ jobs:
             tests/fixtures/enhanced-unicode/unicode-selection.typ \
             enhanced-unicode-smoke-test.pdf
           test -s enhanced-unicode-smoke-test.pdf
+          "${executable}" compile \
+            tests/fixtures/enhanced-unicode/wide-repeated-fill.typ \
+            enhanced-unicode-wide-fill-smoke-test.pdf
+          test -s enhanced-unicode-wide-fill-smoke-test.pdf
 
       - name: Exercise every supported PDF standard
         shell: bash

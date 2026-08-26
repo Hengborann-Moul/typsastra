@@ -15,6 +15,17 @@ test("Enhanced Unicode fixtures expose directly authored labeled cases", async (
   expect(cases.some(item => item.id === "EU-COMBINING-01")).toBe(true);
 });
 
+test("Enhanced Unicode release locks the wide repeated-fill regression", async () => {
+  const fixturePath = "tests/fixtures/enhanced-unicode/wide-repeated-fill.typ";
+  const source = await Bun.file(fixturePath).text();
+  const workflow = await Bun.file(".github/workflows/enhanced-unicode-engine-release.yml").text();
+
+  expect(source).toContain("logical component coordinate exceeds i16");
+  expect(source).toMatch(/box\(width:\s*(?:1[5-9]\d|[2-9]\d\d)mm,\s*repeat\[\.\]\)/u);
+  expect(workflow).toContain(fixturePath);
+  expect(workflow).toContain("enhanced-unicode-wide-fill-smoke-test.pdf");
+});
+
 test("Unicode validation distinguishes inferred whitespace from changed text", () => {
   expect(compactWhitespace("ភាសា ខ្មែរ")).toBe(compactWhitespace("ភាសាខ្មែរ"));
   expect(compactWhitespace("العربية")).not.toBe(compactWhitespace("ةيبرعلا"));
