@@ -116,6 +116,27 @@ export function hitTestStandalonePdfSelection(
   return best && best.distance <= maxDistance * maxDistance ? best.endpoint : null;
 }
 
+export function standalonePdfSelectionDocumentEndpoints(
+  pages: ReadonlyMap<number, StandalonePdfSelectionPage>,
+): { anchor: StandalonePdfSelectionEndpoint; focus: StandalonePdfSelectionEndpoint } | null {
+  const units = indexedUnits(pages);
+  const anchor = units[0];
+  const focus = units[units.length - 1];
+  if (!anchor || !focus) return null;
+  return {
+    anchor: {
+      pageNo: anchor.pageNo,
+      itemIndex: anchor.itemIndex,
+      geometryIndex: anchor.geometryIndex,
+    },
+    focus: {
+      pageNo: focus.pageNo,
+      itemIndex: focus.itemIndex,
+      geometryIndex: focus.geometryIndex,
+    },
+  };
+}
+
 export function standalonePdfSelectionFragments(
   pages: ReadonlyMap<number, StandalonePdfSelectionPage>,
   anchor: StandalonePdfSelectionEndpoint,

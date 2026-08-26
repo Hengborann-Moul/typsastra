@@ -93,16 +93,19 @@ import {
   isPdfiumDocument,
   isPdfiumPage,
   type PdfiumTextGlyph,
+  type PdfiumTextRun,
   type PdfiumOutlineItem,
 } from "./pdfiumDocument";
 import {
   hitTestStandalonePdfSelection,
   serializeStandalonePdfFormattedSelection,
-  standalonePdfSelectionAutoScrollDelta,
   serializeStandalonePdfSelection,
+  standalonePdfSelectionAutoScrollDelta,
+  standalonePdfSelectionDocumentEndpoints,
   standalonePdfSelectionFragments,
   type StandalonePdfSelectionEndpoint,
   type StandalonePdfSelectionItem,
+  type StandalonePdfSelectionPage,
 } from "./standalonePdfSelection";
 
 type PdfJsModule = typeof import("pdfjs-dist");
@@ -215,10 +218,14 @@ export class PreviewFrame {
   private pendingRestoredScrollTop: number | null = null;
   private pendingRestoredViewportAnchor: PreviewViewportAnchor | null = null;
   private previewPointerInside = false;
+  private standalonePdfKeyboardActive = false;
   private previewLinkModifierHeld = false;
   private previewColorMode: PreviewColorMode = "document";
   private readonly pageImageCoordinates = new WeakMap<HTMLCanvasElement, readonly number[]>();
   private readonly standalonePdfTextLayers = new Map<number, StandalonePdfTextLayer>();
+  private readonly standalonePdfSelectionPages = new Map<number, StandalonePdfSelectionPage>();
+  private standalonePdfSelectionGeneration = 0;
+  private standalonePdfSelectionOwnsCompleteDocument = false;
   private standalonePdfSearchMatches: StandalonePdfSearchMatch[] = [];
   private standalonePdfSearchIndex = -1;
   private standalonePdfSearchGeneration = 0;
@@ -260,7 +267,31 @@ export class PreviewFrame {
         }
       }
     }, { passive: false });
+    window.addEventListener("pointerdown", event => {
+      if (event.target === this.iframe) {
+        this.standalonePdfKeyboardActive = true;
+        return;
+      }
+      this.standalonePdfKeyboardActive = false;
+      if (this.standalonePdfSelectionAnchor) this.clearStandalonePdfSelection();
+    }, true);
     window.addEventListener("keydown", event => {
+      const keyTarget = event.target as Element | null;
+      if (
+        this.isStandalonePdfSurface()
+        && !this.standalonePdfKeyboardActive
+        && (event.ctrlKey || event.metaKey)
+        && !event.altKey
+        && !event.shiftKey
+        && event.code === "KeyA"
+        && !keyTarget?.closest("input,textarea,[contenteditable]")
+      ) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        window.getSelection()?.removeAllRanges();
+        this.clearStandalonePdfSelection();
+        return;
+      }
       if (this.handlePreviewFindShortcut(event)) return;
       this.previewLinkModifierHeld = previewLinkModifierAfterKeyboardEvent(event, "keydown");
       const doc = this.iframe?.contentDocument;
@@ -294,6 +325,10 @@ export class PreviewFrame {
 
   public get currentUrl(): string {
     return this.mountedUrl;
+  }
+
+  public selectAllText(): void {
+    void this.selectAllStandalonePdfText();
   }
 
   public get currentSessionKey(): string {
@@ -1512,20 +1547,22 @@ export class PreviewFrame {
         const sourceItems = Array.isArray(textContentSource?.items)
           ? textContentSource.items.filter((item: any) => typeof item?.str === "string")
           : [];
+        const textItems = [...textLayer.textContentItemsStr].map((text, index) => ({
+          text,
+          hasEOL: sourceItems[index]?.hasEOL === true,
+          baselineY: Number.isFinite(Number(sourceItems[index]?.transform?.[5]))
+            ? Number(sourceItems[index].transform[5])
+            : null,
+          height: Number.isFinite(Number(sourceItems[index]?.height))
+            ? Math.abs(Number(sourceItems[index].height))
+            : null,
+        }));
         this.standalonePdfTextLayers.set(pageNo, {
           container,
           textDivs: [...textLayer.textDivs] as HTMLElement[],
-          textItems: [...textLayer.textContentItemsStr].map((text, index) => ({
-            text,
-            hasEOL: sourceItems[index]?.hasEOL === true,
-            baselineY: Number.isFinite(Number(sourceItems[index]?.transform?.[5]))
-              ? Number(sourceItems[index].transform[5])
-              : null,
-            height: Number.isFinite(Number(sourceItems[index]?.height))
-              ? Math.abs(Number(sourceItems[index].height))
-              : null,
-          })),
+          textItems,
         });
+        this.standalonePdfSelectionPages.set(pageNo, { textItems });
       }
       return container;
     } catch (error) {
@@ -1614,6 +1651,7 @@ export class PreviewFrame {
       const pageNo = Number(page?.pageNumber ?? 0);
       if (pageNo > 0) {
         this.standalonePdfTextLayers.set(pageNo, { container, textDivs, textItems });
+        this.standalonePdfSelectionPages.set(pageNo, { textItems });
       }
       return container;
     } catch (error) {
@@ -1668,6 +1706,9 @@ export class PreviewFrame {
       ?.querySelector<HTMLElement>(`.pdf-page-container[data-page-no="${pageNo}"]`)
     if (!slot) return;
     this.standalonePdfTextLayers.delete(pageNo);
+    if (!this.standalonePdfSelectionOwnsCompleteDocument) {
+      this.standalonePdfSelectionPages.delete(pageNo);
+    }
     for (const child of [...slot.children]) {
       releaseCanvasResources(child);
       child.remove();
@@ -1751,6 +1792,8 @@ export class PreviewFrame {
       this.standalonePdfSearchTimer = null;
     }
     this.standalonePdfTextLayers.clear();
+    this.standalonePdfSelectionPages.clear();
+    this.standalonePdfSelectionOwnsCompleteDocument = false;
     this.standalonePdfSearchMatches = [];
     this.standalonePdfSearchIndex = -1;
     this.clearStandalonePdfSelection();
@@ -2253,6 +2296,8 @@ export class PreviewFrame {
       this.clearStandalonePdfSelection();
       return false;
     }
+    this.standalonePdfSelectionGeneration += 1;
+    this.releaseStandalonePdfCompleteSelectionData();
     event.preventDefault();
     try {
       doc.documentElement.setPointerCapture(event.pointerId);
@@ -2386,7 +2431,7 @@ export class PreviewFrame {
     const slot = layer?.container.closest<HTMLElement>(".pdf-page-container");
     if (!anchor || !focus || !layer || !slot) return;
     slot.querySelectorAll(".pdf-selection-layer").forEach(selectionLayer => selectionLayer.remove());
-    const fragments = standalonePdfSelectionFragments(this.standalonePdfTextLayers, anchor, focus)
+    const fragments = standalonePdfSelectionFragments(this.standalonePdfSelectionPages, anchor, focus)
       .filter(fragment => fragment.pageNo === pageNo);
     if (fragments.length < 1) return;
     const selectionLayer = slot.ownerDocument.createElement("div");
@@ -2411,6 +2456,7 @@ export class PreviewFrame {
   }
 
   private clearStandalonePdfSelection(): void {
+    this.standalonePdfSelectionGeneration += 1;
     this.stopStandalonePdfSelectionAutoScroll();
     const pointerId = this.standalonePdfSelectionPointerId;
     if (pointerId !== null) {
@@ -2425,15 +2471,63 @@ export class PreviewFrame {
     this.standalonePdfSelectionPointer = null;
     this.standalonePdfSelectionDragging = false;
     this.standalonePdfSelectionRetainClick = false;
+    this.releaseStandalonePdfCompleteSelectionData();
     this.iframe?.contentDocument
       ?.querySelectorAll(".pdf-selection-layer")
       .forEach(layer => layer.remove());
   }
 
+  private releaseStandalonePdfCompleteSelectionData(): void {
+    if (!this.standalonePdfSelectionOwnsCompleteDocument) return;
+    this.standalonePdfSelectionPages.clear();
+    for (const [pageNo, layer] of this.standalonePdfTextLayers) {
+      this.standalonePdfSelectionPages.set(pageNo, { textItems: layer.textItems });
+    }
+    this.standalonePdfSelectionOwnsCompleteDocument = false;
+  }
+
+  private async selectAllStandalonePdfText(): Promise<void> {
+    const pdfDoc = this.pdfDoc;
+    const doc = this.iframe?.contentDocument;
+    if (!doc || !this.isStandalonePdfSurface() || !isPdfiumDocument(pdfDoc)) return;
+    this.clearStandalonePdfSelection();
+    const generation = this.standalonePdfSelectionGeneration;
+    const pdfGeneration = this.pdfGeneration;
+    const pages = new Map<number, StandalonePdfSelectionPage>();
+    for (let pageNo = 1; pageNo <= pdfDoc.numPages; pageNo += 1) {
+      const page = await pdfDoc.getPage(pageNo);
+      const runs = await page.getPdfiumTextRuns();
+      if (
+        generation !== this.standalonePdfSelectionGeneration
+        || pdfGeneration !== this.pdfGeneration
+        || pdfDoc !== this.pdfDoc
+      ) return;
+      pages.set(pageNo, { textItems: pdfiumRunsToSelectionItems(runs) });
+      if (pageNo % 8 === 0) await nextTurn();
+    }
+    const endpoints = standalonePdfSelectionDocumentEndpoints(pages);
+    if (
+      !endpoints
+      || generation !== this.standalonePdfSelectionGeneration
+      || pdfGeneration !== this.pdfGeneration
+      || pdfDoc !== this.pdfDoc
+    ) return;
+    this.standalonePdfSelectionPages.clear();
+    for (const [pageNo, page] of pages) this.standalonePdfSelectionPages.set(pageNo, page);
+    this.standalonePdfSelectionOwnsCompleteDocument = true;
+    this.standalonePdfSelectionAnchor = endpoints.anchor;
+    this.standalonePdfSelectionFocus = endpoints.focus;
+    doc.body.tabIndex = -1;
+    doc.body.focus({ preventScroll: true });
+    doc.getSelection()?.removeAllRanges();
+    window.getSelection()?.removeAllRanges();
+    this.renderAllStandalonePdfSelectionMarkers();
+  }
+
   private standalonePdfSelectionText(): string | null {
     if (!this.standalonePdfSelectionAnchor || !this.standalonePdfSelectionFocus) return null;
     return serializeStandalonePdfSelection(
-      this.standalonePdfTextLayers,
+      this.standalonePdfSelectionPages,
       this.standalonePdfSelectionAnchor,
       this.standalonePdfSelectionFocus,
     );
@@ -2442,7 +2536,7 @@ export class PreviewFrame {
   private standalonePdfFormattedSelection(): { plainText: string; html: string } | null {
     if (!this.standalonePdfSelectionAnchor || !this.standalonePdfSelectionFocus) return null;
     return serializeStandalonePdfFormattedSelection(
-      this.standalonePdfTextLayers,
+      this.standalonePdfSelectionPages,
       this.standalonePdfSelectionAnchor,
       this.standalonePdfSelectionFocus,
     );
@@ -2582,6 +2676,7 @@ export class PreviewFrame {
       this.copyStandalonePdfSelection();
     }, true);
     doc.addEventListener("pointerdown", event => {
+      this.standalonePdfKeyboardActive = true;
       if ((event.target as Element | null)?.closest("#preview-go-first")) return;
       this.beginStandalonePdfSelection(event);
       this.rememberDraftPointer(event);
@@ -2639,6 +2734,26 @@ export class PreviewFrame {
     });
     doc.addEventListener("keydown", event => {
       if (this.handlePreviewFindShortcut(event)) return;
+      const keyTarget = event.target as Element | null;
+      if (
+        doc.documentElement.dataset.previewSurface === "pdf"
+        && isPdfiumDocument(this.pdfDoc)
+        && (event.ctrlKey || event.metaKey)
+        && !event.altKey
+        && !event.shiftKey
+        && event.code === "KeyA"
+        && !keyTarget?.closest("input,textarea,[contenteditable]")
+      ) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        window.getSelection()?.removeAllRanges();
+        if (!this.standalonePdfKeyboardActive) {
+          this.clearStandalonePdfSelection();
+          return;
+        }
+        if (!event.repeat) void this.selectAllStandalonePdfText();
+        return;
+      }
       if (
         doc.documentElement.dataset.previewSurface === "pdf"
         && (event.ctrlKey || event.metaKey)
@@ -3274,6 +3389,30 @@ export class PreviewFrame {
     this.onInteractionStatus?.(status);
   }
 
+}
+
+function pdfiumRunsToSelectionItems(runs: readonly PdfiumTextRun[]): StandalonePdfSelectionItem[] {
+  return runs.map(run => ({
+    text: run.text,
+    hasEOL: run.hasEOL,
+    baselineY: run.bottom,
+    height: Math.abs(run.top - run.bottom),
+    semanticBlockId: run.semanticBlockId,
+    semanticRole: run.semanticRole,
+    semanticTableId: run.semanticTableId,
+    semanticRowId: run.semanticRowId,
+    semanticCellId: run.semanticCellId,
+    semanticFigureId: run.semanticFigureId,
+    searchGeometry: run.glyphs.map(glyph => ({
+      from: glyph.from,
+      to: glyph.to,
+      left: glyph.left,
+      top: glyph.bottom,
+      width: Math.max(0, glyph.right - glyph.left),
+      height: Math.max(0, glyph.top - glyph.bottom),
+    })),
+    styleRanges: run.styleRanges,
+  }));
 }
 
 async function readInitialPdfPageDimensions(pdfDoc: any): Promise<Map<number, PageDimensions>> {

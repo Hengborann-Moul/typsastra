@@ -85,6 +85,31 @@ describe("native application menu spec", () => {
     }
   });
 
+  test("routes select-all instead of invoking the global native role", async () => {
+    const editMenu = spec.find(submenu => submenu.label === "Edit");
+    expect(editMenu?.nodes).toContainEqual({
+      kind: "item",
+      id: "action-select-all",
+      label: "Select All",
+      accelerator: "CmdOrCtrl+A",
+      elementId: "action-select-all",
+    });
+    expect(editMenu?.nodes).not.toContainEqual({
+      kind: "predefined",
+      item: "SelectAll",
+      text: "Select All",
+    });
+
+    const events = await source("../src/ui/appEventBindings.ts");
+    const app = await source("../src/appController.ts");
+    expect(events).toContain('keyCode === "KeyA"');
+    expect(events).toContain('closest("input,textarea,[contenteditable]")');
+    expect(events).toContain('getElementById("action-select-all")');
+    expect(app).toContain("selectAllActiveSurface:");
+    expect(app).toContain('active?.closest(".cm-editor")');
+    expect(app).toContain("this.previewFrame.selectAllText()");
+  });
+
   test("tracks the installed state behind a Tauri-free flag", () => {
     expect(nativeAppMenuOwnsShortcuts()).toBe(false);
     setNativeAppMenuInstalled(true);

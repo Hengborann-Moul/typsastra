@@ -4,6 +4,7 @@ import {
   serializeStandalonePdfFormattedSelection,
   serializeStandalonePdfSelection,
   standalonePdfSelectionAutoScrollDelta,
+  standalonePdfSelectionDocumentEndpoints,
   standalonePdfSelectionFragments,
   type StandalonePdfSelectionItem,
   type StandalonePdfSelectionPage,
@@ -23,6 +24,34 @@ test("standalone PDF selection auto-scrolls only after crossing viewport edges",
   expect(standalonePdfSelectionAutoScrollDelta(700, 600)).toBe(32);
   expect(standalonePdfSelectionAutoScrollDelta(Number.NaN, 600)).toBe(0);
   expect(standalonePdfSelectionAutoScrollDelta(700, 0)).toBe(0);
+});
+
+test("standalone PDF select-all spans the first and last logical units", () => {
+  const documentPages = pages(
+    [1, [{
+      text: "first",
+      hasEOL: false,
+      baselineY: 20,
+      height: 10,
+      searchGeometry: [{ from: 0, to: 5, left: 10, top: 10, width: 30, height: 10 }],
+    }]],
+    [2, [{
+      text: "last item",
+      hasEOL: false,
+      baselineY: 20,
+      height: 10,
+      searchGeometry: [
+        { from: 0, to: 4, left: 10, top: 10, width: 25, height: 10 },
+        { from: 4, to: 9, left: 35, top: 10, width: 35, height: 10 },
+      ],
+    }]],
+  );
+
+  expect(standalonePdfSelectionDocumentEndpoints(documentPages)).toEqual({
+    anchor: { pageNo: 1, itemIndex: 0, geometryIndex: 0 },
+    focus: { pageNo: 2, itemIndex: 0, geometryIndex: 1 },
+  });
+  expect(standalonePdfSelectionDocumentEndpoints(new Map())).toBeNull();
 });
 
 test("standalone PDF selection hit-tests the nearest logical geometry unit", () => {

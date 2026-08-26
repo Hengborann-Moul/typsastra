@@ -108,6 +108,24 @@ test("overlapping standalone PDF selection boxes share one tint", () => {
   );
 });
 
+test("standalone PDF Ctrl or Cmd+A selects every logical page", () => {
+  expect(frameSource).toContain('event.code === "KeyA"');
+  expect(frameSource).toContain("if (!event.repeat) void this.selectAllStandalonePdfText()");
+  expect(frameSource).toContain("isPdfiumDocument(this.pdfDoc)");
+  expect(frameSource).toContain("!keyTarget?.closest(\"input,textarea,[contenteditable]\")");
+  expect(frameSource).toContain("for (let pageNo = 1; pageNo <= pdfDoc.numPages; pageNo += 1)");
+  expect(frameSource).toContain("const runs = await page.getPdfiumTextRuns()");
+  expect(frameSource).toContain("standalonePdfSelectionDocumentEndpoints(pages)");
+  expect(frameSource).toContain("generation !== this.standalonePdfSelectionGeneration");
+  expect(frameSource).toContain("this.standalonePdfSelectionOwnsCompleteDocument = true");
+  expect(frameSource).toContain("private standalonePdfKeyboardActive = false");
+  expect(frameSource).toContain("if (!this.standalonePdfKeyboardActive)");
+  expect(frameSource).toContain("if (this.standalonePdfSelectionAnchor) this.clearStandalonePdfSelection()");
+  expect(frameSource.match(/window\.getSelection\(\)\?\.removeAllRanges\(\)/g)?.length).toBe(3);
+  expect(frameSource).toContain("serializeStandalonePdfSelection(");
+  expect(frameSource).toContain("this.standalonePdfSelectionPages");
+});
+
 test("standalone PDF copy serializes logical text items instead of positioned DOM text", () => {
   expect(frameSource).toContain('doc.addEventListener("copy"');
   expect(frameSource).toContain("this.standalonePdfSelectionText()");

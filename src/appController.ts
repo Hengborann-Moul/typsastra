@@ -5,7 +5,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { dirname, join } from "@tauri-apps/api/path";
 import { EditorState, type Extension, type Text } from "@codemirror/state";
 import { EditorView, highlightActiveLine, highlightActiveLineGutter, lineNumbers } from "@codemirror/view";
-import { undo, redo, undoDepth } from "@codemirror/commands";
+import { undo, redo, selectAll, undoDepth } from "@codemirror/commands";
 import { indentUnit } from "@codemirror/language";
 import { closeBrackets } from "@codemirror/autocomplete";
 import { closeSearchPanel, openSearchPanel, SearchQuery, setSearchQuery } from "@codemirror/search";
@@ -2869,6 +2869,22 @@ export class TypsastraWorkspaceController {
       exportSourceZip: () => this.projectExportController.exportSourceZip(),
       undo: () => { undo({ state: this.editorInstance.state, dispatch: this.editorInstance.dispatch }); },
       redo: () => { redo({ state: this.editorInstance.state, dispatch: this.editorInstance.dispatch }); },
+      selectAllActiveSurface: () => {
+        const active = document.activeElement as HTMLElement | null;
+        if (active === this.previewFrame.element) {
+          this.previewFrame.selectAllText();
+        } else if (active?.closest(".cm-editor")) {
+          selectAll(this.editorInstance);
+        } else if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) {
+          active.select();
+        } else if (active?.isContentEditable) {
+          const range = document.createRange();
+          range.selectNodeContents(active);
+          const selection = window.getSelection();
+          selection?.removeAllRanges();
+          selection?.addRange(range);
+        }
+      },
       foldCurrentFile: () => this.foldCurrentFile(),
       unfoldCurrentFile: () => this.unfoldCurrentFile(),
       toggleSidebar: () => this.sidebarController.toggle(),

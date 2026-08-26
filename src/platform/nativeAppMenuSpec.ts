@@ -90,7 +90,7 @@ export function buildNativeMenuSpec(productName: string): NativeMenuSubmenuSpec[
         { kind: "predefined", item: "Cut", text: "Cut" },
         { kind: "predefined", item: "Copy", text: "Copy" },
         { kind: "predefined", item: "Paste", text: "Paste" },
-        { kind: "predefined", item: "SelectAll", text: "Select All" },
+        { kind: "item", id: "action-select-all", label: "Select All", accelerator: "CmdOrCtrl+A", elementId: "action-select-all" },
         { kind: "separator" },
         { kind: "item", id: "action-format-document", label: "Format Document", accelerator: "Shift+CmdOrCtrl+F", elementId: "action-format-document", workspaceScoped: true },
         { kind: "separator" },

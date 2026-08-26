@@ -58,6 +58,7 @@ export interface AppEventActions {
   exportSourceZip: () => Promise<void> | void;
   undo: () => void;
   redo: () => void;
+  selectAllActiveSurface: () => void;
   foldCurrentFile: () => void;
   unfoldCurrentFile: () => void;
   toggleSidebar: () => void;
@@ -89,6 +90,17 @@ function bindKeyboardShortcuts(actions: AppEventActions): void {
     const isMac = navigator.userAgent.toLowerCase().includes("mac");
     const cmdOrCtrl = isMac ? event.metaKey : event.ctrlKey;
     const keyCode = event.code;
+
+    if (
+      cmdOrCtrl
+      && !event.altKey
+      && !event.shiftKey
+      && keyCode === "KeyA"
+      && !(event.target as Element | null)?.closest("input,textarea,[contenteditable]")
+    ) {
+      event.preventDefault();
+      window.getSelection()?.removeAllRanges();
+    }
 
     if (event.key === "Escape" && document.activeElement?.closest(".cm-editor")) {
       actions.dismissSpellcheckTyping();
@@ -365,6 +377,7 @@ export function bindAppEvents(actions: AppEventActions): void {
   document.getElementById("action-exit")?.addEventListener("click", () => void getCurrentWindow().close());
   document.getElementById("action-undo")?.addEventListener("click", actions.undo);
   document.getElementById("action-redo")?.addEventListener("click", actions.redo);
+  document.getElementById("action-select-all")?.addEventListener("click", actions.selectAllActiveSurface);
   document.getElementById("action-format-document")?.addEventListener("click", () => void actions.formatActiveDocument());
   document.getElementById("action-fold-file")?.addEventListener("click", actions.foldCurrentFile);
   document.getElementById("action-unfold-file")?.addEventListener("click", actions.unfoldCurrentFile);
