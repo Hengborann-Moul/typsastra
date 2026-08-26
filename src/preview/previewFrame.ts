@@ -544,7 +544,7 @@ export class PreviewFrame {
     // viewport scale and restores persistent search/selection markers.
     this.standalonePdfTextLayers.clear();
     doc.querySelectorAll(
-      ".pdf-text-layer,.annotation-link,.pdf-search-marker,.pdf-selection-marker,.forward-sync-ripple",
+      ".pdf-text-layer,.annotation-link,.pdf-search-marker,.pdf-selection-layer,.forward-sync-ripple",
     ).forEach(element => element.remove());
   }
 
@@ -927,7 +927,8 @@ export class PreviewFrame {
       .pdf-text-layer span[role="img"]{cursor:default;-webkit-user-select:none;user-select:none}
       .pdf-text-layer:not(.pdfium-text-layer) ::selection{background:color-mix(in srgb,AccentColor,transparent 50%);color:transparent}
       .pdf-text-layer:not(.pdfium-text-layer) br::selection{background:transparent}
-      .pdf-selection-marker{position:absolute;z-index:3;box-sizing:border-box;background:color-mix(in srgb,AccentColor,transparent 48%);pointer-events:none}
+      .pdf-selection-layer{position:absolute;inset:0;z-index:3;overflow:hidden;opacity:.52;pointer-events:none}
+      .pdf-selection-marker{position:absolute;box-sizing:border-box;background:AccentColor;pointer-events:none}
       .pdf-search-marker{position:absolute;z-index:2;box-sizing:border-box;background:rgba(255,214,0,.52);pointer-events:none}
       .pdf-search-marker.is-current{background:rgba(255,145,0,.68);outline:1px solid rgba(122,66,0,.72);outline-offset:-1px}
       #pdf-search-panel{position:fixed;top:0;left:0;right:0;z-index:2147483647;box-sizing:border-box;display:grid;grid-template-columns:minmax(120px,1fr) repeat(2,var(--preview-editor-line-height)) 50px;align-items:center;gap:4px;width:100%;padding:6px 38px 6px 8px;border:1px solid var(--preview-ui-border);border-top:0;border-radius:0;background:var(--preview-ui-bg);color:var(--preview-ui-text);box-shadow:0 4px 12px rgba(0,0,0,.15);font-family:var(--preview-editor-font)}
@@ -2245,7 +2246,7 @@ export class PreviewFrame {
     doc.getSelection()?.removeAllRanges();
     // Pointer-down only establishes an anchor. Do not paint a one-grapheme
     // selection until the user actually drags beyond the movement threshold.
-    doc.querySelectorAll(".pdf-selection-marker").forEach(marker => marker.remove());
+    doc.querySelectorAll(".pdf-selection-layer").forEach(layer => layer.remove());
     this.standalonePdfSelectionAnchor = endpoint;
     this.standalonePdfSelectionFocus = endpoint;
     this.standalonePdfSelectionPointerId = event.pointerId;
@@ -2286,8 +2287,8 @@ export class PreviewFrame {
 
   private renderAllStandalonePdfSelectionMarkers(): void {
     this.iframe?.contentDocument
-      ?.querySelectorAll(".pdf-selection-marker")
-      .forEach(marker => marker.remove());
+      ?.querySelectorAll(".pdf-selection-layer")
+      .forEach(layer => layer.remove());
     for (const pageNo of this.standalonePdfTextLayers.keys()) {
       this.renderStandalonePdfSelectionMarkers(pageNo);
     }
@@ -2299,9 +2300,13 @@ export class PreviewFrame {
     const layer = this.standalonePdfTextLayers.get(pageNo);
     const slot = layer?.container.closest<HTMLElement>(".pdf-page-container");
     if (!anchor || !focus || !layer || !slot) return;
-    slot.querySelectorAll(".pdf-selection-marker").forEach(marker => marker.remove());
+    slot.querySelectorAll(".pdf-selection-layer").forEach(selectionLayer => selectionLayer.remove());
     const fragments = standalonePdfSelectionFragments(this.standalonePdfTextLayers, anchor, focus)
       .filter(fragment => fragment.pageNo === pageNo);
+    if (fragments.length < 1) return;
+    const selectionLayer = slot.ownerDocument.createElement("div");
+    selectionLayer.className = "pdf-selection-layer";
+    slot.append(selectionLayer);
     for (const fragment of fragments) {
       const geometry = layer.textItems[fragment.itemIndex]?.searchGeometry ?? [];
       const selected = geometry.filter(rect => rect.to > fragment.from && rect.from < fragment.to);
@@ -2316,7 +2321,7 @@ export class PreviewFrame {
       marker.style.top = `${Math.max(0, top)}px`;
       marker.style.width = `${Math.max(0, right - left)}px`;
       marker.style.height = `${Math.max(0, bottom - top)}px`;
-      slot.append(marker);
+      selectionLayer.append(marker);
     }
   }
 
@@ -2328,8 +2333,8 @@ export class PreviewFrame {
     this.standalonePdfSelectionDragging = false;
     this.standalonePdfSelectionRetainClick = false;
     this.iframe?.contentDocument
-      ?.querySelectorAll(".pdf-selection-marker")
-      .forEach(marker => marker.remove());
+      ?.querySelectorAll(".pdf-selection-layer")
+      .forEach(layer => layer.remove());
   }
 
   private standalonePdfSelectionText(): string | null {

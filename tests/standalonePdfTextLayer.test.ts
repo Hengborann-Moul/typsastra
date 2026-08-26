@@ -37,7 +37,7 @@ test("zoom invalidates coordinate-sensitive PDF overlays before rerendering", ()
   expect(relayout).toBeGreaterThan(invalidation);
   expect(frameSource).toContain("this.standalonePdfTextLayers.clear();");
   expect(frameSource).toContain(
-    '".pdf-text-layer,.annotation-link,.pdf-search-marker,.pdf-selection-marker,.forward-sync-ripple"',
+    '".pdf-text-layer,.annotation-link,.pdf-search-marker,.pdf-selection-layer,.forward-sync-ripple"',
   );
 });
 
@@ -81,6 +81,20 @@ test("virtualized standalone PDF pages restore search markers after committing o
   );
   expect(overlayCommit).toBeGreaterThan(-1);
   expect(markerRender).toBeGreaterThan(overlayCommit);
+});
+
+test("overlapping standalone PDF selection boxes share one tint", () => {
+  expect(frameSource).toContain(
+    ".pdf-selection-layer{position:absolute;inset:0;z-index:3;overflow:hidden;opacity:.52;pointer-events:none}",
+  );
+  expect(frameSource).toContain(
+    ".pdf-selection-marker{position:absolute;box-sizing:border-box;background:AccentColor;pointer-events:none}",
+  );
+  expect(frameSource).toContain('selectionLayer.className = "pdf-selection-layer"');
+  expect(frameSource).toContain("selectionLayer.append(marker)");
+  expect(frameSource).not.toContain(
+    ".pdf-selection-marker{position:absolute;z-index:3;box-sizing:border-box;background:color-mix",
+  );
 });
 
 test("standalone PDF copy serializes logical text items instead of positioned DOM text", () => {
