@@ -83,6 +83,17 @@ test("virtualized standalone PDF pages restore search markers after committing o
   expect(markerRender).toBeGreaterThan(overlayCommit);
 });
 
+test("standalone PDF drag selection scrolls beyond viewport edges", () => {
+  expect(frameSource).toContain("doc.documentElement.setPointerCapture(event.pointerId)");
+  expect(frameSource).toContain("const target = doc?.elementFromPoint(clientX, clientY)");
+  expect(frameSource).not.toContain("knownTarget ?? doc?.elementFromPoint(clientX, clientY)");
+  expect(frameSource).toContain("standalonePdfSelectionAutoScrollDelta(pointer.y, view.innerHeight)");
+  expect(frameSource).toContain("currentView.scrollBy({ top: delta, behavior: \"auto\" })");
+  expect(frameSource).toContain("this.updateStandalonePdfSelectionFocusAtClientPoint(clientX, clientY)");
+  expect(frameSource).toContain("releasePointerCapture(event.pointerId)");
+  expect(frameSource).toContain("this.stopStandalonePdfSelectionAutoScroll()");
+});
+
 test("overlapping standalone PDF selection boxes share one tint", () => {
   expect(frameSource).toContain(
     ".pdf-selection-layer{position:absolute;inset:0;z-index:3;overflow:hidden;opacity:.52;pointer-events:none}",

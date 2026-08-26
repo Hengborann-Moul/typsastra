@@ -60,6 +60,26 @@ type IndexedUnit = StandalonePdfSelectionEndpoint & {
 };
 
 /**
+ * Returns a bounded per-frame scroll delta after a selection pointer passes
+ * above or below the standalone PDF viewport. Remaining inside the viewport
+ * never scrolls, while moving farther outside accelerates predictably.
+ */
+export function standalonePdfSelectionAutoScrollDelta(
+  pointerY: number,
+  viewportHeight: number,
+): number {
+  if (!Number.isFinite(pointerY) || !Number.isFinite(viewportHeight) || viewportHeight <= 0) return 0;
+  const overflow = pointerY < 0
+    ? pointerY
+    : pointerY > viewportHeight
+      ? pointerY - viewportHeight
+      : 0;
+  if (overflow === 0) return 0;
+  const magnitude = Math.min(32, Math.max(4, Math.abs(overflow) * 0.35));
+  return Math.sign(overflow) * magnitude;
+}
+
+/**
  * Resolves a PDF-page point to one indivisible extracted logical unit.
  *
  * Enhanced Unicode PDFs can associate multiple Unicode code points with one

@@ -3,6 +3,7 @@ import {
   hitTestStandalonePdfSelection,
   serializeStandalonePdfFormattedSelection,
   serializeStandalonePdfSelection,
+  standalonePdfSelectionAutoScrollDelta,
   standalonePdfSelectionFragments,
   type StandalonePdfSelectionItem,
   type StandalonePdfSelectionPage,
@@ -11,6 +12,18 @@ import {
 function pages(...entries: Array<[number, StandalonePdfSelectionItem[]]>): Map<number, StandalonePdfSelectionPage> {
   return new Map(entries.map(([pageNo, textItems]) => [pageNo, { textItems }]));
 }
+
+test("standalone PDF selection auto-scrolls only after crossing viewport edges", () => {
+  expect(standalonePdfSelectionAutoScrollDelta(0, 600)).toBe(0);
+  expect(standalonePdfSelectionAutoScrollDelta(300, 600)).toBe(0);
+  expect(standalonePdfSelectionAutoScrollDelta(600, 600)).toBe(0);
+  expect(standalonePdfSelectionAutoScrollDelta(-1, 600)).toBe(-4);
+  expect(standalonePdfSelectionAutoScrollDelta(601, 600)).toBe(4);
+  expect(standalonePdfSelectionAutoScrollDelta(-100, 600)).toBe(-32);
+  expect(standalonePdfSelectionAutoScrollDelta(700, 600)).toBe(32);
+  expect(standalonePdfSelectionAutoScrollDelta(Number.NaN, 600)).toBe(0);
+  expect(standalonePdfSelectionAutoScrollDelta(700, 0)).toBe(0);
+});
 
 test("standalone PDF selection hit-tests the nearest logical geometry unit", () => {
   const items: StandalonePdfSelectionItem[] = [{

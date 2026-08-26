@@ -98,6 +98,7 @@ import {
 import {
   hitTestStandalonePdfSelection,
   serializeStandalonePdfFormattedSelection,
+  standalonePdfSelectionAutoScrollDelta,
   serializeStandalonePdfSelection,
   standalonePdfSelectionFragments,
   type StandalonePdfSelectionEndpoint,
@@ -226,6 +227,8 @@ export class PreviewFrame {
   private standalonePdfSelectionFocus: StandalonePdfSelectionEndpoint | null = null;
   private standalonePdfSelectionPointerId: number | null = null;
   private standalonePdfSelectionOrigin: { x: number; y: number } | null = null;
+  private standalonePdfSelectionPointer: { x: number; y: number } | null = null;
+  private standalonePdfSelectionAutoScrollFrame: number | null = null;
   private standalonePdfSelectionDragging = false;
   private standalonePdfSelectionRetainClick = false;
 
@@ -2207,7 +2210,20 @@ export class PreviewFrame {
     event: PointerEvent,
     maxDistance = Number.POSITIVE_INFINITY,
   ): StandalonePdfSelectionEndpoint | null {
-    const target = event.target as Element | null;
+    return this.standalonePdfSelectionAtClientPoint(
+      event.clientX,
+      event.clientY,
+      maxDistance,
+    );
+  }
+
+  private standalonePdfSelectionAtClientPoint(
+    clientX: number,
+    clientY: number,
+    maxDistance = Number.POSITIVE_INFINITY,
+  ): StandalonePdfSelectionEndpoint | null {
+    const doc = this.iframe?.contentDocument;
+    const target = doc?.elementFromPoint(clientX, clientY);
     const slot = target?.closest<HTMLElement>(".pdf-page-container");
     const pageNo = Number(slot?.dataset.pageNo);
     const layer = Number.isFinite(pageNo) ? this.standalonePdfTextLayers.get(pageNo) : undefined;
@@ -2216,8 +2232,8 @@ export class PreviewFrame {
     return hitTestStandalonePdfSelection(
       pageNo,
       layer.textItems,
-      event.clientX - rect.left,
-      event.clientY - rect.top,
+      clientX - rect.left,
+      clientY - rect.top,
       maxDistance,
     );
   }
@@ -2238,6 +2254,10 @@ export class PreviewFrame {
       return false;
     }
     event.preventDefault();
+    try {
+      doc.documentElement.setPointerCapture(event.pointerId);
+    } catch {}
+    this.stopStandalonePdfSelectionAutoScroll();
     // Preventing native text selection also prevents the iframe document from
     // receiving focus automatically. Focus its body explicitly so Ctrl/Cmd+C
     // reaches the custom clipboard handler instead of the editor behind it.
@@ -2251,6 +2271,7 @@ export class PreviewFrame {
     this.standalonePdfSelectionFocus = endpoint;
     this.standalonePdfSelectionPointerId = event.pointerId;
     this.standalonePdfSelectionOrigin = { x: event.clientX, y: event.clientY };
+    this.standalonePdfSelectionPointer = { x: event.clientX, y: event.clientY };
     this.standalonePdfSelectionDragging = false;
     this.standalonePdfSelectionRetainClick = false;
     return true;
@@ -2259,6 +2280,7 @@ export class PreviewFrame {
   private updateStandalonePdfSelection(event: PointerEvent): boolean {
     if (this.standalonePdfSelectionPointerId !== event.pointerId) return false;
     event.preventDefault();
+    this.standalonePdfSelectionPointer = { x: event.clientX, y: event.clientY };
     const origin = this.standalonePdfSelectionOrigin;
     if (
       origin
@@ -2266,19 +2288,82 @@ export class PreviewFrame {
       && Math.hypot(event.clientX - origin.x, event.clientY - origin.y) >= 3
     ) this.standalonePdfSelectionDragging = true;
     if (!this.standalonePdfSelectionDragging) return true;
-    const endpoint = this.standalonePdfSelectionAtPointer(event);
-    if (!endpoint) return true;
+    this.updateStandalonePdfSelectionFocusAtClientPoint(
+      event.clientX,
+      event.clientY,
+    );
+    this.updateStandalonePdfSelectionAutoScroll();
+    return true;
+  }
+
+  private updateStandalonePdfSelectionFocusAtClientPoint(
+    clientX: number,
+    clientY: number,
+  ): void {
+    const endpoint = this.standalonePdfSelectionAtClientPoint(
+      clientX,
+      clientY,
+      Number.POSITIVE_INFINITY,
+    );
+    if (!endpoint) return;
     this.standalonePdfSelectionFocus = endpoint;
     this.renderAllStandalonePdfSelectionMarkers();
-    return true;
+  }
+
+  private updateStandalonePdfSelectionAutoScroll(): void {
+    const view = this.iframe?.contentWindow;
+    const pointer = this.standalonePdfSelectionPointer;
+    if (!view || !pointer || !this.standalonePdfSelectionDragging) {
+      this.stopStandalonePdfSelectionAutoScroll();
+      return;
+    }
+    if (standalonePdfSelectionAutoScrollDelta(pointer.y, view.innerHeight) === 0) {
+      this.stopStandalonePdfSelectionAutoScroll();
+      return;
+    }
+    if (this.standalonePdfSelectionAutoScrollFrame !== null) return;
+
+    const step = () => {
+      this.standalonePdfSelectionAutoScrollFrame = null;
+      const currentView = this.iframe?.contentWindow;
+      const currentPointer = this.standalonePdfSelectionPointer;
+      if (
+        !currentView
+        || !currentPointer
+        || !this.standalonePdfSelectionDragging
+        || this.standalonePdfSelectionPointerId === null
+      ) return;
+      const delta = standalonePdfSelectionAutoScrollDelta(currentPointer.y, currentView.innerHeight);
+      if (delta === 0) return;
+      const previousScrollY = currentView.scrollY;
+      currentView.scrollBy({ top: delta, behavior: "auto" });
+      const clientX = Math.max(0, Math.min(currentPointer.x, Math.max(0, currentView.innerWidth - 1)));
+      const clientY = delta < 0 ? 1 : Math.max(1, currentView.innerHeight - 1);
+      this.updateStandalonePdfSelectionFocusAtClientPoint(clientX, clientY);
+      if (currentView.scrollY === previousScrollY) return;
+      this.standalonePdfSelectionAutoScrollFrame = currentView.requestAnimationFrame(step);
+    };
+    this.standalonePdfSelectionAutoScrollFrame = view.requestAnimationFrame(step);
+  }
+
+  private stopStandalonePdfSelectionAutoScroll(): void {
+    if (this.standalonePdfSelectionAutoScrollFrame !== null) {
+      this.iframe?.contentWindow?.cancelAnimationFrame(this.standalonePdfSelectionAutoScrollFrame);
+      this.standalonePdfSelectionAutoScrollFrame = null;
+    }
   }
 
   private finishStandalonePdfSelection(event: PointerEvent): boolean {
     if (this.standalonePdfSelectionPointerId !== event.pointerId) return false;
     this.updateStandalonePdfSelection(event);
     const wasDragging = this.standalonePdfSelectionDragging;
+    this.stopStandalonePdfSelectionAutoScroll();
+    try {
+      this.iframe?.contentDocument?.documentElement.releasePointerCapture(event.pointerId);
+    } catch {}
     this.standalonePdfSelectionPointerId = null;
     this.standalonePdfSelectionOrigin = null;
+    this.standalonePdfSelectionPointer = null;
     if (!wasDragging) this.clearStandalonePdfSelection();
     this.standalonePdfSelectionDragging = false;
     this.standalonePdfSelectionRetainClick = wasDragging;
@@ -2326,10 +2411,18 @@ export class PreviewFrame {
   }
 
   private clearStandalonePdfSelection(): void {
+    this.stopStandalonePdfSelectionAutoScroll();
+    const pointerId = this.standalonePdfSelectionPointerId;
+    if (pointerId !== null) {
+      try {
+        this.iframe?.contentDocument?.documentElement.releasePointerCapture(pointerId);
+      } catch {}
+    }
     this.standalonePdfSelectionAnchor = null;
     this.standalonePdfSelectionFocus = null;
     this.standalonePdfSelectionPointerId = null;
     this.standalonePdfSelectionOrigin = null;
+    this.standalonePdfSelectionPointer = null;
     this.standalonePdfSelectionDragging = false;
     this.standalonePdfSelectionRetainClick = false;
     this.iframe?.contentDocument
