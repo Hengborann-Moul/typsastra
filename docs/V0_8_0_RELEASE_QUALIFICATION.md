@@ -123,6 +123,14 @@ rather than inventing a result for an unavailable platform.
 | Firefox | pending | pending | pending | pending | pending | pending |
 | macOS Preview | pending | pending | pending | pending | pending | pending |
 
+Published historical evidence:
+
+- The [Typst Forum viewer matrix](https://forum.typst.app/t/typsastra-enhanced-unicode-engine-for-better-unicode-in-pdfs/9709)
+  records v0.1.0 Khmer rendering, selection, copy/paste, and search results for
+  Chrome, Brave, Edge, Okular, SumatraPDF, Acrobat, Firefox, and ONLYOFFICE.
+  Treat it as prior evidence, not as a completed v0.3.1 row, because exact
+  viewer versions and operating systems were not recorded.
+
 Known issue requiring a release decision:
 
 - [ ] Mixed Latin/Arabic PDFium reconstruction is exact, or its limitation is

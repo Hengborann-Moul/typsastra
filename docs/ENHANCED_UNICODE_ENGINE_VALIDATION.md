@@ -114,13 +114,13 @@ patch covers both PDF.js's browser build and the legacy Node build used by the
 automated validator, so the report exercises the same extraction semantics as
 Typsastra's standalone preview.
 
-The patched PDF.js worker returns exact extraction for 7 of 10 cases and bounded
-geometry for all 10. Typsastra then normalizes positioned RTL runs before
-building its standalone text layer. This restores source-order Arabic for
-search, DOM selection, and clipboard serialization without moving the painted
-PDF coordinates. Devanagari remains engine-level work: PDF.js exposes
-unsupported collection-font mappings as invalid control characters, and the
-mixed fixture inherits that failure.
+A 2026-08-26 rerun with the published Enhanced Unicode Engine v0.3.1 Windows
+archive returns exact patched-PDF.js extraction for 8 of 10 cases and bounded
+geometry for all 10. Arabic is exact. Devanagari still contains invalid control
+characters from unsupported collection-font mappings, and the mixed fixture
+inherits that Devanagari failure. The tested archive was 23,310,845 bytes with
+SHA-256 `e087ebd335c20a5273796803f9244526916e13900e71e010ce59de7720d31faf`;
+its executable reports `typst 0.15.1 (75202cf0)`.
 
 ## Viewer compatibility matrix
 
@@ -132,6 +132,31 @@ The generated report contains an automated PDF.js row and placeholders for manua
 - Firefox, and
 - macOS Preview.
 
+### Published Khmer viewer evidence
+
+The original [Typst Forum announcement](https://forum.typst.app/t/typsastra-enhanced-unicode-engine-for-better-unicode-in-pdfs/9709)
+published a viewer matrix on 2026-08-21. It tested an Enhanced Unicode Engine
+v0.1.0 Khmer article using Khmer OS fonts. The search term `អក្សរ` appears 12
+times in the source:
+
+| Viewer | Render | Selection | Copy/paste | Search |
+|---|---|---|---|---|
+| Chrome | Pass | Pass | Pass | 12/12 |
+| Brave | Pass | Pass | Pass | 12/12 |
+| Microsoft Edge | Pass | Pass | Pass | 12/12 |
+| Okular | Pass | Pass | Pass | Pass |
+| SumatraPDF | Pass | Pass | Pass | Pass |
+| Adobe Acrobat | Pass | Pass | Pass | 6/12 |
+| Firefox | Pass | Partial | Partial | 0/12 |
+| ONLYOFFICE | Pass | Pass visually | Fail | 0/12 |
+
+The same post records exact extraction for all 18 tested Khmer OS fonts with
+PDFium, PyMuPDF, Poppler `pdftotext -raw`, and Poppler `pdftotext -layout`.
+This is useful published interoperability evidence, but it is not a substitute
+for v0.3.1 release qualification: the post does not record exact viewer
+versions or operating systems, and its matrix predates the v0.2 and v0.3
+serializer architectures.
+
 ### Verified Typsastra standalone preview
 
 Typsastra now renders directly opened PDFs with bundled PDFium. PDF.js remains
@@ -139,23 +164,25 @@ the engine used by the automated comparison above and by live Typst previews;
 the standalone viewer uses PDFium so its painted page, extracted characters,
 and selectable geometry come from the same native PDF engine.
 
-The current PDFium standalone preview has been manually checked against the
-enhanced fixture:
+`bun run validate:pdfium-unicode` compiles the fixture, extracts characters
+through bundled `pdfium-bundled 0.1.1`, passes them through the production
+`buildPdfiumTextRuns()` adapter, and compares every labeled line exactly. A
+2026-08-26 run against the same published v0.3.1 Windows archive produced:
 
 | Capability | Result |
 |---|---|
-| Exact copied text | 9/10 labeled cases in the current manual fixture |
+| Exact reconstructed text | 9/10 labeled cases |
 | Combining Latin, Khmer, Devanagari, Thai, and Lao | Exact |
-| Arabic | Pure Arabic text is valid, but the mixed Latin label and RTL sentence are ordered incorrectly |
+| Arabic | The Latin label and Arabic sentence are returned as one reversed visual run |
 | Mixed script | Exact for the current fixture |
-| Selection bounds | Remain inside the page |
-| Complex-script rectangle alignment | Contiguous line-level geometry in the current fixture |
+| Selection bounds | Requires manual viewer confirmation |
+| Complex-script rectangle alignment | Requires manual viewer confirmation |
 
-This confirms that PDFium avoids the invalid Devanagari mappings exposed by the
-current PDF.js extraction path and provides stable selectable bounds for the
-tested scripts. The remaining Arabic failure is a bidirectional run-ordering
-issue in Typsastra's PDFium adapter, not missing Unicode data. Keep it visible
-in the compatibility matrix until mixed LTR/RTL line reconstruction is exact.
+PDFium avoids the invalid Devanagari mappings exposed by PDF.js, while PDF.js
+extracts the Arabic line exactly. This isolates the remaining failure to bidirectional run ordering
+in Typsastra's PDFium adapter rather than missing Unicode data in the v0.3.1
+export. Keep it visible in the compatibility matrix until the labeled Arabic
+line reconstructs exactly.
 
 For every viewer, manually record:
 

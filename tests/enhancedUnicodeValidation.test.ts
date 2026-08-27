@@ -6,6 +6,21 @@ import {
   type PdfTextItemGeometry
 } from "../scripts/enhanced-unicode-validation-core";
 
+test("PDFium validation uses the released engine and production text adapter", async () => {
+  const script = await Bun.file("scripts/run-pdfium-unicode-validation.ts").text();
+  const example = await Bun.file("src-tauri/examples/pdfium_text_dump.rs").text();
+  const packageJson = await Bun.file("package.json").json();
+
+  expect(packageJson.scripts["validate:pdfium-unicode"]).toBe(
+    "bun scripts/run-pdfium-unicode-validation.ts",
+  );
+  expect(script).toContain("buildPdfiumTextRuns");
+  expect(script).toContain('startsWith(`${fixtureCase.id}:`)');
+  expect(script).toContain("if (exact !== results.length) process.exitCode = 1");
+  expect(example).toContain("pdfium_bundled::bind_bundled()");
+  expect(example).toContain("char.unicode_string()");
+});
+
 test("Enhanced Unicode fixtures expose directly authored labeled cases", async () => {
   const source = await Bun.file("tests/fixtures/enhanced-unicode/unicode-selection.typ").text();
   const cases = parseUnicodeFixtureCases(source);
