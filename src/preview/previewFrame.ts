@@ -63,6 +63,10 @@ import {
 } from "./previewLinks";
 import { pageDimensionsChanged, pagesToEvict, visiblePageIndexes } from "./virtualization";
 import { PreviewMotionController } from "./previewMotion";
+import {
+  capturePreviewDocumentToken,
+  previewDocumentTokenIsCurrent,
+} from "./previewDocumentGeneration";
 import { applyDarkPreviewPixels } from "./darkPreview";
 import {
   capturePreviewViewportAnchor,
@@ -625,6 +629,23 @@ export class PreviewFrame {
     this.hideDraftImagePopover();
     const startedAt = performance.now();
     const generation = ++this.pdfGeneration;
+    this.resetStandalonePdfSearch();
+    this.cancelAllPageRenders();
+    this.mountedUrl = "";
+    this.mountedSessionKey = "";
+    this.currentPdfBytes = 0;
+    this.currentPdfBytesRead = 0;
+    this.currentPdfRangeRequests = 0;
+    this.currentPdfTransport = "none";
+    this.lastPageStatusKey = "";
+    this.onPageChanged?.({ currentPage: 0, pageCount: 0 });
+    this.onStandalonePdfOutlineChanged?.(surface === "pdf" ? [] : null);
+    const existingIframeDoc = this.iframe?.contentDocument ?? null;
+    if (existingIframeDoc) {
+      if (this.iframe) this.iframe.dataset.previewSurface = surface;
+      existingIframeDoc.documentElement.dataset.previewSurface = surface;
+      this.preparePdfReplacementSurface(existingIframeDoc);
+    }
     const obsoleteLoadingTask = this.pendingPdfLoadingTask;
     this.pendingPdfLoadingTask = null;
     if (obsoleteLoadingTask) void obsoleteLoadingTask.destroy().catch(() => {});
@@ -642,9 +663,7 @@ export class PreviewFrame {
     if (!iframeDoc) throw new Error("PDF preview document is unavailable.");
     iframe.dataset.previewSurface = surface;
     iframeDoc.documentElement.dataset.previewSurface = surface;
-    // Do not leave bookmarks from the previously mounted standalone PDF in
-    // the Outline panel while a replacement document is still loading.
-    this.onStandalonePdfOutlineChanged?.(surface === "pdf" ? [] : null);
+    if (iframeDoc !== existingIframeDoc) this.preparePdfReplacementSurface(iframeDoc);
 
     let nextPdfDoc: any = null;
     let nextLoadingTask: PdfLoadingHandle | null = null;
@@ -854,7 +873,8 @@ export class PreviewFrame {
         surface === "pdf" && isPdfiumDocument(pdfDoc) ? pdfDoc.outline : null,
       );
       if (this.isFitToWidth) this.previewZoomPercent = this.computeFitToWidthPercent();
-      this.createPageSlots(iframeDoc, true);
+      this.finishPdfReplacementSurface(iframeDoc);
+      this.createPageSlots(iframeDoc, false);
       this.updateHorizontalOverflow();
       this.setupIframeInteractions();
       this.installPageObserver(iframe);
@@ -898,6 +918,7 @@ export class PreviewFrame {
       this.schedulePdfResourceCleanup(oldPdfDoc, oldLoadingTask);
     } catch (error) {
       if (generation !== this.pdfGeneration) return 0;
+      this.finishPdfReplacementSurface(this.iframe?.contentDocument ?? null);
       this.setError("PDF Loading Failed", String(error));
     } finally {
       if (this.pendingPdfLoadingTask === nextLoadingTask) this.pendingPdfLoadingTask = null;
@@ -1021,6 +1042,26 @@ export class PreviewFrame {
     this.updateHorizontalOverflow();
     this.setupIframeInteractions();
     return iframe;
+  }
+
+  private preparePdfReplacementSurface(doc: Document): void {
+    this.previewLinkModifierHeld = false;
+    this.previewPointerInside = false;
+    this.setPreviewLinkModifier(doc, false);
+    const viewer = doc.getElementById("viewer-container");
+    if (viewer) {
+      viewer.setAttribute("aria-busy", "true");
+      releaseCanvasResources(viewer);
+      replaceElementChildren(viewer);
+    }
+    doc.documentElement.dataset.pdfReplacing = "true";
+    this.pageSlots = [];
+  }
+
+  private finishPdfReplacementSurface(doc: Document | null): void {
+    if (!doc) return;
+    delete doc.documentElement.dataset.pdfReplacing;
+    doc.getElementById("viewer-container")?.removeAttribute("aria-busy");
   }
 
   private createPageSlots(doc: Document, preserveExistingPages = false): void {
@@ -1797,6 +1838,14 @@ export class PreviewFrame {
     this.standalonePdfSelectionOwnsCompleteDocument = false;
     this.standalonePdfSearchMatches = [];
     this.standalonePdfSearchIndex = -1;
+    const doc = this.iframe?.contentDocument;
+    const panel = doc?.getElementById("pdf-search-panel") as HTMLElement | null;
+    const input = doc?.getElementById("pdf-search-input") as HTMLInputElement | null;
+    if (panel) panel.hidden = true;
+    if (input) input.value = "";
+    this.updateStandalonePdfSearchCount();
+    this.standalonePdfKeyboardActive = false;
+    doc?.getSelection()?.removeAllRanges();
     this.clearStandalonePdfSelection();
   }
 
@@ -1977,7 +2026,8 @@ export class PreviewFrame {
   }
 
   private isStandalonePdfSurface(): boolean {
-    return this.iframe?.contentDocument?.documentElement.dataset.previewSurface === "pdf";
+    const root = this.iframe?.contentDocument?.documentElement;
+    return root?.dataset.previewSurface === "pdf" && root.dataset.pdfReplacing !== "true";
   }
 
   private shouldOpenStandalonePdfSearch(event: KeyboardEvent): boolean {
@@ -2059,24 +2109,33 @@ export class PreviewFrame {
       return;
     }
 
+    const pdfDoc = this.pdfDoc;
+    const documentToken = capturePreviewDocumentToken(this.pdfGeneration, pdfDoc);
+    const isCurrent = () => (
+      generation === this.standalonePdfSearchGeneration
+      && previewDocumentTokenIsCurrent(documentToken, this.pdfGeneration, this.pdfDoc)
+    );
     const matches: StandalonePdfSearchMatch[] = [];
-    for (let pageNo = 1; pageNo <= Number(this.pdfDoc.numPages); pageNo += 1) {
-      if (generation !== this.standalonePdfSearchGeneration) return;
+    for (let pageNo = 1; pageNo <= Number(pdfDoc.numPages); pageNo += 1) {
+      if (!isCurrent()) return;
       try {
-        const page = await this.pdfDoc.getPage(pageNo);
+        const page = await pdfDoc.getPage(pageNo);
+        if (!isCurrent()) return;
         const textContent = normalizePdfLogicalTextContent(await page.getTextContent({
           disableNormalization: true,
           preserveLogicalText: true,
         } as any));
+        if (!isCurrent()) return;
         const items = Array.isArray(textContent?.items) ? textContent.items : [];
         for (const fragments of findPdfTextMatches(items, query)) {
           matches.push({ pageNo, fragments });
         }
       } catch (error) {
+        if (!isCurrent()) return;
         console.warn(`Failed to search standalone PDF page ${pageNo}:`, error);
       }
     }
-    if (generation !== this.standalonePdfSearchGeneration) return;
+    if (!isCurrent()) return;
     this.standalonePdfSearchMatches = matches;
     this.standalonePdfSearchIndex = matches.length > 0 ? 0 : -1;
     this.renderAllStandalonePdfSearchMarkers();
