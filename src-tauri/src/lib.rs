@@ -1622,6 +1622,141 @@ fn copy_workspace_file(source: String, dest: String) -> Result<(), String> {
         .map_err(|e| format!("Failed to copy: {}", e))
 }
 
+fn validate_staged_pdf(path: &Path) -> Result<(), String> {
+    let metadata = std::fs::metadata(path)
+        .map_err(|error| format!("Could not inspect the compiled PDF: {error}"))?;
+    if !metadata.is_file() || metadata.len() < 5 {
+        return Err("The compiler did not produce a non-empty PDF.".into());
+    }
+    let mut file = std::fs::File::open(path)
+        .map_err(|error| format!("Could not open the compiled PDF: {error}"))?;
+    let mut header = [0_u8; 5];
+    std::io::Read::read_exact(&mut file, &mut header)
+        .map_err(|error| format!("Could not validate the compiled PDF: {error}"))?;
+    if &header != b"%PDF-" {
+        return Err("The compiler output is not a valid PDF file.".into());
+    }
+    Ok(())
+}
+
+fn commit_pdf_export_at_with_replace<F>(
+    source: &Path,
+    destination: &Path,
+    replace: F,
+) -> Result<(), String>
+where
+    F: FnOnce(&Path, &Path) -> Result<(), String>,
+{
+    validate_staged_pdf(source)?;
+    let parent = destination
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .ok_or_else(|| "The PDF export destination has no parent directory.".to_string())?;
+    if !parent.is_dir() {
+        return Err("The PDF export destination directory does not exist.".into());
+    }
+
+    let mut staged = tempfile::NamedTempFile::new_in(parent)
+        .map_err(|error| format!("Could not stage the PDF beside its destination: {error}"))?;
+    let mut input = std::fs::File::open(source)
+        .map_err(|error| format!("Could not reopen the compiled PDF: {error}"))?;
+    std::io::copy(&mut input, &mut staged)
+        .map_err(|error| format!("Could not stage the completed PDF: {error}"))?;
+    std::io::Write::flush(&mut staged)
+        .map_err(|error| format!("Could not flush the staged PDF: {error}"))?;
+    let permissions = std::fs::metadata(destination)
+        .or_else(|_| std::fs::metadata(source))
+        .map_err(|error| format!("Could not determine PDF destination permissions: {error}"))?
+        .permissions();
+    std::fs::set_permissions(staged.path(), permissions)
+        .map_err(|error| format!("Could not apply PDF destination permissions: {error}"))?;
+    staged
+        .as_file()
+        .sync_all()
+        .map_err(|error| format!("Could not persist the staged PDF: {error}"))?;
+    let staged_path = staged.path().to_path_buf();
+    let (staged_file, persisted_path) = staged.keep().map_err(|error| {
+        format!(
+            "Could not retain the staged PDF for activation: {}",
+            error.error
+        )
+    })?;
+    drop(staged_file);
+    let result = replace(&persisted_path, destination);
+    if result.is_err() {
+        let _ = std::fs::remove_file(&staged_path);
+    }
+    result
+}
+
+fn commit_pdf_export_at(source: &Path, destination: &Path) -> Result<(), String> {
+    commit_pdf_export_at_with_replace(source, destination, atomic_replace_file)
+}
+
+#[cfg(windows)]
+fn atomic_replace_file(staged: &Path, destination: &Path) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        MoveFileExW, ReplaceFileW, MOVEFILE_WRITE_THROUGH, REPLACEFILE_WRITE_THROUGH,
+    };
+
+    let staged_wide = staged
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect::<Vec<_>>();
+    let destination_wide = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect::<Vec<_>>();
+    let succeeded = unsafe {
+        if destination.exists() {
+            ReplaceFileW(
+                destination_wide.as_ptr(),
+                staged_wide.as_ptr(),
+                std::ptr::null(),
+                REPLACEFILE_WRITE_THROUGH,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            )
+        } else {
+            MoveFileExW(
+                staged_wide.as_ptr(),
+                destination_wide.as_ptr(),
+                MOVEFILE_WRITE_THROUGH,
+            )
+        }
+    };
+    if succeeded == 0 {
+        return Err(format!(
+            "Could not atomically replace the PDF destination: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn atomic_replace_file(staged: &Path, destination: &Path) -> Result<(), String> {
+    std::fs::rename(staged, destination)
+        .map_err(|error| format!("Could not atomically replace the PDF destination: {error}"))?;
+    if let Some(parent) = destination.parent() {
+        std::fs::File::open(parent)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|error| format!("Could not persist the PDF destination directory: {error}"))?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn commit_pdf_export(source: String, destination: String) -> Result<(), String> {
+    let source = PathBuf::from(source);
+    let result = commit_pdf_export_at(&source, Path::new(&destination));
+    let _ = std::fs::remove_file(source);
+    result
+}
+
 use std::collections::HashMap;
 use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
@@ -3737,7 +3872,10 @@ fn warning_only_pdf_result(output_path: &Path, stderr: &str) -> bool {
 
 #[cfg(test)]
 mod export_compile_tests {
-    use super::{parse_typst_compiler_version, warning_only_pdf_result};
+    use super::{
+        commit_pdf_export_at, commit_pdf_export_at_with_replace, parse_typst_compiler_version,
+        validate_staged_pdf, warning_only_pdf_result,
+    };
 
     #[test]
     fn accepts_only_warning_output_that_produced_a_fresh_pdf() {
@@ -3756,6 +3894,61 @@ mod export_compile_tests {
             &pdf,
             "warning: recovered output\nerror: compilation failed"
         ));
+    }
+
+    #[test]
+    fn atomically_replaces_an_existing_pdf() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("compiled.pdf");
+        let destination = directory.path().join("document.pdf");
+        std::fs::write(&source, b"%PDF-1.7\nnew document").unwrap();
+        std::fs::write(&destination, b"%PDF-1.7\nprevious document").unwrap();
+
+        commit_pdf_export_at(&source, &destination).unwrap();
+
+        assert_eq!(
+            std::fs::read(&destination).unwrap(),
+            b"%PDF-1.7\nnew document"
+        );
+    }
+
+    #[test]
+    fn rejects_empty_and_non_pdf_output_without_changing_the_destination() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("compiled.pdf");
+        let destination = directory.path().join("document.pdf");
+        let previous = b"%PDF-1.7\nprevious document";
+        std::fs::write(&destination, previous).unwrap();
+
+        std::fs::write(&source, b"").unwrap();
+        assert!(validate_staged_pdf(&source).is_err());
+        assert!(commit_pdf_export_at(&source, &destination).is_err());
+        assert_eq!(std::fs::read(&destination).unwrap(), previous);
+
+        std::fs::write(&source, b"not a PDF").unwrap();
+        assert!(validate_staged_pdf(&source).is_err());
+        assert!(commit_pdf_export_at(&source, &destination).is_err());
+        assert_eq!(std::fs::read(&destination).unwrap(), previous);
+    }
+
+    #[test]
+    fn activation_failure_preserves_the_previous_pdf_and_removes_staging() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("compiled.pdf");
+        let destination = directory.path().join("document.pdf");
+        let previous = b"%PDF-1.7\nprevious document";
+        std::fs::write(&source, b"%PDF-1.7\nnew document").unwrap();
+        std::fs::write(&destination, previous).unwrap();
+        let staged_path = std::cell::RefCell::new(None);
+
+        let result = commit_pdf_export_at_with_replace(&source, &destination, |staged, _| {
+            *staged_path.borrow_mut() = Some(staged.to_path_buf());
+            Err("simulated destination failure".into())
+        });
+
+        assert!(result.is_err());
+        assert_eq!(std::fs::read(&destination).unwrap(), previous);
+        assert!(!staged_path.into_inner().unwrap().exists());
     }
 
     #[test]
@@ -5352,6 +5545,7 @@ pub fn run() {
             create_workspace_dir,
             rename_workspace_file,
             copy_workspace_file,
+            commit_pdf_export,
             read_workspace_dir,
             move_to_trash,
             reveal_in_explorer,

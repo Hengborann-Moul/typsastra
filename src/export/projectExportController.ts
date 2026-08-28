@@ -119,8 +119,7 @@ export class ProjectExportController {
         filePath: targetFilePath,
         compilerPath: enhancedUnicodeEnginePath,
       });
-      await invoke("copy_workspace_file", { source: pdfPath, dest: exportPdfPath });
-      await invoke("move_to_trash", { path: pdfPath });
+      await invoke("commit_pdf_export", { source: pdfPath, destination: exportPdfPath });
       this.deps.setLspStatus({ kind: "preview-ready", message: `Exported to ${exportPdfPath}` });
     } catch (error) {
       if (error instanceof RenderCacheCopyCancelled) {

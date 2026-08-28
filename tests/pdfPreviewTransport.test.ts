@@ -267,9 +267,10 @@ describe("compiled PDF transport", () => {
       new URL("../src/export/projectExportController.ts", import.meta.url),
     ).text();
     const selector = source.indexOf('title: "Export PDF"');
-    const workspaceCopy = source.indexOf('invoke("copy_workspace_file", { source: pdfPath, dest: exportPdfPath })');
+    const transactionalCommit = source.indexOf('invoke("commit_pdf_export", { source: pdfPath, destination: exportPdfPath })');
     expect(selector).toBeGreaterThan(-1);
-    expect(workspaceCopy).toBeGreaterThan(selector);
+    expect(transactionalCommit).toBeGreaterThan(selector);
+    expect(source).not.toContain('invoke("copy_workspace_file", { source: pdfPath');
     expect(source).toContain('filters: [{ name: "PDF Document", extensions: ["pdf"] }]');
     expect(source).toContain("if (!exportPdfPath)");
   });
