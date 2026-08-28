@@ -8,6 +8,7 @@ import { fileExtension, isBinaryImagePath, isTypstDocumentPath } from "../platfo
 import { fileNameFromPath, filePathKey } from "../platform/paths";
 import { participatesInPreviewCompilation } from "../preview/previewPolicy";
 import type { PreviewRenderMode } from "../settings";
+import { LatestRequestGuard } from "./latestRequestGuard";
 
 export interface ExternalFileReloadDependencies {
   presentation: EditorTabPresentationController;
@@ -30,25 +31,35 @@ export interface ExternalFileReloadDependencies {
   schedulePdfPreview(contents: string): void;
   setLspStatus(status: LspStatus): void;
   appendWorkspaceWarning(message: string): void;
+  invalidateLazyLoad(path: string): void;
 }
 
 /** Owns reconciliation of already-open files after accepted external filesystem changes. */
 export class ExternalFileReloadController {
   readonly conflictPaths = new Set<string>();
+  private readonly reloadRequests = new LatestRequestGuard<string>();
 
   constructor(private readonly deps: ExternalFileReloadDependencies) {}
 
   async reloadOpenFiles(refreshPreview = true): Promise<boolean> {
     let changed = false;
     for (const tab of [...this.deps.openTabs()]) {
-      const pathKey = filePathKey(tab.path);
-      const exists = await invoke<boolean>("workspace_path_exists", { path: tab.path });
+      const path = tab.path;
+      const pathKey = filePathKey(path);
+      const request = this.reloadRequests.begin(pathKey);
+      const isCurrent = () => (
+        this.reloadRequests.isCurrent(request)
+        && this.deps.openTabs().includes(tab)
+        && filePathKey(tab.path) === pathKey
+      );
+      const exists = await invoke<boolean>("workspace_path_exists", { path });
+      if (!isCurrent()) continue;
       if (!exists) {
         if (tab.isDirty) {
           this.reportConflict(tab.path, "was removed outside Typsastra");
         } else {
           this.conflictPaths.delete(pathKey);
-          await this.deps.closeTab(tab.path);
+          await this.deps.closeTab(path);
         }
         changed = true;
         continue;
@@ -56,6 +67,7 @@ export class ExternalFileReloadController {
 
       if (!this.deps.isInternallySupportedPath(tab.path)) continue;
       if (!tab.contentLoaded) {
+        this.deps.invalidateLazyLoad(path);
         tab.sizeBytes = undefined;
         tab.lineCount = undefined;
         continue;
@@ -71,13 +83,14 @@ export class ExternalFileReloadController {
       let contents: string;
       try {
         contents = isBinaryImagePath(tab.path)
-          ? await invoke<string>("read_workspace_file_as_base64", { path: tab.path })
-          : normalizeEditorText(await invoke<string>("read_workspace_file", { path: tab.path }));
+          ? await invoke<string>("read_workspace_file_as_base64", { path })
+          : normalizeEditorText(await invoke<string>("read_workspace_file", { path }));
       } catch (error) {
         console.warn(`Unable to reload ${tab.path}:`, error);
         continue;
       }
 
+      if (!isCurrent()) continue;
       if (contents === tab.savedContent) {
         this.conflictPaths.delete(pathKey);
         continue;
@@ -97,8 +110,8 @@ export class ExternalFileReloadController {
       }
 
       this.conflictPaths.delete(pathKey);
-      await this.applyExternalFileContent(tab, contents, refreshPreview);
-      changed = true;
+      await this.applyExternalFileContent(tab, contents, refreshPreview, isCurrent);
+      if (isCurrent()) changed = true;
     }
     return changed;
   }
@@ -121,7 +134,9 @@ export class ExternalFileReloadController {
     tab: EditorTab,
     contents: string,
     refreshPreview: boolean,
+    isCurrent: () => boolean,
   ): Promise<void> {
+    if (!isCurrent()) return;
     const activeFilePath = this.deps.activeFilePath();
     const isActive = activeFilePath !== null && filePathKey(tab.path) === filePathKey(activeFilePath);
     tab.content = contents;
@@ -163,13 +178,17 @@ export class ExternalFileReloadController {
     const client = this.deps.lspClient();
     if (this.deps.lspReady() && client) {
       const lspRes = await this.deps.resolveLspDocument(tab.path, contents);
-      if (lspRes) {
+      if (lspRes && isCurrent()) {
         await this.deps.lspDocuments.openIfNeeded(lspRes.uri, lspRes.content, version);
+        if (!isCurrent()) return;
         await client.notifyTextChange(lspRes.uri, lspRes.content, version);
+        if (!isCurrent()) return;
         await client.notifyTextSave(lspRes.uri, lspRes.content);
+        if (!isCurrent()) return;
         lspUpdated = true;
       }
     }
+    if (!isCurrent()) return;
     if (
       refreshPreview
       && participatesInPreviewCompilation(tab.path, this.deps.pinnedMainFilePath(), tab.previewImported)

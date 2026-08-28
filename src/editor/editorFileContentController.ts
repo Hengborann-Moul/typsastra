@@ -3,6 +3,7 @@ import { fileExtension, isBinaryImagePath, isSupportedInAppPath } from "../platf
 import { filePathKey } from "../platform/paths";
 import type { EditorTab } from "./editorTab";
 import type { EditorFoldRange } from "./folding";
+import { LatestRequestGuard } from "../workspace/latestRequestGuard";
 
 export interface EditorFileContentDependencies {
   normalizeFoldRanges(value: unknown, docLength: number): EditorFoldRange[];
@@ -12,6 +13,7 @@ export interface EditorFileContentDependencies {
 export class EditorFileContentController {
   private readonly detectedPlainTextPaths = new Set<string>();
   private readonly classifiedUnknownPaths = new Set<string>();
+  private readonly loadRequests = new LatestRequestGuard<string>();
 
   constructor(private readonly deps: EditorFileContentDependencies) {}
 
@@ -32,18 +34,27 @@ export class EditorFileContentController {
     return isPlainText;
   }
 
+  invalidateLoad(path: string): void {
+    this.loadRequests.invalidate(filePathKey(path));
+  }
+
   async loadTabContent(tab: EditorTab): Promise<void> {
-    if (tab.contentLoaded) return;
-    const contents = fileExtension(tab.path) === "pdf"
-      ? ""
-      : isBinaryImagePath(tab.path)
-        ? await invoke<string>("read_workspace_file_as_base64", { path: tab.path })
-        : normalizeEditorText(await invoke<string>("read_workspace_file", { path: tab.path }));
-    tab.content = contents;
-    tab.savedContent = contents;
-    tab.contentLoaded = true;
-    tab.undoHistory = undefined;
-    tab.foldRanges = this.deps.normalizeFoldRanges(tab.foldRanges, contents.length);
+    const path = tab.path;
+    const pathKey = filePathKey(path);
+    while (!tab.contentLoaded && filePathKey(tab.path) === pathKey) {
+      const request = this.loadRequests.begin(pathKey);
+      const contents = fileExtension(path) === "pdf"
+        ? ""
+        : isBinaryImagePath(path)
+          ? await invoke<string>("read_workspace_file_as_base64", { path })
+          : normalizeEditorText(await invoke<string>("read_workspace_file", { path }));
+      if (!this.loadRequests.isCurrent(request)) continue;
+      tab.content = contents;
+      tab.savedContent = contents;
+      tab.contentLoaded = true;
+      tab.undoHistory = undefined;
+      tab.foldRanges = this.deps.normalizeFoldRanges(tab.foldRanges, contents.length);
+    }
   }
 }
 

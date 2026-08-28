@@ -324,6 +324,7 @@ export class TypsastraWorkspaceController {
     schedulePdfPreview: contents => this.schedulePdfPreview(contents),
     setLspStatus: status => this.setLspStatus(status),
     appendWorkspaceWarning: message => this.appendLspLog({ kind: "warning", source: "workspace", message }),
+    invalidateLazyLoad: path => this.editorFileContentController.invalidateLoad(path),
   });
   private get activeFilePath(): string | null { return this.editorSessionController.activeFilePath; }
   private set activeFilePath(path: string | null) { this.editorSessionController.activeFilePath = path; }

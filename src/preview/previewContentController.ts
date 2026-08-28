@@ -7,6 +7,7 @@ import {
   isTypstDocumentPath,
 } from "../platform/fileTypes";
 import type { PreviewRenderMode } from "../settings";
+import { LatestRequestGuard } from "../workspace/latestRequestGuard";
 import type { ImagePreviewController } from "./imagePreviewController";
 import type { MarkdownPreviewFrame } from "./markdownPreviewFrame";
 import type { PreviewFrame } from "./previewFrame";
@@ -54,6 +55,8 @@ export interface PreviewContentDependencies {
 
 /** Owns selection of the active preview surface and restoration of document preview content. */
 export class PreviewContentController {
+  private readonly refreshRequests = new LatestRequestGuard<"preview">();
+
   public constructor(private readonly deps: PreviewContentDependencies) {}
 
   public suspendDocumentPreviewForImageTools(): void {
@@ -120,10 +123,20 @@ export class PreviewContentController {
   }
 
   public async refreshActivePreviewRoot(forceRender = false): Promise<void> {
+    const request = this.refreshRequests.begin("preview");
     if (this.deps.isImageToolActive()) return;
-    const activeFilePath = this.deps.getActiveFilePath();
-    if (!activeFilePath) return;
-    const path = activeFilePath;
+    const path = this.deps.getActiveFilePath();
+    if (!path) return;
+    const activeTab = this.deps.getActiveTab();
+    const workspaceRootPath = this.deps.getWorkspaceRootPath();
+    const pinnedMainPath = this.deps.getPinnedMainFilePath();
+    const previewRenderMode = this.deps.getPreviewRenderMode();
+    const isCurrent = () => (
+      this.refreshRequests.isCurrent(request)
+      && this.deps.getActiveFilePath() === path
+      && this.deps.getActiveTab() === activeTab
+      && this.deps.getWorkspaceRootPath() === workspaceRootPath
+    );
     const ext = fileExtension(path);
     const unsupportedFile = !this.deps.isInternallySupportedPath(path);
     const isPdf = ext === "pdf";
@@ -132,10 +145,9 @@ export class PreviewContentController {
     this.deps.updateActionsToolbar(path);
 
     if (unsupportedFile || isBinaryImagePath(path) || isPdf) {
-      const tab = this.deps.getActiveTab();
-      if (!tab) return;
+      if (!activeTab) return;
       if (isBinaryImagePath(path)) {
-        this.renderInteractiveImageViewer(tab.content);
+        this.renderInteractiveImageViewer(activeTab.content);
       } else if (isPdf) {
         void this.deps.loadPdfPath(path, path);
       } else {
@@ -166,50 +178,54 @@ export class PreviewContentController {
       );
       return;
     }
-    if (!this.deps.getPinnedMainFilePath()) {
+    if (!pinnedMainPath) {
       this.deps.previewFrame.setMessage(this.noMainFileMessage());
       return;
     }
-    const activeTab = this.deps.getActiveTab();
     const contents = activeTab?.contentLoaded
       ? this.deps.getEditorText()
       : normalizeEditorText(await invoke<string>("read_workspace_file", { path }));
+    if (!isCurrent()) return;
     let target = await invoke<PreviewTarget>("resolve_preview_main", {
-      filePath: this.deps.getActiveFilePath(),
-      workspaceRootPath: this.deps.getWorkspaceRootPath(),
+      filePath: path,
+      workspaceRootPath,
       fileContents: contents,
-      pinnedMainPath: this.deps.getPinnedMainFilePath(),
+      pinnedMainPath,
     });
+    if (!isCurrent()) return;
     if (target.disabled) {
       if (activeTab) {
         this.deps.applyPreviewTargetToTab(activeTab, target);
         this.deps.configureDocumentLanguageTools(contents);
       }
-      this.deps.invalidatePreviewWork(`${this.deps.getActiveFilePath()} does not participate in the configured main preview`);
+      this.deps.invalidatePreviewWork(`${path} does not participate in the configured main preview`);
       this.deps.previewFrame.setMessage(this.disabledPreviewMessage());
       return;
     }
-    target = await this.deps.prepareTemplateAwarePreview(target, this.deps.getActiveFilePath()!, contents);
-    if (!await this.deps.ensureLargePreviewApproved(target.rootPath)) {
-      const tab = this.deps.getActiveTab();
-      if (tab) {
-        this.deps.applyPreviewTargetToTab(tab, target);
+    target = await this.deps.prepareTemplateAwarePreview(target, path, contents);
+    if (!isCurrent()) return;
+    const approved = await this.deps.ensureLargePreviewApproved(target.rootPath);
+    if (!isCurrent()) return;
+    if (!approved) {
+      if (activeTab) {
+        this.deps.applyPreviewTargetToTab(activeTab, target);
         this.deps.configureDocumentLanguageTools(contents);
       }
       return;
     }
     await this.deps.updatePinnedMain(previewLspMainPath(target));
+    if (!isCurrent()) return;
     const docIdentity = target.rootPath
       ? researchDocumentIdentity(
-          this.deps.getWorkspaceRootPath() ?? target.rootPath,
+          workspaceRootPath ?? target.rootPath,
           target.mainPath,
-          this.deps.getActiveFilePath()!,
+          path,
         )
       : null;
     const identity = target.rootPath
       ? previewSessionIdentity(
           target.rootPath,
-          previewRefreshStyle(this.deps.getPreviewRenderMode()),
+          previewRefreshStyle(previewRenderMode),
           docIdentity ?? undefined,
         )
       : null;
@@ -227,6 +243,7 @@ export class PreviewContentController {
       return;
     }
 
+    if (!isCurrent()) return;
     await this.deps.renderPdfPreview(contents);
   }
 }
