@@ -12,10 +12,10 @@ use crate::toolchain::ToolchainInstallProgress;
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
-const MANIFEST_URL: &str = "https://github.com/Sovichea/typsastra/releases/download/enhanced-unicode-v0.3.1/enhanced-unicode-manifest.json";
+const MANIFEST_URL: &str = "https://github.com/Sovichea/typsastra/releases/download/enhanced-unicode-v0.4.0/enhanced-unicode-manifest.json";
 const RELEASE_REPOSITORY: &str = "Sovichea/typsastra";
-const RELEASE_TAG: &str = "enhanced-unicode-v0.3.1";
-const ENGINE_VERSION: &str = "0.3.1";
+const RELEASE_TAG: &str = "enhanced-unicode-v0.4.0";
+const ENGINE_VERSION: &str = "0.4.0";
 const DOWNLOAD_ATTEMPTS: usize = 3;
 const MAX_DOWNLOAD_BYTES: u64 = 128 * 1024 * 1024;
 const DOWNLOAD_STALL_TIMEOUT: Duration = Duration::from_secs(60);
@@ -31,38 +31,38 @@ struct PinnedAsset {
 const PINNED_ASSETS: &[PinnedAsset] = &[
     PinnedAsset {
         target: "x86_64-pc-windows-msvc",
-        archive: "typsastra-enhanced-unicode-v0.3.1-x86_64-pc-windows-msvc.zip",
+        archive: "typsastra-enhanced-unicode-v0.4.0-x86_64-pc-windows-msvc.zip",
         executable: "typst.exe",
-        bytes: 23_310_845,
-        sha256: "e087ebd335c20a5273796803f9244526916e13900e71e010ce59de7720d31faf",
+        bytes: 23_333_041,
+        sha256: "ae7e245a7f813da0c481bd4d9bce369c14c26b9658c26b4483d72b2e813257a3",
     },
     PinnedAsset {
         target: "x86_64-unknown-linux-gnu",
-        archive: "typsastra-enhanced-unicode-v0.3.1-x86_64-unknown-linux-gnu.zip",
+        archive: "typsastra-enhanced-unicode-v0.4.0-x86_64-unknown-linux-gnu.zip",
         executable: "typst",
-        bytes: 23_391_594,
-        sha256: "989c2487decbe5a1250d090b89e19d684162c308092d3f0ee79a2bb321be8e41",
+        bytes: 23_412_159,
+        sha256: "7b8abbced1ea873b8c96cfc82ecdd19aba23197fded19c9017d60be892078784",
     },
     PinnedAsset {
         target: "aarch64-unknown-linux-gnu",
-        archive: "typsastra-enhanced-unicode-v0.3.1-aarch64-unknown-linux-gnu.zip",
+        archive: "typsastra-enhanced-unicode-v0.4.0-aarch64-unknown-linux-gnu.zip",
         executable: "typst",
-        bytes: 22_495_100,
-        sha256: "ae6a41eff7bc151787238a727f783a12006d9b679d657ae293e029f47e052cfb",
+        bytes: 22_520_392,
+        sha256: "b8aa9da0cbb20f21db0c614b2e774e4be5e5797762262f9e7290237157366932",
     },
     PinnedAsset {
         target: "x86_64-apple-darwin",
-        archive: "typsastra-enhanced-unicode-v0.3.1-x86_64-apple-darwin.zip",
+        archive: "typsastra-enhanced-unicode-v0.4.0-x86_64-apple-darwin.zip",
         executable: "typst",
-        bytes: 22_926_840,
-        sha256: "bb73e8d5c9dc80dc3fa1cdf208ba98abcbb99c510c89482b0409ef04e0054fde",
+        bytes: 22_949_338,
+        sha256: "de6d36a828c03fb675c954cd410920dfbb6e243b42193ff7cb5523dbe7697275",
     },
     PinnedAsset {
         target: "aarch64-apple-darwin",
-        archive: "typsastra-enhanced-unicode-v0.3.1-aarch64-apple-darwin.zip",
+        archive: "typsastra-enhanced-unicode-v0.4.0-aarch64-apple-darwin.zip",
         executable: "typst",
-        bytes: 22_058_087,
-        sha256: "db0a73daa3b8dabb35167c66ce02df18bc3262f6568bcba1d2db59292ca0655f",
+        bytes: 22_060_106,
+        sha256: "a74647186706efa0470a24649e2c79ed7140fb868bd4b1ccf0d1cb5cb919faea",
     },
 ];
 

@@ -44,7 +44,7 @@ The following work landed after v0.7.0 and must be treated as an integrated
 release candidate rather than independent experiments:
 
 - managed, checksummed Enhanced Unicode Engine installation;
-- Enhanced Unicode Engine v0.3.1 with the logical-unit v3 serializer;
+- Enhanced Unicode Engine v0.4.0 with the compact logical-font v4 serializer;
 - reproducible source and binary release metadata;
 - PDF 1.4 through 2.0, PDF/A, and PDF/UA release validation;
 - bundled PDFium rendering for directly opened PDFs;

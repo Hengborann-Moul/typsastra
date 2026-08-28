@@ -227,7 +227,7 @@ the [v0.7.0 Markdown live preview implementation plan](./V0_7_0_MARKDOWN_LIVE_PR
 Stabilize the end-to-end multilingual PDF workflow introduced after v0.7.0
 without adding another large editor or preview-root architecture.
 
-- Productize the optional, managed Enhanced Unicode Engine v0.3.1 for explicit
+- Productize the optional, managed Enhanced Unicode Engine v0.4.0 for explicit
   PDF export while keeping Tinymist authoritative for live services.
 - Lock the multilingual extraction, PDF-standard, and wide repeated-fill
   regressions into engine release validation on every supported platform.

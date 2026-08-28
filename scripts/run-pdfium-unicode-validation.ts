@@ -32,7 +32,7 @@ async function run(command: string[]): Promise<string> {
 
 await rm(outputDirectory, { recursive: true, force: true });
 await mkdir(outputDirectory, { recursive: true });
-const pdfPath = join(outputDirectory, "enhanced-v0.3.1.pdf");
+const pdfPath = join(outputDirectory, "enhanced-v0.4.0.pdf");
 await run([enhancedExecutable, "compile", fixturePath, pdfPath]);
 const version = await run([enhancedExecutable, "--version"]);
 const dump = await run([

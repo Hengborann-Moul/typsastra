@@ -87,7 +87,7 @@ operation:
 
 1. Open **Settings > Developer** and enable **Developer mode**.
 2. Enable **Enhanced Unicode PDF engine** to download and install the pinned,
-   checksummed v0.3.1 package for the current platform.
+   checksummed v0.4.0 package for the current platform.
 3. Alternatively, choose a compatible local executable built from the pinned
    enhanced Typst fork.
 4. Leave **Use for PDF export** enabled and export the document normally.
@@ -222,21 +222,21 @@ Conformance validation complements, rather than replaces, the viewer matrix:
 standards validators test the PDF's declared structure while manual viewer
 tests expose selection, search, clipboard, and geometry interoperability.
 
-## Engine release 0.3.1
+## Engine release 0.4.0
 
 The current reproducible engine packages are defined by
-[`release-v0.3.1.json`](../toolchains/enhanced-unicode/release-v0.3.1.json) and
+[`release-v0.4.0.json`](../toolchains/enhanced-unicode/release-v0.4.0.json) and
 published from this repository under the scoped tag
-`enhanced-unicode-v0.3.1`. Keeping the artifacts in the Typsastra repository
+`enhanced-unicode-v0.4.0`. Keeping the artifacts in the Typsastra repository
 avoids presenting the Typst fork as an unrelated or official upstream binary.
 
 The release workflow also compiles
 `tests/fixtures/enhanced-unicode/wide-repeated-fill.typ` with every platform
-binary. This locks the v0.3.1 fallback for logical units that would otherwise
+binary. This retains the fallback for logical units that would otherwise
 exceed signed 16-bit TrueType component coordinates.
 
 The release remains explicitly opt-in and separate from Tinymist. It is used
 only for explicit PDF exports and never replaces live preview, LSP,
 autocomplete, diagnostics, or source synchronization. See the
-[v0.3.1 engine release notes](ENHANCED_UNICODE_ENGINE_RELEASE_NOTES_V0.3.1.md)
+[v0.4.0 engine release notes](ENHANCED_UNICODE_ENGINE_RELEASE_NOTES_V0.4.0.md)
 for pinned source revisions, supported packages, and current validation scope.

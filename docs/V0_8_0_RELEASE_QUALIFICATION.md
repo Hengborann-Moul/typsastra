@@ -19,9 +19,9 @@ Record these values when release qualification begins:
 | Application version | 0.8.0 |
 | Managed Tinymist version | pending |
 | Embedded Typst version | pending |
-| Enhanced Unicode Engine version | 0.3.1 |
-| Enhanced Typst revision | `75202cf09a26a5ef5dfd0f26ab7a4fe007e1be39` |
-| Enhanced Krilla revision | `d05158cf3ebead248745f846d0397e84dfb9f2d0` |
+| Enhanced Unicode Engine version | 0.4.0 |
+| Enhanced Typst revision | `821bf1bf6ad099531219647b268342fc87851a8b` |
+| Enhanced Krilla revision | `bb0873416484587814b9ecb682e262056f8effe2` |
 | PDFium package | `pdfium-bundled 0.1.1` |
 | PDF.js package | `pdfjs-dist 6.2.108` plus Typsastra patch |
 | Qualification dates | pending |
@@ -128,7 +128,7 @@ Published historical evidence:
 - The [Typst Forum viewer matrix](https://forum.typst.app/t/typsastra-enhanced-unicode-engine-for-better-unicode-in-pdfs/9709)
   records v0.1.0 Khmer rendering, selection, copy/paste, and search results for
   Chrome, Brave, Edge, Okular, SumatraPDF, Acrobat, Firefox, and ONLYOFFICE.
-  Treat it as prior evidence, not as a completed v0.3.1 row, because exact
+  Treat it as prior evidence, not as a completed v0.4.0 row, because exact
   viewer versions and operating systems were not recorded.
 
 Known issue requiring a release decision:
@@ -181,7 +181,7 @@ platform exposes them.
 ## Documentation and release freeze
 
 - [ ] `ROADMAP.md` reflects the final delivered scope.
-- [ ] Settings and troubleshooting documentation match managed v0.3.1 behavior.
+- [ ] Settings and troubleshooting documentation match managed v0.4.0 behavior.
 - [ ] Release notes distinguish Tinymist, Enhanced Unicode export, PDF.js live
   preview, and PDFium standalone viewing.
 - [ ] Experimental and known-limitation labels are accurate.
