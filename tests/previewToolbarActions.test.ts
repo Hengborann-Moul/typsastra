@@ -35,6 +35,16 @@ describe("preview toolbar actions", () => {
     expect(contextMenu).not.toContain('id="ctx-preview-forward-sync"');
   });
 
+  test("opens search from the standalone PDF toolbar", () => {
+    expect(html).toContain('id="preview-search-btn"');
+    expect(html).toContain('title="Find in PDF (Ctrl+F)"');
+    expect(bindings).toContain(
+      'document.getElementById("preview-search-btn")?.addEventListener("click", actions.openStandalonePdfSearch)',
+    );
+    expect(app).toContain("openStandalonePdfSearch: () => this.previewFrame.openStandalonePdfSearch()");
+    expect(previewFrame).toContain("public openStandalonePdfSearch(): void");
+  });
+
   test("recompile restarts Tinymist and restores the preview viewport", () => {
     const recompile = methodBody(
       app,

@@ -46,6 +46,7 @@ export interface AppEventActions {
   zoomOut: () => void;
   zoomIn: () => void;
   zoomToFit: () => void;
+  openStandalonePdfSearch: () => void;
   recompilePreview: () => Promise<void> | void;
   showImageHeavyDetails: () => Promise<void> | void;
   initializePreviewPageControls: () => void;
@@ -330,6 +331,7 @@ export function bindAppEvents(actions: AppEventActions): void {
   document.getElementById("preview-zoom-out-btn")?.addEventListener("click", actions.zoomOut);
   document.getElementById("preview-zoom-in-btn")?.addEventListener("click", actions.zoomIn);
   document.getElementById("preview-zoom-fit-btn")?.addEventListener("click", actions.zoomToFit);
+  document.getElementById("preview-search-btn")?.addEventListener("click", actions.openStandalonePdfSearch);
   document.getElementById("preview-recompile-btn")?.addEventListener("click", () => void actions.recompilePreview());
   document.getElementById("preview-image-warning-btn")?.addEventListener("click", () => void actions.showImageHeavyDetails());
   document.getElementById("preview-content-mode-toggle")?.addEventListener("click", () => {

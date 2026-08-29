@@ -2091,7 +2091,7 @@ export class PreviewFrame {
     return true;
   }
 
-  private openStandalonePdfSearch(): void {
+  public openStandalonePdfSearch(): void {
     const doc = this.iframe?.contentDocument;
     if (!doc || !this.isStandalonePdfSurface()) return;
     const panel = doc.getElementById("pdf-search-panel") as HTMLElement | null;

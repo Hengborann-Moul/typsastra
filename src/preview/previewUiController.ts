@@ -106,6 +106,7 @@ export class PreviewUiController {
     const showTypstOnly = isTypstDocumentPath(path);
     const contentModeToggle = document.getElementById("preview-content-mode-toggle");
     const recompileBtn = document.getElementById("preview-recompile-btn");
+    const searchBtn = document.getElementById("preview-search-btn");
     const menuBtn = document.getElementById("preview-menu-btn");
     const imageWarningBtn = document.getElementById("preview-image-warning-btn");
     document.querySelector<HTMLElement>(".preview-page-controls")?.classList.toggle("hidden", isImage || isMarkdown);
@@ -115,6 +116,7 @@ export class PreviewUiController {
       if (showTypstOnly) recompileBtn.classList.remove("hidden");
       else recompileBtn.classList.add("hidden");
     }
+    searchBtn?.classList.toggle("hidden", !isPdf);
     if (menuBtn) {
       if (showTypstOnly || isPdf) menuBtn.classList.remove("hidden");
       else menuBtn.classList.add("hidden");

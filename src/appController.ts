@@ -2896,6 +2896,7 @@ export class TypsastraWorkspaceController {
       zoomOut: () => this.zoomOut(),
       zoomIn: () => this.zoomIn(),
       zoomToFit: () => this.zoomToFit(),
+      openStandalonePdfSearch: () => this.previewFrame.openStandalonePdfSearch(),
       recompilePreview: () => this.recompilePreviewManually(),
       showImageHeavyDetails: () => this.draftPreviewController.showImageHeavyDetails(),
       initializePreviewPageControls: () => this.initializePreviewPageControls(),
