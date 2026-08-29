@@ -167,6 +167,26 @@ impl PdfiumPreviewState {
     }
 }
 
+const PDF_OPEN_EMPTY_ERROR: &str = "TYPSASTRA_PDF_OPEN_EMPTY";
+const PDF_OPEN_PASSWORD_ERROR: &str = "TYPSASTRA_PDF_OPEN_PASSWORD";
+const PDF_OPEN_MALFORMED_ERROR: &str = "TYPSASTRA_PDF_OPEN_MALFORMED";
+const PDF_OPEN_UNSUPPORTED_ERROR: &str = "TYPSASTRA_PDF_OPEN_UNSUPPORTED";
+
+fn classify_pdfium_open_error(error: PdfiumError) -> String {
+    match error {
+        PdfiumError::PdfiumLibraryInternalError(PdfiumInternalError::PasswordError) => {
+            PDF_OPEN_PASSWORD_ERROR.to_string()
+        }
+        PdfiumError::PdfiumLibraryInternalError(PdfiumInternalError::FormatError) => {
+            PDF_OPEN_MALFORMED_ERROR.to_string()
+        }
+        PdfiumError::PdfiumLibraryInternalError(PdfiumInternalError::SecurityError) => {
+            PDF_OPEN_UNSUPPORTED_ERROR.to_string()
+        }
+        error => format!("PDFium could not open the document: {error}"),
+    }
+}
+
 fn run_pdfium_worker(receiver: mpsc::Receiver<PdfiumRequest>) {
     let pdfium = match pdfium_bundled::bind_bundled() {
         Ok(pdfium) => pdfium,
@@ -192,10 +212,13 @@ fn run_pdfium_worker(receiver: mpsc::Receiver<PdfiumRequest>) {
                     let byte_length = std::fs::metadata(&path)
                         .map_err(|error| format!("Failed to inspect PDF: {error}"))?
                         .len();
+                    if byte_length == 0 {
+                        return Err(PDF_OPEN_EMPTY_ERROR.to_string());
+                    }
                     let document = pdfium
                         .load_pdf_from_file(&path, None)
-                        .map_err(|error| format!("PDFium could not open the document: {error}"))?;
-                    let pages = document
+                        .map_err(classify_pdfium_open_error)?;
+                    let pages: Vec<PdfiumPageDimensions> = document
                         .pages()
                         .iter()
                         .map(|page| PdfiumPageDimensions {
@@ -203,6 +226,9 @@ fn run_pdfium_worker(receiver: mpsc::Receiver<PdfiumRequest>) {
                             height: page.height().value,
                         })
                         .collect();
+                    if pages.is_empty() {
+                        return Err(PDF_OPEN_EMPTY_ERROR.to_string());
+                    }
                     let links = extract_document_links(&document);
                     let outline = extract_document_outline(&document);
                     let (semantic_markers, font_families) = load_pdf_metadata(&path);
@@ -1204,6 +1230,33 @@ mod semantic_marker_tests {
             });
 
         assert_eq!(transform.apply(0.0, 0.0), (16.0, 28.0));
+    }
+}
+
+#[cfg(test)]
+mod pdf_open_error_tests {
+    use super::*;
+
+    #[test]
+    fn classifies_pdfium_document_open_failures() {
+        assert_eq!(
+            classify_pdfium_open_error(PdfiumError::PdfiumLibraryInternalError(
+                PdfiumInternalError::PasswordError,
+            )),
+            PDF_OPEN_PASSWORD_ERROR,
+        );
+        assert_eq!(
+            classify_pdfium_open_error(PdfiumError::PdfiumLibraryInternalError(
+                PdfiumInternalError::FormatError,
+            )),
+            PDF_OPEN_MALFORMED_ERROR,
+        );
+        assert_eq!(
+            classify_pdfium_open_error(PdfiumError::PdfiumLibraryInternalError(
+                PdfiumInternalError::SecurityError,
+            )),
+            PDF_OPEN_UNSUPPORTED_ERROR,
+        );
     }
 }
 

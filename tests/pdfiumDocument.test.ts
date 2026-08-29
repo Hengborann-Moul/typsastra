@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   buildPdfiumTextRuns,
+  classifyStandalonePdfLoadFailure,
   groupPdfiumGlyphsByGrapheme,
   PdfiumPage,
   type PdfiumPageText,
@@ -13,6 +14,28 @@ function page(chars: PdfiumPageText["chars"]): PdfiumPageText {
 function char(text: string, left: number, bottom: number, right: number, top: number) {
   return { text, left, bottom, right, top, fontSize: top - bottom };
 }
+
+describe("standalone PDF load failures", () => {
+  test("presents clear messages for known bad PDF categories", () => {
+    expect(classifyStandalonePdfLoadFailure("TYPSASTRA_PDF_OPEN_PASSWORD")).toEqual({
+      title: "Password-protected PDF",
+      message: "Typsastra cannot open a PDF that requires a password.",
+    });
+    expect(classifyStandalonePdfLoadFailure("TYPSASTRA_PDF_OPEN_MALFORMED").title)
+      .toBe("Damaged or invalid PDF");
+    expect(classifyStandalonePdfLoadFailure("TYPSASTRA_PDF_OPEN_EMPTY").title)
+      .toBe("Empty PDF");
+    expect(classifyStandalonePdfLoadFailure("TYPSASTRA_PDF_OPEN_UNSUPPORTED").title)
+      .toBe("Unsupported PDF");
+  });
+
+  test("preserves unexpected loader details for diagnosis", () => {
+    expect(classifyStandalonePdfLoadFailure("backend unavailable")).toEqual({
+      title: "PDF loading failed",
+      message: "backend unavailable",
+    });
+  });
+});
 
 describe("PDFium standalone text runs", () => {
   test("exposes standalone links in PDF coordinates", async () => {

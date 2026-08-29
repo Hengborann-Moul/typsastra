@@ -31,6 +31,43 @@ type PdfiumDocumentInfo = {
   outline: PdfiumOutlineItem[];
 };
 
+export type StandalonePdfLoadFailure = {
+  title: string;
+  message: string;
+};
+
+export function classifyStandalonePdfLoadFailure(error: unknown): StandalonePdfLoadFailure {
+  const detail = String(error);
+  if (detail.includes("TYPSASTRA_PDF_OPEN_PASSWORD")) {
+    return {
+      title: "Password-protected PDF",
+      message: "Typsastra cannot open a PDF that requires a password.",
+    };
+  }
+  if (detail.includes("TYPSASTRA_PDF_OPEN_MALFORMED")) {
+    return {
+      title: "Damaged or invalid PDF",
+      message: "This file is malformed, damaged, or does not contain a valid PDF document.",
+    };
+  }
+  if (detail.includes("TYPSASTRA_PDF_OPEN_EMPTY")) {
+    return {
+      title: "Empty PDF",
+      message: "This PDF is empty or does not contain any pages.",
+    };
+  }
+  if (detail.includes("TYPSASTRA_PDF_OPEN_UNSUPPORTED")) {
+    return {
+      title: "Unsupported PDF",
+      message: "This PDF uses encryption or security settings that Typsastra does not support.",
+    };
+  }
+  return {
+    title: "PDF loading failed",
+    message: detail,
+  };
+}
+
 export type PdfiumTextChar = {
   text: string;
   left: number | null;

@@ -36,6 +36,19 @@ describe("standalone PDF document replacement", () => {
     expect(source).toContain('root.dataset.pdfReplacing !== "true"');
   });
 
+  test("detaches the previous document when a replacement fails", async () => {
+    const source = await Bun.file(new URL("../src/preview/previewFrame.ts", import.meta.url)).text();
+    const failure = source.indexOf("} catch (error) {", source.indexOf("private async loadPdfSource("));
+    const finallyBlock = source.indexOf("} finally {", failure);
+    const failureBody = source.slice(failure, finallyBlock);
+
+    expect(failureBody).toContain("this.pdfDoc = null;");
+    expect(failureBody).toContain("this.pdfLoadingTask = null;");
+    expect(failureBody).toContain("this.pageDimensions.clear();");
+    expect(failureBody).toContain("classifyStandalonePdfLoadFailure(error)");
+    expect(source).toContain("if (!doc || !this.pdfDoc || !this.isStandalonePdfSurface()) return;");
+  });
+
   test("binds search to one immutable PDF document across every await", async () => {
     const source = await Bun.file(new URL("../src/preview/previewFrame.ts", import.meta.url)).text();
 

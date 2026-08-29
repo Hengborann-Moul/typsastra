@@ -94,6 +94,7 @@ import {
 } from "./pdfLogicalText";
 import {
   PdfiumDocument,
+  classifyStandalonePdfLoadFailure,
   isPdfiumDocument,
   isPdfiumPage,
   type PdfiumTextGlyph,
@@ -697,6 +698,8 @@ export class PreviewFrame {
     iframeDoc.documentElement.dataset.previewSurface = surface;
     if (iframeDoc !== existingIframeDoc) this.preparePdfReplacementSurface(iframeDoc);
 
+    const previousPdfDoc = this.pdfDoc;
+    const previousLoadingTask = this.pdfLoadingTask;
     let nextPdfDoc: any = null;
     let nextLoadingTask: PdfLoadingHandle | null = null;
     let orphanedRangeSourceCleanup: (() => Promise<void>) | null = null;
@@ -883,8 +886,6 @@ export class PreviewFrame {
         return 0;
       }
 
-      const oldPdfDoc = this.pdfDoc;
-      const oldLoadingTask = this.pdfLoadingTask;
       this.observer?.disconnect();
       this.observer = null;
       this.cancelAllPageRenders();
@@ -947,11 +948,27 @@ export class PreviewFrame {
       // The replacement is already installed. Release the previous PDF during
       // browser idle time so resource disposal and GC do not contend with a
       // pane drag or the first interaction with the new preview.
-      this.schedulePdfResourceCleanup(oldPdfDoc, oldLoadingTask);
+      this.schedulePdfResourceCleanup(previousPdfDoc, previousLoadingTask);
     } catch (error) {
       if (generation !== this.pdfGeneration) return 0;
+      const failedPdfDoc = this.pdfDoc;
+      const failedLoadingTask = this.pdfLoadingTask;
+      this.pdfDoc = null;
+      this.pdfLoadingTask = null;
+      this.pageDimensions.clear();
+      this.observer?.disconnect();
+      this.observer = null;
       this.finishPdfReplacementSurface(this.iframe?.contentDocument ?? null);
-      this.setError("PDF Loading Failed", String(error));
+      if (surface === "pdf") {
+        const failure = classifyStandalonePdfLoadFailure(error);
+        this.setError(failure.title, failure.message);
+      } else {
+        this.setError("PDF Loading Failed", String(error));
+      }
+      this.schedulePdfResourceCleanup(failedPdfDoc, failedLoadingTask);
+      if (failedPdfDoc !== previousPdfDoc || failedLoadingTask !== previousLoadingTask) {
+        this.schedulePdfResourceCleanup(previousPdfDoc, previousLoadingTask);
+      }
     } finally {
       if (this.pendingPdfLoadingTask === nextLoadingTask) this.pendingPdfLoadingTask = null;
       if (nextPdfDoc) {
@@ -2093,7 +2110,7 @@ export class PreviewFrame {
 
   public openStandalonePdfSearch(): void {
     const doc = this.iframe?.contentDocument;
-    if (!doc || !this.isStandalonePdfSurface()) return;
+    if (!doc || !this.pdfDoc || !this.isStandalonePdfSurface()) return;
     const panel = doc.getElementById("pdf-search-panel") as HTMLElement | null;
     const input = doc.getElementById("pdf-search-input") as HTMLInputElement | null;
     if (!panel || !input) return;
