@@ -221,6 +221,10 @@ export class PreviewFrame {
   private draftHoverRetargetTimer: number | null = null;
   private pendingRestoredScrollTop: number | null = null;
   private pendingRestoredViewportAnchor: PreviewViewportAnchor | null = null;
+  private pendingReloadViewport: {
+    viewportAnchor: PreviewViewportAnchor | null;
+    scrollTop: number;
+  } | null = null;
   private previewPointerInside = false;
   private standalonePdfKeyboardActive = false;
   private previewLinkModifierHeld = false;
@@ -369,6 +373,29 @@ export class PreviewFrame {
 
   public queueViewportAnchor(anchor?: PreviewViewportAnchor | null): void {
     this.pendingRestoredViewportAnchor = anchor ?? null;
+  }
+
+  public preserveViewportForNextLoad(
+    viewportAnchor: PreviewViewportAnchor | null,
+    scrollTop: number,
+  ): void {
+    this.pendingReloadViewport = {
+      viewportAnchor,
+      scrollTop: Number.isFinite(scrollTop) ? Math.max(0, scrollTop) : 0,
+    };
+    this.pendingRestoredViewportAnchor = null;
+    this.pendingRestoredScrollTop = null;
+  }
+
+  public retainMountedLivePreview(identity: string, sessionKey: string): boolean {
+    if (!this.pdfDoc || !this.mountedUrl) return false;
+    this.pendingReloadViewport = null;
+    this.pendingRestoredViewportAnchor = null;
+    this.pendingRestoredScrollTop = null;
+    this.mountedUrl = identity;
+    this.mountedSessionKey = sessionKey;
+    this.clearMessageHost();
+    return true;
   }
 
   public syncTheme(): void {
@@ -649,12 +676,17 @@ export class PreviewFrame {
     const obsoleteLoadingTask = this.pendingPdfLoadingTask;
     this.pendingPdfLoadingTask = null;
     if (obsoleteLoadingTask) void obsoleteLoadingTask.destroy().catch(() => {});
-    const restoredViewportAnchor = this.pendingRestoredViewportAnchor;
+    const reloadViewport = this.pendingReloadViewport;
+    this.pendingReloadViewport = null;
+    const restoredViewportAnchor = reloadViewport
+      ? reloadViewport.viewportAnchor
+      : this.pendingRestoredViewportAnchor;
+    const restoredScrollTop = reloadViewport
+      ? reloadViewport.scrollTop
+      : this.pendingRestoredScrollTop;
     const restoringSavedPosition = restoredViewportAnchor !== null
-      || this.pendingRestoredScrollTop !== null;
-    const previousScrollTop = restoringSavedPosition
-      ? this.pendingRestoredScrollTop!
-      : this.captureScrollPosition();
+      || restoredScrollTop !== null;
+    const previousScrollTop = restoredScrollTop ?? this.captureScrollPosition();
     this.clearErrorOverlay();
 
     const iframe = await this.ensureIframe();
@@ -3031,6 +3063,7 @@ export class PreviewFrame {
     this.iframe = null;
     this.mountedUrl = "";
     this.mountedSessionKey = "";
+    this.pendingReloadViewport = null;
     this.onStandalonePdfOutlineChanged?.(null);
     this.currentPdfBytes = 0;
     this.currentPdfBytesRead = 0;
@@ -3236,6 +3269,7 @@ export class PreviewFrame {
     this.iframe = null;
     this.mountedUrl = "";
     this.mountedSessionKey = "";
+    this.pendingReloadViewport = null;
     this.currentPdfBytes = 0;
     this.currentPdfBytesRead = 0;
     this.currentPdfRangeRequests = 0;

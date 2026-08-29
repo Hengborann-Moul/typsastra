@@ -52,6 +52,7 @@ export type PdfUpdatePayload = {
   draftAssets?: DraftImageAsset[];
   draftAssetRootPath?: string;
   draftThumbnailGeneration?: number;
+  reuseMounted?: boolean;
 };
 
 export interface PdfPreviewRenderDependencies {
@@ -106,6 +107,10 @@ export class PdfPreviewRenderController {
   private lastPdfIdentityValue = "";
   private lastPdfSessionKeyValue = "";
   private lastPdfSurfaceValue: PreviewSurface = "live";
+  private lastPresentedLivePdfHash: string | null = null;
+  private liveViewportAnchorValue: PreviewViewportAnchor | null = null;
+  private liveScrollTopValue = 0;
+  private hasLiveViewportValue = false;
   private previewFailureAt: number | null = null;
   private readonly managedPdfPathKeysValue = new Set<string>();
 
@@ -157,6 +162,7 @@ export class PdfPreviewRenderController {
     this.generationValue += 1;
     this.queuedContents = null;
     this.queuedForced = false;
+    this.lastPresentedLivePdfHash = null;
     void invoke("cancel_render_preparation").catch(() => {});
   }
 
@@ -182,9 +188,22 @@ export class PdfPreviewRenderController {
     this.lastPdfIdentityValue = "";
     this.lastPdfSessionKeyValue = "";
     this.lastPdfSurfaceValue = "live";
+    this.lastPresentedLivePdfHash = null;
+    this.liveViewportAnchorValue = null;
+    this.liveScrollTopValue = 0;
+    this.hasLiveViewportValue = false;
     this.previewFailureAt = null;
     this.managedPdfPathKeysValue.clear();
     void invoke("cancel_render_preparation").catch(() => {});
+  }
+
+  public rememberLiveViewport(
+    viewportAnchor: PreviewViewportAnchor | null,
+    scrollTop: number,
+  ): void {
+    this.liveViewportAnchorValue = viewportAnchor;
+    this.liveScrollTopValue = Number.isFinite(scrollTop) ? Math.max(0, scrollTop) : 0;
+    this.hasLiveViewportValue = true;
   }
 
   public noteContentMutation(canRenderPreview: boolean): number {
@@ -415,20 +434,61 @@ export class PdfPreviewRenderController {
       ).taskId;
       this.sourceMapRootPathValue = previewPath;
       this.sourceMapTaskIdValue = sourceMapTaskId;
-      const stagedPdfPath = await invoke<string>("stage_pdf_preview_generation", {
-        path: pdfPath,
-        cacheRootPath: cacheRoot,
-        generation,
-      });
-      this.managedPdfPathKeysValue.add(filePathKey(stagedPdfPath));
-      this.lastPdfPathValue = stagedPdfPath;
-      await this.loadPdfPath(
-        stagedPdfPath,
-        previewPath,
-        this.deps.getPreviewSessionKey() ?? previewPath,
-        "live",
-        true,
-      );
+      const sessionKey = this.deps.getPreviewSessionKey() ?? previewPath;
+      const pdfHash = await this.hashGeneratedPdf(pdfPath);
+      if (
+        !this.hasLiveViewportValue
+        && this.lastPdfSurfaceValue === "live"
+        && this.deps.previewFrame.currentUrl
+      ) {
+        this.rememberLiveViewport(
+          this.deps.previewFrame.currentViewportAnchor,
+          this.deps.previewFrame.currentScrollTop,
+        );
+      }
+      const viewportAnchor = this.liveViewportAnchorValue;
+      const scrollTop = this.liveScrollTopValue;
+      const keepMountedPreview = pdfHash !== null
+        && this.lastPresentedLivePdfHash === pdfHash
+        && this.lastPdfSurfaceValue === "live"
+        && this.deps.previewFrame.retainMountedLivePreview(previewPath, sessionKey);
+      let stagedPdfPath: string | null = null;
+      if (keepMountedPreview) {
+        await invoke("discard_generated_preview_pdf", {
+          path: pdfPath,
+          cacheRootPath: cacheRoot,
+        }).catch(error => this.deps.log(
+          "warning",
+          "preview scheduler",
+          `Unable to discard unchanged generated PDF: ${String(error)}`,
+        ));
+        this.lastPdfIdentityValue = previewPath;
+        this.lastPdfSessionKeyValue = sessionKey;
+        this.deps.log(
+          "info",
+          "preview scheduler",
+          `Render generation ${generation}: generated PDF is unchanged; keeping the mounted preview.`,
+        );
+      } else {
+        stagedPdfPath = await invoke<string>("stage_pdf_preview_generation", {
+          path: pdfPath,
+          cacheRootPath: cacheRoot,
+          generation,
+        });
+        this.managedPdfPathKeysValue.add(filePathKey(stagedPdfPath));
+        this.lastPdfPathValue = stagedPdfPath;
+        if (this.hasLiveViewportValue) {
+          this.deps.previewFrame.preserveViewportForNextLoad(viewportAnchor, scrollTop);
+        }
+        await this.loadPdfPath(
+          stagedPdfPath,
+          previewPath,
+          sessionKey,
+          "live",
+          true,
+        );
+        this.lastPresentedLivePdfHash = pdfHash;
+      }
       await this.deps.draftPreview.presentGeneration({
         generation,
         mode: generationContentMode,
@@ -459,25 +519,31 @@ export class PdfPreviewRenderController {
       if (typeof memory?.usedJSHeapSize === "number") {
         this.deps.performance.record({ name: "memory.heap", bytes: memory.usedJSHeapSize });
       }
-      import("@tauri-apps/api/event").then(({ emit }) => {
-        emit("pdf-update", {
-          path: stagedPdfPath,
-          identity: previewPath,
-          sessionKey: this.deps.getPreviewSessionKey() ?? previewPath,
-          surface: "live",
-          previewColorMode: this.deps.previewFrame.colorMode,
-          contentMode: generationContentMode,
-          draftAssets: generationContentMode === "draft"
-            ? [...this.deps.draftPreview.assets.values()]
-            : [],
-          draftAssetRootPath: generationContentMode === "draft"
-            ? this.deps.draftPreview.assetRootPath ?? undefined
-            : undefined,
-          draftThumbnailGeneration: generationContentMode === "draft"
-            ? this.deps.draftPreview.thumbnailGeneration
-            : undefined,
-        } satisfies PdfUpdatePayload);
-      }).catch(err => console.error("Error emitting pdf-update", err));
+      const publishedPdfPath = stagedPdfPath ?? this.lastPdfPathValue;
+      if (publishedPdfPath) {
+        import("@tauri-apps/api/event").then(({ emit }) => {
+          emit("pdf-update", {
+            path: publishedPdfPath,
+            identity: previewPath,
+            sessionKey,
+            surface: "live",
+            scrollTop,
+            viewportAnchor,
+            previewColorMode: this.deps.previewFrame.colorMode,
+            contentMode: generationContentMode,
+            draftAssets: generationContentMode === "draft"
+              ? [...this.deps.draftPreview.assets.values()]
+              : [],
+            draftAssetRootPath: generationContentMode === "draft"
+              ? this.deps.draftPreview.assetRootPath ?? undefined
+              : undefined,
+            draftThumbnailGeneration: generationContentMode === "draft"
+              ? this.deps.draftPreview.thumbnailGeneration
+              : undefined,
+            reuseMounted: keepMountedPreview,
+          } satisfies PdfUpdatePayload);
+        }).catch(err => console.error("Error emitting pdf-update", err));
+      }
     } catch (error) {
       if (this.deps.typography.fontUpdateInProgress) {
         this.deps.log(
@@ -643,6 +709,19 @@ export class PdfPreviewRenderController {
     }, delayMs);
   }
 
+  private async hashGeneratedPdf(path: string): Promise<string | null> {
+    try {
+      return await invoke<string>("hash_preview_file", { path });
+    } catch (error) {
+      this.deps.log(
+        "warning",
+        "preview scheduler",
+        `Unable to hash generated PDF; replacing the preview normally: ${String(error)}`,
+      );
+      return null;
+    }
+  }
+
   public async loadPdfPath(
     path: string,
     identity: string,
@@ -651,6 +730,17 @@ export class PdfPreviewRenderController {
     deleteOnClose = false,
   ): Promise<number> {
     if (this.deps.isPdfBlocked(path)) return 0;
+    if (
+      surface === "pdf"
+      && this.lastPdfSurfaceValue === "live"
+      && this.deps.previewFrame.currentUrl
+    ) {
+      this.rememberLiveViewport(
+        this.deps.previewFrame.currentViewportAnchor,
+        this.deps.previewFrame.currentScrollTop,
+      );
+    }
+    this.lastPresentedLivePdfHash = null;
     if (surface === "pdf") {
       this.deps.previewFrame.setLoading("Preparing PDF preview…", false);
     }

@@ -1587,17 +1587,9 @@ export class TypsastraWorkspaceController {
     updatePreviewActionsToolbar: path => this.updatePreviewActionsToolbar(path),
     applyPreviewSessionToTab: (tab, session) => this.applyPreviewSessionToTab(tab, session),
     activatePreviewSession: sessionKey => this.previewFrame.activateSession(sessionKey),
-    previewScrollTopForTab: tab => {
-      const ownerPath = tab.previewMainPath ?? tab.previewRootPath;
-      if (!ownerPath) return tab.previewScrollTop;
-      const ownerKey = filePathKey(ownerPath);
-      return this.openTabs.find(candidate => {
-        const candidateOwnerPath = candidate.previewMainPath ?? candidate.previewRootPath;
-        return candidateOwnerPath !== null
-          && filePathKey(candidateOwnerPath) === ownerKey
-          && Number.isFinite(candidate.previewScrollTop);
-      })?.previewScrollTop ?? tab.previewScrollTop;
-    },
+    previewScrollTopForTab: tab => isTypstDocumentPath(tab.path)
+      ? this.previewScrollTop
+      : tab.previewScrollTop,
     queuePreviewScrollPosition: scrollTop => this.previewFrame.queueTabScrollPosition(scrollTop),
     renderEditorTabs: () => this.renderEditorTabs(),
     saveWorkspaceState: () => { void this.saveWorkspaceState(); },
@@ -2286,19 +2278,14 @@ export class TypsastraWorkspaceController {
     const previewSessionKey = this.previewFrame.currentSessionKey;
     const viewportAnchor = this.previewFrame.currentViewportAnchor;
     const scrollTop = this.previewFrame.currentScrollTop;
-    this.recordPreviewScrollPosition(scrollTop);
     this.tinymistPreviewRecoveryController.resetAttempts();
     this.invalidatePreviewWork("manual recompile is restarting Tinymist");
     try {
       await this.restartTinymistSession("Restarting Tinymist and recompiling preview...");
       const samePreviewSession = filePathKey(this.activeFilePath ?? "") === filePathKey(activePath)
         && this.previewFrame.currentSessionKey === previewSessionKey;
-      if (samePreviewSession) {
-        if (viewportAnchor) {
-          this.previewFrame.queueViewportAnchor(viewportAnchor);
-        } else {
-          this.previewFrame.queueTabScrollPosition(scrollTop);
-        }
+      if (samePreviewSession && previewSessionKey) {
+        this.previewFrame.preserveViewportForNextLoad(viewportAnchor, scrollTop);
       }
       await this.restoreActiveDocumentAfterTinymistRestart(true);
     } catch (error) {
@@ -2331,7 +2318,19 @@ export class TypsastraWorkspaceController {
       this.previewWindowController.publishScrollPosition(scrollTop);
       return;
     }
-    this.recordPreviewScrollPosition(scrollTop);
+    if (this.lastPdfSurface === "live") {
+      this.pdfPreviewRenderController.rememberLiveViewport(
+        this.previewFrame.currentViewportAnchor,
+        scrollTop,
+      );
+      this.recordPreviewScrollPosition(scrollTop);
+      return;
+    }
+    const activeTab = this.getActiveTab();
+    if (activeTab && fileExtension(activeTab.path) === "pdf") {
+      activeTab.previewScrollTop = Math.max(0, scrollTop);
+      this.schedulePreviewScrollSave();
+    }
   }
 
   private recordPreviewScrollPosition(scrollTop: number): void {
@@ -2352,6 +2351,10 @@ export class TypsastraWorkspaceController {
     } else if (activeTab) {
       activeTab.previewScrollTop = this.previewScrollTop;
     }
+    this.schedulePreviewScrollSave();
+  }
+
+  private schedulePreviewScrollSave(): void {
     if (!this.workspaceRootPath || !this.workspaceMetadata) return;
     if (this.previewScrollSaveTimer !== null) window.clearTimeout(this.previewScrollSaveTimer);
     this.previewScrollSaveTimer = window.setTimeout(() => {
@@ -2367,6 +2370,10 @@ export class TypsastraWorkspaceController {
       || this.lastPdfSessionKey
       || this.previewSessionKey;
     if (!expectedSessionKey || position.sessionKey !== expectedSessionKey) return;
+    this.pdfPreviewRenderController.rememberLiveViewport(
+      position.viewportAnchor,
+      position.scrollTop,
+    );
     this.recordPreviewScrollPosition(position.scrollTop);
     this.previewViewportAnchor = position.viewportAnchor;
     if (position.viewportAnchor) {

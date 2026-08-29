@@ -11,6 +11,7 @@ const bindings = read("src", "ui", "appEventBindings.ts");
 const contextMenu = read("src", "components", "contextMenuController.ts");
 const icons = read("src", "ui", "icons.ts");
 const sourceNavigation = read("src", "preview", "previewSourceNavigationController.ts");
+const previewFrame = read("src", "preview", "previewFrame.ts");
 const toolbar = read("src", "editor", "toolbarController.ts");
 
 function methodBody(source: string, startToken: string, endToken: string): string {
@@ -38,15 +39,14 @@ describe("preview toolbar actions", () => {
     const recompile = methodBody(
       app,
       "private async recompilePreviewManually()",
-      "private schedulePdfPreview",
+      "private loadPdfPath",
     );
     const captureAnchor = recompile.indexOf("const viewportAnchor = this.previewFrame.currentViewportAnchor");
     const captureScroll = recompile.indexOf("const scrollTop = this.previewFrame.currentScrollTop");
     const invalidate = recompile.indexOf('this.invalidatePreviewWork("manual recompile is restarting Tinymist")');
     const restart = recompile.indexOf('await this.restartTinymistSession("Restarting Tinymist and recompiling preview...")');
     const sessionGuard = recompile.indexOf("const samePreviewSession = filePathKey(this.activeFilePath");
-    const queueAnchor = recompile.indexOf("this.previewFrame.queueViewportAnchor(viewportAnchor)");
-    const queueScroll = recompile.indexOf("this.previewFrame.queueTabScrollPosition(scrollTop)");
+    const preserve = recompile.indexOf("this.previewFrame.preserveViewportForNextLoad(viewportAnchor, scrollTop)");
     const restore = recompile.indexOf("await this.restoreActiveDocumentAfterTinymistRestart(true)");
 
     expect(captureAnchor).toBeGreaterThan(-1);
@@ -54,10 +54,14 @@ describe("preview toolbar actions", () => {
     expect(invalidate).toBeGreaterThan(captureScroll);
     expect(restart).toBeGreaterThan(invalidate);
     expect(sessionGuard).toBeGreaterThan(restart);
-    expect(queueAnchor).toBeGreaterThan(sessionGuard);
-    expect(queueScroll).toBeGreaterThan(queueAnchor);
-    expect(restore).toBeGreaterThan(queueScroll);
+    expect(preserve).toBeGreaterThan(sessionGuard);
+    expect(restore).toBeGreaterThan(preserve);
+    expect(recompile).not.toContain("recordPreviewScrollPosition");
+    expect(recompile).not.toContain("queueViewportAnchor");
+    expect(recompile).not.toContain("queueTabScrollPosition");
     expect(recompile).not.toContain("pdfPreviewRenderController.recompileManually");
+    expect(previewFrame).toContain("private pendingReloadViewport:");
+    expect(previewFrame).toContain("retainMountedLivePreview(identity: string, sessionKey: string)");
     expect(bindings).toContain(
       'document.getElementById("preview-recompile-btn")?.addEventListener("click", () => void actions.recompilePreview())',
     );

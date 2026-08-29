@@ -116,7 +116,9 @@ export class PreviewWindowController {
       }
       const toggle = document.getElementById("preview-content-mode-toggle") as HTMLButtonElement | null;
       toggle?.classList.remove("hidden");
-      deps.loadPdfPath(update.path, update.identity, update.sessionKey, update.surface);
+      if (!update.reuseMounted || !deps.previewFrame.retainMountedLivePreview(update.identity, update.sessionKey)) {
+        deps.loadPdfPath(update.path, update.identity, update.sessionKey, update.surface);
+      }
     });
 
     await listen<{ page_no: number; x: number; y: number }>("pdf-forward-sync", event => {

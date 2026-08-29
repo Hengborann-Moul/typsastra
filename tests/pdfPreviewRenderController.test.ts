@@ -22,6 +22,48 @@ describe("PDF preview render controller", () => {
     expect(source).not.toContain("new Proxy(");
   });
 
+  test("keeps an identical generated PDF mounted across live preview session changes", async () => {
+    const source = await Bun.file(
+      new URL("../src/preview/pdfPreviewRenderController.ts", import.meta.url),
+    ).text();
+    const hash = source.indexOf("const pdfHash = await this.hashGeneratedPdf(pdfPath)");
+    const reuse = source.indexOf("const keepMountedPreview = pdfHash !== null", hash);
+    const stage = source.indexOf('invoke<string>("stage_pdf_preview_generation"', reuse);
+    const load = source.indexOf("await this.loadPdfPath(", stage);
+    const publishGuard = source.indexOf("if (publishedPdfPath)", load);
+
+    expect(hash).toBeGreaterThan(-1);
+    expect(reuse).toBeGreaterThan(hash);
+    expect(stage).toBeGreaterThan(reuse);
+    expect(load).toBeGreaterThan(stage);
+    expect(publishGuard).toBeGreaterThan(load);
+    expect(source).toContain("this.lastPresentedLivePdfHash === pdfHash");
+    expect(source).toContain("this.deps.previewFrame.retainMountedLivePreview(previewPath, sessionKey)");
+    expect(source).not.toContain("this.lastPresentedLivePdf.identity === previewPath");
+    expect(source).not.toContain("this.lastPresentedLivePdf.sessionKey === sessionKey");
+    expect(source).toContain('invoke("discard_generated_preview_pdf"');
+    expect(source).toContain("generated PDF is unchanged; keeping the mounted preview");
+    expect(source).toContain("this.deps.previewFrame.preserveViewportForNextLoad(viewportAnchor, scrollTop)");
+    expect(source).toContain("private hasLiveViewportValue = false");
+    expect(source).toContain("public rememberLiveViewport(");
+    expect(source).toContain('surface === "pdf"');
+  });
+
+  test("falls back to replacing the preview when hashing fails", async () => {
+    const source = await Bun.file(
+      new URL("../src/preview/pdfPreviewRenderController.ts", import.meta.url),
+    ).text();
+    const methodStart = source.indexOf("private async hashGeneratedPdf");
+    const methodEnd = source.indexOf("\n  public async loadPdfPath", methodStart);
+    const method = source.slice(methodStart, methodEnd);
+
+    expect(method).toContain('invoke<string>("hash_preview_file", { path })');
+    expect(method).toContain("catch (error)");
+    expect(method).toContain("return null");
+    expect(method).toContain("replacing the preview normally");
+    expect(source).toContain("this.lastPresentedLivePdfHash = null");
+  });
+
   test("keeps appController as a thin delegate for render, load, schedule, and invalidation", async () => {
     const source = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
 

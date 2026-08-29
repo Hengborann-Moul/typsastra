@@ -34,18 +34,34 @@ describe("compiled PDF transport", () => {
     expect(workspaceSource).toContain("excludeManagedWorkspacePaths(");
   });
 
+  test("hashes generated PDFs through a registered native command", async () => {
+    const source = await Bun.file(
+      new URL("../src/preview/pdfPreviewRenderController.ts", import.meta.url),
+    ).text();
+    const nativeSource = await Bun.file(new URL("../src-tauri/src/lib.rs", import.meta.url)).text();
+
+    expect(source).toContain('invoke<string>("hash_preview_file", { path })');
+    expect(nativeSource).toContain("fn hash_preview_file_at(path: &Path)");
+    expect(nativeSource).toContain("async fn hash_preview_file(path: String)");
+    expect(nativeSource).toContain("hash_preview_file,");
+    expect(nativeSource).toContain("discard_generated_preview_pdf,");
+    expect(nativeSource).toContain("let mut buffer = [0_u8; 64 * 1024]");
+  });
+
   test("shares the staged PDF generation with the undocked preview", async () => {
     const source = await Bun.file(
       new URL("../src/preview/pdfPreviewRenderController.ts", import.meta.url),
     ).text();
-    const staging = source.indexOf('const stagedPdfPath = await invoke<string>("stage_pdf_preview_generation"');
+    const staging = source.indexOf('stagedPdfPath = await invoke<string>("stage_pdf_preview_generation"');
     const update = source.indexOf('emit("pdf-update"', staging);
     const updateEnd = source.indexOf("satisfies PdfUpdatePayload", update);
     const payload = source.slice(update, updateEnd);
 
     expect(staging).toBeGreaterThan(-1);
     expect(update).toBeGreaterThan(staging);
-    expect(payload).toContain("path: stagedPdfPath");
+    expect(payload).toContain("path: publishedPdfPath");
+    expect(payload).toContain("scrollTop");
+    expect(payload).toContain("viewportAnchor");
     expect(payload).not.toContain("path: pdfPath");
     expect(source).toContain("cacheRootPath: cacheRoot");
   });

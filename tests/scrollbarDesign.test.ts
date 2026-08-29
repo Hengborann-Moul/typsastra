@@ -78,14 +78,15 @@ describe("cross-platform scrollbar design", () => {
     expect(source).toContain("reportPageStatus");
   });
 
-  test("restores the raw preview scroll offset across PDF recompilation", async () => {
+  test("restores the global page anchor with a raw-offset fallback across PDF recompilation", async () => {
     const source = await Bun.file(new URL("../src/preview/previewFrame.ts", import.meta.url)).text();
     const loadStart = source.indexOf("public async loadPdfBytes");
     const loadEnd = source.indexOf("private async pdfJs", loadStart);
     const loadPdf = source.slice(loadStart, loadEnd);
-    expect(loadPdf).toContain(": this.captureScrollPosition()");
+    expect(loadPdf).toContain("const reloadViewport = this.pendingReloadViewport");
+    expect(loadPdf).toContain("const previousScrollTop = restoredScrollTop ?? this.captureScrollPosition()");
+    expect(loadPdf).toContain("this.restoreScrollAnchor(restoredViewportAnchor, true)");
     expect(loadPdf).toContain("this.restoreScrollPosition(previousScrollTop)");
-    expect(loadPdf).not.toContain("const previousScroll = this.captureScrollAnchor()");
     expect(source).toContain("const restoredTop = Math.min(Math.max(0, scrollTop), maximum)");
   });
 
@@ -101,20 +102,23 @@ describe("cross-platform scrollbar design", () => {
     expect(controller).toContain("previewScrollTop: this.previewScrollTop");
   });
 
-  test("shares a preview offset between tabs in the same preview session", async () => {
+  test("keeps one global live-preview viewport across tabs and PDF generations", async () => {
     const source = await Bun.file(new URL("../src/preview/previewFrame.ts", import.meta.url)).text();
     const controller = await Bun.file(new URL("../src/appController.ts", import.meta.url)).text();
-    const activation = await Bun.file(
-      new URL("../src/editor/editorTabActivationController.ts", import.meta.url),
+    const renderer = await Bun.file(
+      new URL("../src/preview/pdfPreviewRenderController.ts", import.meta.url),
     ).text();
-    expect(controller).toContain("const previewOwnerPath = activeTab?.previewMainPath");
-    expect(controller).toContain("filePathKey(tabOwnerPath) === ownerKey");
-    expect(controller).toContain("previewScrollTopForTab: tab => {");
-    expect(activation).toContain("!sameActivePath && !previewActivation.presentationReused");
-    expect(activation).toContain("deps.queuePreviewScrollPosition(deps.previewScrollTopForTab(tab))");
-    expect(source).toContain("queueTabScrollPosition(scrollTop?: number)");
-    expect(source).toContain("const restoringSavedPosition = restoredViewportAnchor !== null");
-    expect(source).toContain("|| this.pendingRestoredScrollTop !== null");
+    expect(controller).toContain("previewScrollTopForTab: tab => isTypstDocumentPath(tab.path)");
+    expect(source).toContain("preserveViewportForNextLoad(");
+    expect(source).toContain("retainMountedLivePreview(identity: string, sessionKey: string)");
+    expect(source).toContain("const reloadViewport = this.pendingReloadViewport");
+    expect(renderer).toContain("this.deps.previewFrame.preserveViewportForNextLoad(viewportAnchor, scrollTop)");
+    expect(renderer).toContain("private hasLiveViewportValue = false");
+    expect(renderer).toContain("this.rememberLiveViewport(");
+    expect(controller).toContain('if (this.lastPdfSurface === "live")');
+    expect(controller).toContain('fileExtension(activeTab.path) === "pdf"');
+    expect(renderer).toContain("scrollTop,");
+    expect(renderer).toContain("viewportAnchor,");
   });
 
   test("provides an accessible floating control to return to the first page", async () => {

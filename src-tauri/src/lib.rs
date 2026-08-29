@@ -1220,6 +1220,56 @@ fn stage_pdf_preview_generation(
     stage_pdf_preview_generation_at(path, cache_root_path, generation)
 }
 
+fn hash_preview_file_at(path: &Path) -> Result<String, String> {
+    use sha2::{Digest, Sha256};
+    use std::io::Read;
+
+    let mut file = std::fs::File::open(path)
+        .map_err(|error| format!("Unable to open preview for hashing: {error}"))?;
+    let mut hash = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .map_err(|error| format!("Unable to read preview for hashing: {error}"))?;
+        if read == 0 {
+            break;
+        }
+        hash.update(&buffer[..read]);
+    }
+    Ok(format!("{:x}", hash.finalize()))
+}
+
+#[tauri::command]
+async fn hash_preview_file(path: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || hash_preview_file_at(Path::new(&path)))
+        .await
+        .map_err(|error| format!("Unable to hash preview: {error}"))?
+}
+
+fn discard_generated_preview_pdf_at(path: String, cache_root_path: String) -> Result<(), String> {
+    let source = match std::fs::canonicalize(&path) {
+        Ok(path) => path,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(format!("Unable to resolve generated PDF: {error}")),
+    };
+    let cache_root =
+        std::fs::canonicalize(&cache_root_path).unwrap_or_else(|_| PathBuf::from(&cache_root_path));
+    if source.parent() != Some(cache_root.join("preview").as_path()) {
+        return Err(
+            "Only generated PDFs in the active workspace's machine-local preview cache can be discarded."
+                .to_string(),
+        );
+    }
+    std::fs::remove_file(source)
+        .map_err(|error| format!("Unable to discard unchanged generated PDF: {error}"))
+}
+
+#[tauri::command]
+fn discard_generated_preview_pdf(path: String, cache_root_path: String) -> Result<(), String> {
+    discard_generated_preview_pdf_at(path, cache_root_path)
+}
+
 fn remove_preview_generation_file_at(path: String, cache_root_path: String) -> Result<(), String> {
     let path = PathBuf::from(path);
     let cache_root =
@@ -1242,10 +1292,47 @@ fn remove_preview_generation_file(path: String, cache_root_path: String) -> Resu
 #[cfg(test)]
 mod pdf_preview_generation_tests {
     use super::{
-        is_preview_generation_path, prune_preview_generation_cache,
-        remove_preview_generation_file_at, stage_pdf_preview_generation_at,
-        MAX_RETAINED_PREVIEW_GENERATIONS,
+        discard_generated_preview_pdf_at, hash_preview_file_at, is_preview_generation_path,
+        prune_preview_generation_cache, remove_preview_generation_file_at,
+        stage_pdf_preview_generation_at, MAX_RETAINED_PREVIEW_GENERATIONS,
     };
+
+    #[test]
+    fn hashes_generated_pdf_bytes() {
+        let workspace = tempfile::tempdir().unwrap();
+        let pdf = workspace.path().join("preview.pdf");
+        std::fs::write(&pdf, b"%PDF-1.7\n").unwrap();
+
+        assert_eq!(
+            hash_preview_file_at(&pdf).expect("hash preview"),
+            "0716f9264c9fe19f5d7455276107f3ddcc1d3497f63d60689a73558ae8a1bf5e",
+        );
+    }
+
+    #[test]
+    fn discards_only_unstaged_generated_pdfs() {
+        let workspace = tempfile::tempdir().unwrap();
+        let cache_root = workspace.path().join("workspace-cache/example");
+        let preview = cache_root.join("preview");
+        std::fs::create_dir_all(&preview).unwrap();
+        let generated = preview.join("main.pdf");
+        let outside = cache_root.join("outside.pdf");
+        std::fs::write(&generated, b"generated").unwrap();
+        std::fs::write(&outside, b"outside").unwrap();
+
+        discard_generated_preview_pdf_at(
+            generated.to_string_lossy().into_owned(),
+            cache_root.to_string_lossy().into_owned(),
+        )
+        .expect("discard generated preview");
+        assert!(!generated.exists());
+        assert!(discard_generated_preview_pdf_at(
+            outside.to_string_lossy().into_owned(),
+            cache_root.to_string_lossy().into_owned(),
+        )
+        .is_err());
+        assert!(outside.exists());
+    }
 
     #[test]
     fn stages_and_removes_compiled_pdf_inside_preview_cache() {
@@ -5971,6 +6058,8 @@ pub fn run() {
             close_pdfium_document,
             write_formatted_clipboard,
             stage_pdf_preview_generation,
+            hash_preview_file,
+            discard_generated_preview_pdf,
             remove_preview_generation_file,
             read_workspace_text_prefix,
             workspace_file_size,
