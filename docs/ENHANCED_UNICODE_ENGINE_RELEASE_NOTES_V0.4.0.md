@@ -29,8 +29,30 @@ positioning, and standard two-byte PDF character codes.
 The controlled v3-to-v4 Krilla corpus produced 85 pixel-identical rendered
 pages and byte-identical Poppler raw extraction. Embedded glyph counts fell
 from 2,707 to 2,279, and every fixture remained within 1.01% of its v3 PDF
-size. These measurements qualify the namespace change; they do not expand the
+size. These measurements qualify the namespace change without changing the
 published viewer-compatibility claims.
+
+## PDF viewer compatibility
+
+v0.4.0 carries forward the same published Khmer viewer compatibility data. No
+viewer result is upgraded or downgraded by the glyph-namespace compaction. The
+source article contains 12 occurrences of the search term `អក្សរ`:
+
+| Viewer | Render | Selection | Copy/paste | Search |
+|---|---|---|---|---|
+| Chrome | Pass | Pass | Pass | 12/12 |
+| Brave | Pass | Pass | Pass | 12/12 |
+| Microsoft Edge | Pass | Pass | Pass | 12/12 |
+| Okular | Pass | Pass | Pass | Pass |
+| SumatraPDF | Pass | Pass | Pass | Pass |
+| Adobe Acrobat | Pass | Pass | Pass | 6/12 |
+| Firefox | Pass | Partial | Partial | 0/12 |
+| ONLYOFFICE | Pass | Pass visually | Fail | 0/12 |
+
+These are the unchanged results from the
+[original published matrix](https://forum.typst.app/t/typsastra-enhanced-unicode-engine-for-better-unicode-in-pdfs/9709).
+They preserve the existing compatibility record; they are not a new viewer run
+with newly recorded application versions or operating systems.
 
 ## Platform packages
 

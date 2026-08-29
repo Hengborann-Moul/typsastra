@@ -21,6 +21,28 @@ test("PDFium validation uses the released engine and production text adapter", a
   expect(example).toContain("char.unicode_string()");
 });
 
+test("Enhanced Unicode v0.4.0 carries forward the published viewer matrix unchanged", async () => {
+  const validation = await Bun.file("docs/ENHANCED_UNICODE_ENGINE_VALIDATION.md").text();
+  const releaseNotes = await Bun.file("docs/ENHANCED_UNICODE_ENGINE_RELEASE_NOTES_V0.4.0.md").text();
+  const rows = [
+    "| Chrome | Pass | Pass | Pass | 12/12 |",
+    "| Brave | Pass | Pass | Pass | 12/12 |",
+    "| Microsoft Edge | Pass | Pass | Pass | 12/12 |",
+    "| Okular | Pass | Pass | Pass | Pass |",
+    "| SumatraPDF | Pass | Pass | Pass | Pass |",
+    "| Adobe Acrobat | Pass | Pass | Pass | 6/12 |",
+    "| Firefox | Pass | Partial | Partial | 0/12 |",
+    "| ONLYOFFICE | Pass | Pass visually | Fail | 0/12 |",
+  ];
+
+  for (const row of rows) {
+    expect(validation).toContain(row);
+    expect(releaseNotes).toContain(row);
+  }
+  expect(releaseNotes).toContain("viewer result is upgraded or downgraded");
+  expect(releaseNotes).toContain("not a new viewer run");
+});
+
 test("Enhanced Unicode fixtures expose directly authored labeled cases", async () => {
   const source = await Bun.file("tests/fixtures/enhanced-unicode/unicode-selection.typ").text();
   const cases = parseUnicodeFixtureCases(source);

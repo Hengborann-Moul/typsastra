@@ -132,7 +132,7 @@ The generated report contains an automated PDF.js row and placeholders for manua
 - Firefox, and
 - macOS Preview.
 
-### Published Khmer viewer evidence
+### Published Khmer viewer evidence carried forward to v0.4.0
 
 The original [Typst Forum announcement](https://forum.typst.app/t/typsastra-enhanced-unicode-engine-for-better-unicode-in-pdfs/9709)
 published a viewer matrix on 2026-08-21. It tested an Enhanced Unicode Engine
@@ -152,10 +152,10 @@ times in the source:
 
 The same post records exact extraction for all 18 tested Khmer OS fonts with
 PDFium, PyMuPDF, Poppler `pdftotext -raw`, and Poppler `pdftotext -layout`.
-This is useful published interoperability evidence, but it is not a substitute
-for v0.3.1 release qualification: the post does not record exact viewer
-versions or operating systems, and its matrix predates the v0.2 and v0.3
-serializer architectures.
+The v0.4.0 release notes carry this matrix forward without changing any result.
+This preserves the published compatibility data; it does not represent a new
+viewer run because exact viewer versions and operating systems were not
+recorded in the original matrix.
 
 ### Verified Typsastra standalone preview
 
