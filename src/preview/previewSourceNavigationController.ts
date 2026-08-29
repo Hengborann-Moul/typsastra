@@ -168,16 +168,18 @@ export class PreviewSourceNavigationController {
   }
 
   public renderManualForwardSyncAction(busy: boolean, available: boolean): void {
-    const button = document.getElementById("preview-forward-sync-btn") as HTMLButtonElement | null;
+    const button = document.querySelector<HTMLButtonElement>('[data-tool="reveal-cursor-preview"]');
     if (!button) return;
     const shortcut = navigator.userAgent.toLowerCase().includes("mac") ? "Option+Enter" : "Alt+Enter";
     button.disabled = busy || !available;
     button.setAttribute("aria-busy", String(busy));
-    button.title = busy
+    const label = busy
       ? "Locating cursor in preview..."
       : available
         ? `Reveal Cursor in Preview (${shortcut})`
         : "Reveal cursor is available when a compiled preview is ready";
+    button.title = label;
+    button.setAttribute("aria-label", label);
   }
 
   public async forwardSyncTarget(

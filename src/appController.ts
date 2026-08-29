@@ -1046,7 +1046,7 @@ export class TypsastraWorkspaceController {
     serializeWysiwym: () => this.mapWysiwymToMarkup(),
     renderWysiwym: markup => this.mapMarkupToWysiwym(markup),
     save: () => this.saveActiveFile(),
-    syncPreview: cursor => this.previewSyncController.renderAtCursor(cursor),
+    revealCursorInPreview: () => this.revealCursorInPreviewManually(),
     applyTypography: (config, target) => this.applyTypography(config, target),
     getWorkspaceRoot: () => this.workspaceRootPath,
     onWorkspacePrivateFontDirectoriesChanged: () => this.typographyController.privateFontDirectoriesChanged()
@@ -2280,8 +2280,34 @@ export class TypsastraWorkspaceController {
     return this.pdfPreviewRenderController.render(contents, force);
   }
 
-  private recompilePreviewManually(): void {
-    this.pdfPreviewRenderController.recompileManually();
+  private async recompilePreviewManually(): Promise<void> {
+    const activePath = this.activeFilePath;
+    if (!activePath?.toLowerCase().endsWith(".typ")) return;
+    const previewSessionKey = this.previewFrame.currentSessionKey;
+    const viewportAnchor = this.previewFrame.currentViewportAnchor;
+    const scrollTop = this.previewFrame.currentScrollTop;
+    this.recordPreviewScrollPosition(scrollTop);
+    this.tinymistPreviewRecoveryController.resetAttempts();
+    this.invalidatePreviewWork("manual recompile is restarting Tinymist");
+    try {
+      await this.restartTinymistSession("Restarting Tinymist and recompiling preview...");
+      const samePreviewSession = filePathKey(this.activeFilePath ?? "") === filePathKey(activePath)
+        && this.previewFrame.currentSessionKey === previewSessionKey;
+      if (samePreviewSession) {
+        if (viewportAnchor) {
+          this.previewFrame.queueViewportAnchor(viewportAnchor);
+        } else {
+          this.previewFrame.queueTabScrollPosition(scrollTop);
+        }
+      }
+      await this.restoreActiveDocumentAfterTinymistRestart(true);
+    } catch (error) {
+      this.lspReady = false;
+      this.setLspStatus({
+        kind: "error",
+        message: `Preview recompile failed while restarting Tinymist: ${String(error)}`,
+      });
+    }
   }
 
   private loadPdfPath(
@@ -2865,7 +2891,6 @@ export class TypsastraWorkspaceController {
       zoomToFit: () => this.zoomToFit(),
       recompilePreview: () => this.recompilePreviewManually(),
       showImageHeavyDetails: () => this.draftPreviewController.showImageHeavyDetails(),
-      editorHasFocus: () => this.editorInstance.hasFocus,
       initializePreviewPageControls: () => this.initializePreviewPageControls(),
       updatePreviewZoomLabel: () => this.updatePreviewZoomLabel(),
       updateManualForwardSyncAction: () => this.updateManualForwardSyncAction(),

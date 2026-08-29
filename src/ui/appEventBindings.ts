@@ -46,9 +46,8 @@ export interface AppEventActions {
   zoomOut: () => void;
   zoomIn: () => void;
   zoomToFit: () => void;
-  recompilePreview: () => void;
+  recompilePreview: () => Promise<void> | void;
   showImageHeavyDetails: () => Promise<void> | void;
-  editorHasFocus: () => boolean;
   initializePreviewPageControls: () => void;
   updatePreviewZoomLabel: () => void;
   updateManualForwardSyncAction: () => void;
@@ -331,17 +330,12 @@ export function bindAppEvents(actions: AppEventActions): void {
   document.getElementById("preview-zoom-out-btn")?.addEventListener("click", actions.zoomOut);
   document.getElementById("preview-zoom-in-btn")?.addEventListener("click", actions.zoomIn);
   document.getElementById("preview-zoom-fit-btn")?.addEventListener("click", actions.zoomToFit);
-  document.getElementById("preview-recompile-btn")?.addEventListener("click", actions.recompilePreview);
+  document.getElementById("preview-recompile-btn")?.addEventListener("click", () => void actions.recompilePreview());
   document.getElementById("preview-image-warning-btn")?.addEventListener("click", () => void actions.showImageHeavyDetails());
   document.getElementById("preview-content-mode-toggle")?.addEventListener("click", () => {
     void actions.changePreviewContentMode(actions.previewContentMode() === "draft" ? "normal" : "draft");
   });
 
-  const previewForwardSyncButton = document.getElementById("preview-forward-sync-btn");
-  previewForwardSyncButton?.addEventListener("pointerdown", event => {
-    if (event.button === 0 && actions.editorHasFocus()) event.preventDefault();
-  });
-  previewForwardSyncButton?.addEventListener("click", actions.revealCursorInPreview);
   actions.initializePreviewPageControls();
   actions.updatePreviewZoomLabel();
   actions.updateManualForwardSyncAction();

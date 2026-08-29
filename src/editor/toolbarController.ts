@@ -37,7 +37,7 @@ export type EditorToolbarDependencies = {
   serializeWysiwym: () => string;
   renderWysiwym: (markup: string) => void;
   save: () => Promise<void>;
-  syncPreview: (cursor: number) => Promise<void>;
+  revealCursorInPreview: () => Promise<void> | void;
   applyTypography: (config: DocumentTypography, target: "document" | "template") => Promise<boolean>;
   getWorkspaceRoot: () => string | null;
   onWorkspacePrivateFontDirectoriesChanged: () => void | Promise<void>;
@@ -966,8 +966,8 @@ export class EditorToolbarController {
       case "numbered-list": this.applyLinePrefix("+ "); break;
       case "fraction": this.insertSnippet("$frac(1, 2)$", 6, 7); break;
       case "sqrt": this.insertSnippet("$sqrt(x)$", 6, 7); break;
-      case "sync-preview":
-        await this.dependencies.syncPreview(editor.state.selection.main.head);
+      case "reveal-cursor-preview":
+        await this.dependencies.revealCursorInPreview();
         editor.focus();
         break;
       case "export-pdf": document.getElementById("action-export-pdf")?.click(); break;

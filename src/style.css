@@ -2216,11 +2216,6 @@ body.typsastra-resizing #input-container-wrapper::after {
   }
 }
 
-@container preview-pane (max-width: 520px) {
-  #preview-forward-sync-btn {
-    display: none !important;
-  }
-}
 
 @container preview-pane (max-width: 430px) {
   .preview-zoom-controls {
@@ -5122,8 +5117,7 @@ body.typsastra-resume-recovering #workspace-viewport::after {
   pointer-events: all;
 }
 
-.preview-only-mode #preview-recompile-btn,
-.preview-only-mode #preview-forward-sync-btn {
+.preview-only-mode #preview-recompile-btn {
   display: none;
 }
 

@@ -54,13 +54,13 @@ describe("Draft Preview", () => {
     expect(styles).toMatch(/\.preview-actions\s*\{[^}]*overflow-x:\s*hidden;/s);
     expect(styles).toMatch(/\.preview-actions\s*>\s*\*\s*\{[^}]*flex:\s*0 0 auto;/s);
     expect(html).toContain('data-preview-collapsible="zoom"');
-    expect(html).toContain('data-preview-collapsible="sync"');
+
     expect(html).toContain('data-preview-collapsible="recompile"');
     expect(html).toContain('data-preview-collapsible="undock"');
     expect(styles).toContain("@container preview-pane (max-width: 620px)");
     expect(styles).toContain("@container preview-pane (max-width: 430px)");
     expect(contextMenus).toContain('id="ctx-preview-zoom-fit"');
-    expect(contextMenus).toContain('id="ctx-preview-forward-sync"');
+
     expect(contextMenus).toContain('id="ctx-preview-recompile"');
     expect(contextMenus).toContain('id="ctx-export-pdf"');
     expect(contextMenus).toContain('id="ctx-preview-undock"');

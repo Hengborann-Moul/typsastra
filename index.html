@@ -1560,9 +1560,9 @@
                                 <button
                                     type="button"
                                     class="toolbar-button"
-                                    data-tool="sync-preview"
-                                    title="Sync preview"
-                                    aria-label="Sync preview"
+                                    data-tool="reveal-cursor-preview"
+                                    title="Reveal Cursor in Preview (Alt+Enter)"
+                                    aria-label="Reveal cursor in preview"
                                 >
                                     <svg
                                         width="14"
@@ -1574,10 +1574,11 @@
                                         stroke-linecap="round"
                                         stroke-linejoin="round"
                                     >
-                                        <path
-                                            d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"
-                                        />
-                                        <path d="M21 3v5h-5" />
+                                        <circle cx="12" cy="12" r="3" />
+                                        <path d="M12 2v4" />
+                                        <path d="M12 18v4" />
+                                        <path d="M2 12h4" />
+                                        <path d="M18 12h4" />
                                     </svg>
                                 </button>
                                 <button
@@ -1834,23 +1835,7 @@
                                     +
                                 </button>
                             </div>
-                            <button
-                                id="preview-forward-sync-btn"
-                                class="preview-action-button"
-                                data-preview-collapsible="sync"
-                                type="button"
-                                title="Reveal Cursor in Preview (Alt+Enter)"
-                                aria-label="Reveal cursor in preview"
-                            >
-                                <svg
-                                    width="16"
-                                    height="16"
-                                    viewBox="0 0 16 16"
-                                    fill="currentColor"
-                                >
-                                    <circle cx="8" cy="8" r="3" />
-                                </svg>
-                            </button>
+
                             <button
                                 id="preview-recompile-btn"
                                 class="preview-action-button"

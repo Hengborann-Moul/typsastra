@@ -576,21 +576,6 @@ export class PdfPreviewRenderController {
     }
   }
 
-  public recompileManually(): void {
-    const activeFilePath = this.deps.getActiveFilePath();
-    if (!activeFilePath?.toLowerCase().endsWith(".typ")) return;
-    if (this.timer !== null) {
-      window.clearTimeout(this.timer);
-      this.timer = null;
-    }
-    const contents = this.deps.getEditorText();
-    this.deps.log(
-      "info",
-      "preview scheduler",
-      `Manual preview recompile requested: active=${activeFilePath}; sourceUtf16=${contents.length}.`,
-    );
-    void this.render(contents, true);
-  }
 
   public schedule(contents: string, delayMs: number): void {
     if (this.deps.isPreviewDisabled()) {

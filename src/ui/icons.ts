@@ -192,7 +192,7 @@ export function initializeLucideIcons(): void {
     "align-center": "alignCenter",
     "align-right": "alignRight",
     "find-replace": "search",
-    "sync-preview": "refresh",
+    "reveal-cursor-preview": "crosshair",
     "export-pdf": "download",
     "toggle-wrap": "wrapText",
     "toggle-special-chars": "pilcrow",
@@ -210,7 +210,7 @@ export function initializeLucideIcons(): void {
   replaceSvg("#titlebar-maximize svg", "square", 11);
   replaceSvg("#titlebar-close svg", "x", 12);
   replaceSvg("#preview-recompile-btn svg", "refresh", 16);
-  replaceSvg("#preview-forward-sync-btn svg", "crosshair", 16);
+
   replaceSvg("#preview-menu-btn svg", "ellipsisVertical", 16);
   replaceContents("#preview-image-warning-btn", "triangleAlert", 23);
   const isPreview = new URLSearchParams(window.location.search).get("mode") === "preview";
