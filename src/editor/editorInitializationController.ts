@@ -14,6 +14,7 @@ import type { LogConsoleController } from "../diagnostics/logConsoleController";
 import type { PreviewSyncController } from "../preview/previewSyncController";
 import type { EditorFontManager } from "./fontManager";
 import type { DraftPreviewController, DraftThumbnailQueueMetric } from "../preview/draftPreviewController";
+import type { ClipboardImageData } from "./imageDrop";
 
 export interface EditorInitializationDependencies {
   editorFontManager: EditorFontManager;
@@ -37,6 +38,11 @@ export interface EditorInitializationDependencies {
   forwardSyncDebounceMs(): number;
   isDeveloperPerformanceLogEnabled(): boolean;
   insertExplorerImage(path: string, position: number, view: EditorView): void;
+  pasteClipboardImages(
+    images: readonly ClipboardImageData[],
+    selection: { from: number; to: number },
+    view: EditorView,
+  ): void;
 }
 
 export class EditorInitializationController {
@@ -61,6 +67,7 @@ export class EditorInitializationController {
           message: JSON.stringify(event),
         }),
         (path, position, view) => deps.insertExplorerImage(path, position, view),
+        (images, selection, view) => deps.pasteClipboardImages(images, selection, view),
       ),
       deps.spellcheck.extension(),
       EditorView.updateListener.of(update => {

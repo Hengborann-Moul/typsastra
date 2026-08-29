@@ -1812,9 +1812,87 @@ fn import_workspace_file(
     .map(|path| path.to_string_lossy().to_string())
 }
 
+fn save_workspace_clipboard_image_at(
+    workspace_root: &Path,
+    bytes: &[u8],
+) -> Result<PathBuf, String> {
+    const MAX_CLIPBOARD_IMAGE_BYTES: usize = 100 * 1024 * 1024;
+    if bytes.is_empty() {
+        return Err("The clipboard image is empty.".into());
+    }
+    if bytes.len() > MAX_CLIPBOARD_IMAGE_BYTES {
+        return Err("The clipboard image exceeds the 100 MiB paste limit.".into());
+    }
+    let extension = match image::guess_format(bytes)
+        .map_err(|_| "The clipboard does not contain a supported encoded image.".to_string())?
+    {
+        image::ImageFormat::Png => "png",
+        image::ImageFormat::Jpeg => "jpg",
+        image::ImageFormat::Gif => "gif",
+        image::ImageFormat::WebP => "webp",
+        image::ImageFormat::Bmp => "bmp",
+        image::ImageFormat::Ico => "ico",
+        image::ImageFormat::Avif => "avif",
+        _ => return Err("The clipboard image format is not supported by the editor.".into()),
+    };
+
+    let root = dunce::canonicalize(workspace_root)
+        .map_err(|error| format!("Failed to resolve the active project: {error}"))?;
+    if !root.is_dir() {
+        return Err("The active project folder is unavailable.".into());
+    }
+    let images_directory = root.join("images");
+    std::fs::create_dir_all(&images_directory)
+        .map_err(|error| format!("Failed to create the images folder: {error}"))?;
+    let images_directory = dunce::canonicalize(&images_directory)
+        .map_err(|error| format!("Failed to resolve the images folder: {error}"))?;
+    if !images_directory.starts_with(&root) {
+        return Err("The images folder escapes the active project.".into());
+    }
+
+    for index in 0_u32..10_000 {
+        let file_name = if index == 0 {
+            format!("clipboard-image.{extension}")
+        } else {
+            format!("clipboard-image-{index}.{extension}")
+        };
+        let destination = images_directory.join(file_name);
+        let mut output = match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&destination)
+        {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(format!("Failed to create the clipboard image: {error}")),
+        };
+        if let Err(error) = std::io::Write::write_all(&mut output, bytes) {
+            drop(output);
+            let _ = std::fs::remove_file(&destination);
+            return Err(format!("Failed to save the clipboard image: {error}"));
+        }
+        return Ok(destination);
+    }
+
+    Err("Too many clipboard images already exist in the project images folder.".into())
+}
+
+#[tauri::command]
+fn save_workspace_clipboard_image(
+    workspace_root_path: String,
+    mime_type: String,
+    bytes: Vec<u8>,
+) -> Result<String, String> {
+    if !mime_type.to_ascii_lowercase().starts_with("image/") {
+        return Err("The clipboard item is not an image.".into());
+    }
+    save_workspace_clipboard_image_at(Path::new(&workspace_root_path), &bytes)
+        .map(|path| path.to_string_lossy().to_string())
+}
+
 #[cfg(test)]
 mod workspace_file_import_tests {
-    use super::import_workspace_file_at;
+    use super::{import_workspace_file_at, save_workspace_clipboard_image_at};
     use std::path::Path;
 
     #[test]
@@ -1835,6 +1913,20 @@ mod workspace_file_import_tests {
             std::fs::read(project.path().join("images/diagram.png")).unwrap(),
             b"old image"
         );
+    }
+
+    #[test]
+    fn saves_clipboard_images_with_collision_safe_names() {
+        let project = tempfile::tempdir().unwrap();
+        let png = [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0];
+
+        let first = save_workspace_clipboard_image_at(project.path(), &png).unwrap();
+        let second = save_workspace_clipboard_image_at(project.path(), &png).unwrap();
+
+        assert_eq!(first.file_name().unwrap(), "clipboard-image.png");
+        assert_eq!(second.file_name().unwrap(), "clipboard-image-1.png");
+        assert_eq!(std::fs::read(first).unwrap(), png);
+        assert!(save_workspace_clipboard_image_at(project.path(), b"not an image").is_err());
     }
 
     #[test]
@@ -6229,6 +6321,7 @@ pub fn run() {
             rename_workspace_file,
             copy_workspace_file,
             import_workspace_file,
+            save_workspace_clipboard_image,
             commit_pdf_export,
             read_workspace_dir,
             move_to_trash,

@@ -10,6 +10,7 @@ import {
   imageInsertionSnippets,
   moveImageDropCaret,
   relativeDocumentAssetPath,
+  type ClipboardImageData,
   type ImageInsertionStyle,
 } from "../editor/imageDrop";
 
@@ -55,6 +56,14 @@ export class FileDropController {
 
   public insertExplorerImage(path: string, position: number, view: EditorView): void {
     void this.insertImage(path, position, view);
+  }
+
+  public pasteClipboardImages(
+    images: readonly ClipboardImageData[],
+    selection: { from: number; to: number },
+    view: EditorView,
+  ): void {
+    void this.saveAndInsertClipboardImages(images, selection, view);
   }
 
   public startExplorerImageDrag(path: string, event: PointerEvent): void {
@@ -186,11 +195,56 @@ export class FileDropController {
     }
   }
 
+  private async saveAndInsertClipboardImages(
+    images: readonly ClipboardImageData[],
+    selection: { from: number; to: number },
+    view: EditorView,
+  ): Promise<void> {
+    const workspaceRoot = this.deps.workspaceRootPath();
+    const documentPath = this.deps.activeFilePath();
+    if (!workspaceRoot || !documentPath || !isTypstDocumentPath(documentPath) || images.length === 0) return;
+    const originalDocument = view.state.doc;
+
+    const savedPaths: string[] = [];
+    const failures: string[] = [];
+    for (const [index, image] of images.entries()) {
+      try {
+        savedPaths.push(await invoke<string>("save_workspace_clipboard_image", {
+          workspaceRootPath: workspaceRoot,
+          mimeType: image.mimeType,
+          bytes: Array.from(new Uint8Array(image.bytes)),
+        }));
+      } catch (error) {
+        failures.push(`Image ${index + 1}: ${String(error)}`);
+      }
+    }
+    if (savedPaths.length > 0) await this.refreshExplorers();
+    if (failures.length > 0) {
+      await message(failures.join("\n"), {
+        title: savedPaths.length > 0 ? "Some clipboard images were not saved" : "Image paste failed",
+        kind: "error",
+      });
+    }
+    if (
+      savedPaths.length > 0
+      && filePathKey(this.deps.activeFilePath() ?? "") === filePathKey(documentPath)
+      && this.deps.editor() === view
+      && view.state.doc === originalDocument
+    ) {
+      await this.insertImages(savedPaths, selection.from, view, selection.to);
+    }
+  }
+
   private async insertImage(sourcePath: string, position: number, view: EditorView): Promise<void> {
     await this.insertImages([sourcePath], position, view);
   }
 
-  private async insertImages(sourcePaths: readonly string[], position: number, view: EditorView): Promise<void> {
+  private async insertImages(
+    sourcePaths: readonly string[],
+    position: number,
+    view: EditorView,
+    replaceTo = position,
+  ): Promise<void> {
     const workspaceRoot = this.deps.workspaceRootPath();
     const documentPath = this.deps.activeFilePath();
     if (!workspaceRoot || !documentPath || !isTypstDocumentPath(documentPath)) return;
@@ -198,6 +252,7 @@ export class FileDropController {
     if (supportedPaths.length === 0) return;
 
     const originalDocumentPath = documentPath;
+    const originalDocument = view.state.doc;
     const projectImagePaths: string[] = [];
     const externalPaths = supportedPaths.filter(path => relativeFilePath(workspaceRoot, path) === null);
     if (externalPaths.length > 0) {
@@ -262,14 +317,16 @@ export class FileDropController {
     if (
       filePathKey(this.deps.activeFilePath() ?? "") !== filePathKey(originalDocumentPath)
       || this.deps.editor() !== view
+      || view.state.doc !== originalDocument
       || position < 0
-      || position > view.state.doc.length
+      || replaceTo < position
+      || replaceTo > view.state.doc.length
     ) return;
 
     const snippet = imageInsertionSnippets(relativePaths, insertion);
     if (!snippet) return;
     view.dispatch({
-      changes: { from: position, to: position, insert: snippet.text },
+      changes: { from: position, to: replaceTo, insert: snippet.text },
       selection: { anchor: position + snippet.selectionOffset },
       scrollIntoView: true,
       userEvent: "input.drop",

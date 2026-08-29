@@ -10,9 +10,29 @@ export type ImageInsertionSnippet = {
   selectionOffset: number;
 };
 
+export type ClipboardImageData = {
+  bytes: ArrayBuffer;
+  mimeType: string;
+};
+
 export function explorerImageDragPath(dataTransfer: DataTransfer | null): string | null {
   const path = dataTransfer?.getData(EXPLORER_IMAGE_DRAG_TYPE).trim() ?? "";
   return path || null;
+}
+
+export function clipboardImageFiles(dataTransfer: DataTransfer | null): File[] {
+  if (!dataTransfer) return [];
+  return Array.from(dataTransfer.items)
+    .filter(item => item.kind === "file" && item.type.toLowerCase().startsWith("image/"))
+    .map(item => item.getAsFile())
+    .filter((file): file is File => file !== null);
+}
+
+export async function readClipboardImageFiles(files: readonly File[]): Promise<ClipboardImageData[]> {
+  return Promise.all(files.map(async file => ({
+    bytes: await file.arrayBuffer(),
+    mimeType: file.type,
+  })));
 }
 
 export function moveImageDropCaret(

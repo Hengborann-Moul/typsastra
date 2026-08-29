@@ -1540,6 +1540,9 @@ export class TypsastraWorkspaceController {
     forwardSyncDebounceMs: () => this.forwardSyncDebounceMs,
     isDeveloperPerformanceLogEnabled: () => this.isDeveloperLogEnabled("performance"),
     insertExplorerImage: (path, position, view) => this.fileDropController.insertExplorerImage(path, position, view),
+    pasteClipboardImages: (images, selection, view) => {
+      this.fileDropController.pasteClipboardImages(images, selection, view);
+    },
   });
   private readonly toolchainSetupController = new ToolchainSetupController({
     listReleases: () => invoke("list_tinymist_releases"),

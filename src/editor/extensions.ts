@@ -48,7 +48,14 @@ import { toggleLineComment } from "@codemirror/commands";
 import { bracketColorizer } from "./bracketColorizer";
 import { createHoverTooltip } from "./hover";
 import type { TinymistLspClient } from "../compiler/lsp";
-import { EXPLORER_IMAGE_DRAG_TYPE, explorerImageDragPath, moveImageDropCaret } from "./imageDrop";
+import {
+  EXPLORER_IMAGE_DRAG_TYPE,
+  clipboardImageFiles,
+  explorerImageDragPath,
+  moveImageDropCaret,
+  readClipboardImageFiles,
+  type ClipboardImageData,
+} from "./imageDrop";
 import { typstFunctionFoldService } from "./folding";
 import { deleteNextGrapheme, deletePreviousGraphemeOrPair, graphemeBoundaries, graphemePointerSelection, graphemeSelectionBoundaryFilter, moveNextGrapheme, movePreviousGrapheme, selectNextGrapheme, selectPreviousGrapheme, type GraphemePointerDebugEvent } from "./grapheme";
 import { editingPolicyRegistry } from "./editingPolicies/registry";
@@ -765,6 +772,11 @@ export function getEditorExtensions(
   getProviders?: () => ProviderCapabilities[],
   onGraphemePointerDebug?: (event: GraphemePointerDebugEvent) => void,
   onExplorerImageDrop?: (path: string, position: number, view: EditorView) => void,
+  onClipboardImagePaste?: (
+    images: readonly ClipboardImageData[],
+    selection: { from: number; to: number },
+    view: EditorView,
+  ) => void,
 ): Extension[] {
   return [
     ctrlClickLinkPlugin,
@@ -790,6 +802,18 @@ export function getEditorExtensions(
         if (position === null) return false;
         event.preventDefault();
         onExplorerImageDrop(path, position, view);
+        return true;
+      },
+      paste: (event, view) => {
+        const files = clipboardImageFiles(event.clipboardData);
+        if (files.length === 0 || !onClipboardImagePaste) return false;
+        event.preventDefault();
+        const selection = view.state.selection.main;
+        const document = view.state.doc;
+        void readClipboardImageFiles(files).then(images => {
+          if (view.state.doc !== document) return;
+          onClipboardImagePaste(images, { from: selection.from, to: selection.to }, view);
+        }).catch(error => console.error("Failed to read pasted clipboard image:", error));
         return true;
       },
       copy: (event, view) => writeEditorClipboardText(event, view),

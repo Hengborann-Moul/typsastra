@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   EXPLORER_IMAGE_DRAG_TYPE,
+  clipboardImageFiles,
   imageInsertionSnippet,
   imageInsertionSnippets,
   moveImageDropCaret,
@@ -23,6 +24,21 @@ describe("editor image drag and drop", () => {
     )).toBe("images/រូប.png");
     expect(relativeDocumentAssetPath("/project", "/project/main.typ", "/outside/image.png"))
       .toBeNull();
+  });
+
+  test("accepts clipboard image files without claiming text paste", () => {
+    const image = new File([new Uint8Array([1, 2, 3])], "clipboard.png", { type: "image/png" });
+    const text = new File(["notes"], "notes.txt", { type: "text/plain" });
+    const transfer = {
+      items: [
+        { kind: "file", type: "image/png", getAsFile: () => image },
+        { kind: "file", type: "text/plain", getAsFile: () => text },
+        { kind: "string", type: "text/plain", getAsFile: () => null },
+      ],
+    };
+
+    expect(clipboardImageFiles(transfer as never)).toEqual([image]);
+    expect(clipboardImageFiles(null)).toEqual([]);
   });
 
   test("moves the editor caret to the current image drop point", () => {
@@ -73,6 +89,9 @@ describe("editor image drag and drop", () => {
     expect(explorer).toContain('label.addEventListener("pointerdown"');
     expect(explorer).toContain("this.onImageDragStart?.(node.path, event)");
     expect(extensions).toContain("event.dataTransfer?.types.includes(EXPLORER_IMAGE_DRAG_TYPE)");
+    expect(extensions).toContain("const files = clipboardImageFiles(event.clipboardData)");
+    expect(extensions).toContain("if (files.length === 0 || !onClipboardImagePaste) return false");
+    expect(extensions).toContain("if (view.state.doc !== document) return");
     expect(extensions).toContain("moveImageDropCaret(view, { x: event.clientX, y: event.clientY })");
     expect(controller).toContain("startExplorerImageDrag(path: string, event: PointerEvent)");
     expect(controller).toContain("handleExplorerPointerMove(event: PointerEvent)");
@@ -81,6 +100,9 @@ describe("editor image drag and drop", () => {
     expect(controller).toContain("moveImageDropCaret(this.deps.editor(), point)");
     expect(controller).toContain('destinationRelativeDirectory: "images"');
     expect(controller).toContain("await this.insertImages(images, position, view)");
+    expect(controller).toContain('invoke<string>("save_workspace_clipboard_image"');
+    expect(controller).toContain('filePathKey(this.deps.activeFilePath() ?? "") === filePathKey(documentPath)');
+    expect(controller).toContain("view.state.doc === originalDocument");
     expect(controller).toContain("imageInsertionSnippets(relativePaths, insertion)");
     expect(controller).toContain('userEvent: "input.drop"');
     expect(EXPLORER_IMAGE_DRAG_TYPE).toBe("application/x-typsastra-explorer-image");
