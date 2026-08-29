@@ -3,6 +3,7 @@ import {
   fileExtension,
   isBinaryImagePath,
   isMarkdownDocumentPath,
+  isSupportedImageReferencePath,
   isSupportedInAppPath,
   isTypstDocumentPath,
 } from "../src/platform/fileTypes";
@@ -25,6 +26,13 @@ describe("file types", () => {
     expect(isSupportedInAppPath("/docs/references.bib")).toBe(true);
     expect(isSupportedInAppPath("/docs/figure.PNG")).toBe(true);
     expect(isBinaryImagePath("/docs/figure.PNG")).toBe(true);
+  });
+
+  test("recognizes image references without treating SVG as binary", () => {
+    expect(isSupportedImageReferencePath("/docs/figure.PNG")).toBe(true);
+    expect(isSupportedImageReferencePath("/docs/vector.SVG")).toBe(true);
+    expect(isBinaryImagePath("/docs/vector.SVG")).toBe(false);
+    expect(isSupportedImageReferencePath("/docs/output.pdf")).toBe(false);
   });
 
   test("rejects formats that should be opened externally", () => {

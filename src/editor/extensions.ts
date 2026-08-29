@@ -48,6 +48,7 @@ import { toggleLineComment } from "@codemirror/commands";
 import { bracketColorizer } from "./bracketColorizer";
 import { createHoverTooltip } from "./hover";
 import type { TinymistLspClient } from "../compiler/lsp";
+import { EXPLORER_IMAGE_DRAG_TYPE, explorerImageDragPath, moveImageDropCaret } from "./imageDrop";
 import { typstFunctionFoldService } from "./folding";
 import { deleteNextGrapheme, deletePreviousGraphemeOrPair, graphemeBoundaries, graphemePointerSelection, graphemeSelectionBoundaryFilter, moveNextGrapheme, movePreviousGrapheme, selectNextGrapheme, selectPreviousGrapheme, type GraphemePointerDebugEvent } from "./grapheme";
 import { editingPolicyRegistry } from "./editingPolicies/registry";
@@ -576,7 +577,7 @@ const preventEscapedBracketAutoClose = EditorView.inputHandler.of((view, from, t
 });
 
 const ctrlClickForceUpdateEffect = StateEffect.define<null>();
-const linkDecoration = Decoration.mark({ class: "cm-ctrl-link", attributes: { style: "text-decoration: underline; cursor: pointer;" } });
+const linkDecoration = Decoration.mark({ class: "cm-ctrl-link", attributes: { style: "text-decoration: underline; cursor: default;" } });
 
 export function typstImportPathRange(state: EditorState, position: number): { from: number; to: number } | null {
   const line = state.doc.lineAt(position);
@@ -762,7 +763,8 @@ export function getEditorExtensions(
   flushLspSync: () => void | Promise<void>,
   onNavigateToDefinition?: (uri: string, line: number, character: number) => void,
   getProviders?: () => ProviderCapabilities[],
-  onGraphemePointerDebug?: (event: GraphemePointerDebugEvent) => void
+  onGraphemePointerDebug?: (event: GraphemePointerDebugEvent) => void,
+  onExplorerImageDrop?: (path: string, position: number, view: EditorView) => void,
 ): Extension[] {
   return [
     ctrlClickLinkPlugin,
@@ -774,6 +776,22 @@ export function getEditorExtensions(
     preventEscapedBracketAutoClose,
     contextualDoubleQuoteExtension,
     EditorView.domEventHandlers({
+      dragover: (event, view) => {
+        if (!event.dataTransfer?.types.includes(EXPLORER_IMAGE_DRAG_TYPE)) return false;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "copy";
+        moveImageDropCaret(view, { x: event.clientX, y: event.clientY });
+        return true;
+      },
+      drop: (event, view) => {
+        const path = explorerImageDragPath(event.dataTransfer);
+        if (!path || !onExplorerImageDrop) return false;
+        const position = moveImageDropCaret(view, { x: event.clientX, y: event.clientY });
+        if (position === null) return false;
+        event.preventDefault();
+        onExplorerImageDrop(path, position, view);
+        return true;
+      },
       copy: (event, view) => writeEditorClipboardText(event, view),
       cut: (event, view) => {
         if (!writeEditorClipboardText(event, view)) return false;

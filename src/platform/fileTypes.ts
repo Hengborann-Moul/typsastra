@@ -19,6 +19,10 @@ export function isBinaryImagePath(path: string): boolean {
   return IMAGE_EXTENSIONS.has(fileExtension(path));
 }
 
+export function isSupportedImageReferencePath(path: string): boolean {
+  return isBinaryImagePath(path) || fileExtension(path) === "svg";
+}
+
 export function isTypstDocumentPath(path: string): boolean {
   return fileExtension(path) === "typ";
 }

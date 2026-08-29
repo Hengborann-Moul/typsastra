@@ -85,6 +85,7 @@ import {
 } from "./workspace/workspaceLifecycleController";
 import { ProjectImportController } from "./workspace/projectImportController";
 import { ExternalWorkspaceController } from "./workspace/externalWorkspaceController";
+import { FileDropController } from "./workspace/fileDropController";
 import { ExternalFileReloadController } from "./workspace/externalFileReloadController";
 import { WorkspacePathRenameController } from "./workspace/workspacePathRenameController";
 import { PinnedMainFileController } from "./workspace/pinnedMainFileController";
@@ -1197,6 +1198,18 @@ export class TypsastraWorkspaceController {
     editor: () => this.editorInstance,
   });
   private readonly appDialogController = new AppDialogController();
+  private readonly fileDropController = new FileDropController({
+    editor: () => this.editorInstance,
+    appDialog: this.appDialogController,
+    workspaceRootPath: () => this.workspaceRootPath,
+    activeFilePath: () => this.activeFilePath,
+    refreshWorkspaceExplorer: async () => {
+      if (this.workspaceRootPath) await this.explorer.loadWorkspace(this.workspaceRootPath);
+    },
+    refreshImageExplorer: () => this.sidebarController.activeTool === "images"
+      ? this.imageToolsController.refresh()
+      : undefined,
+  });
   private readonly releaseSummaryController = new ReleaseSummaryController();
   private readonly draftPreviewController = new DraftPreviewController(
     this.appDialogController,
@@ -1526,6 +1539,7 @@ export class TypsastraWorkspaceController {
     syncSelectedSpellingLocation: () => this.syncSelectedSpellingLocation(),
     forwardSyncDebounceMs: () => this.forwardSyncDebounceMs,
     isDeveloperPerformanceLogEnabled: () => this.isDeveloperLogEnabled("performance"),
+    insertExplorerImage: (path, position, view) => this.fileDropController.insertExplorerImage(path, position, view),
   });
   private readonly toolchainSetupController = new ToolchainSetupController({
     listReleases: () => invoke("list_tinymist_releases"),
@@ -1713,6 +1727,7 @@ export class TypsastraWorkspaceController {
     this.performanceController.timeStartupSync("apply settings to runtime", () => this.applySettingsToRuntime(this.settingsController.value));
     await this.performanceController.timeStartup("load editor fonts", () => this.editorFontManager.ready());
     this.performanceController.timeStartupSync("initialize explorer", () => this.initExplorer());
+    this.performanceController.timeStartupSync("initialize file drop", () => this.fileDropController.initialize());
     this.performanceController.timeStartupSync("initialize editor toolbar", () => this.editorToolbarController.initialize());
     this.performanceController.timeStartupSync("initialize tab strip", () => this.tabStripController.initialize());
     this.performanceController.timeStartupSync("bind global events", () => this.bindGlobalEvents());
@@ -1950,6 +1965,9 @@ export class TypsastraWorkspaceController {
       (path: string) => this.isPinnedMainFile(path),
       document.getElementById("workspace-explorer-title")!
     );
+    this.explorer.setImageDragStartHandler((path, event) => {
+      this.fileDropController.startExplorerImageDrag(path, event);
+    });
   }
 
   private renderEditorTabs(): void {

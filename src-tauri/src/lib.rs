@@ -1709,6 +1709,152 @@ fn copy_workspace_file(source: String, dest: String) -> Result<(), String> {
         .map_err(|e| format!("Failed to copy: {}", e))
 }
 
+fn import_workspace_file_at(
+    workspace_root: &Path,
+    source_path: &Path,
+    destination_relative_directory: &Path,
+) -> Result<PathBuf, String> {
+    if destination_relative_directory.is_absolute()
+        || destination_relative_directory
+            .components()
+            .any(|component| {
+                !matches!(
+                    component,
+                    std::path::Component::Normal(_) | std::path::Component::CurDir
+                )
+            })
+    {
+        return Err("The file import destination must stay inside the active project.".into());
+    }
+
+    let root = dunce::canonicalize(workspace_root)
+        .map_err(|error| format!("Failed to resolve the active project: {error}"))?;
+    if !root.is_dir() {
+        return Err("The active project folder is unavailable.".into());
+    }
+    let source = dunce::canonicalize(source_path)
+        .map_err(|error| format!("Failed to resolve the dropped file: {error}"))?;
+    if !source.is_file() {
+        return Err("Only files can be imported into a project.".into());
+    }
+    let file_name = source
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| "The dropped file does not have a usable name.".to_string())?;
+
+    let destination_directory = root.join(destination_relative_directory);
+    std::fs::create_dir_all(&destination_directory)
+        .map_err(|error| format!("Failed to create the import folder: {error}"))?;
+    let destination_directory = dunce::canonicalize(&destination_directory)
+        .map_err(|error| format!("Failed to resolve the import folder: {error}"))?;
+    if !destination_directory.starts_with(&root) {
+        return Err("The file import destination escapes the active project.".into());
+    }
+    if source.parent() == Some(destination_directory.as_path()) {
+        return Ok(source);
+    }
+
+    let original = Path::new(file_name);
+    let stem = original
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or(file_name);
+    let extension = original.extension().and_then(|value| value.to_str());
+    for index in 0_u32..10_000 {
+        let candidate_name = if index == 0 {
+            file_name.to_string()
+        } else {
+            let suffix = if index == 1 {
+                " copy".to_string()
+            } else {
+                format!(" copy {index}")
+            };
+            match extension {
+                Some(extension) => format!("{stem}{suffix}.{extension}"),
+                None => format!("{stem}{suffix}"),
+            }
+        };
+        let destination = destination_directory.join(candidate_name);
+        let mut output = match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&destination)
+        {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(format!("Failed to create the imported file: {error}")),
+        };
+        let copy_result = std::fs::File::open(&source)
+            .and_then(|mut input| std::io::copy(&mut input, &mut output));
+        if let Err(error) = copy_result {
+            drop(output);
+            let _ = std::fs::remove_file(&destination);
+            return Err(format!("Failed to import the dropped file: {error}"));
+        }
+        return Ok(destination);
+    }
+
+    Err("Too many files with the same name already exist in the destination folder.".into())
+}
+
+#[tauri::command]
+fn import_workspace_file(
+    workspace_root_path: String,
+    source_path: String,
+    destination_relative_directory: String,
+) -> Result<String, String> {
+    import_workspace_file_at(
+        Path::new(&workspace_root_path),
+        Path::new(&source_path),
+        Path::new(&destination_relative_directory),
+    )
+    .map(|path| path.to_string_lossy().to_string())
+}
+
+#[cfg(test)]
+mod workspace_file_import_tests {
+    use super::import_workspace_file_at;
+    use std::path::Path;
+
+    #[test]
+    fn imports_without_overwriting_existing_files() {
+        let project = tempfile::tempdir().unwrap();
+        let external = tempfile::tempdir().unwrap();
+        let source = external.path().join("diagram.png");
+        std::fs::write(&source, b"new image").unwrap();
+        std::fs::create_dir(project.path().join("images")).unwrap();
+        std::fs::write(project.path().join("images/diagram.png"), b"old image").unwrap();
+
+        let imported =
+            import_workspace_file_at(project.path(), &source, Path::new("images")).unwrap();
+
+        assert_eq!(imported.file_name().unwrap(), "diagram copy.png");
+        assert_eq!(std::fs::read(imported).unwrap(), b"new image");
+        assert_eq!(
+            std::fs::read(project.path().join("images/diagram.png")).unwrap(),
+            b"old image"
+        );
+    }
+
+    #[test]
+    fn creates_project_subdirectories_and_rejects_escape_paths() {
+        let project = tempfile::tempdir().unwrap();
+        let external = tempfile::tempdir().unwrap();
+        let source = external.path().join("figure.svg");
+        std::fs::write(&source, b"<svg/>").unwrap();
+
+        let imported =
+            import_workspace_file_at(project.path(), &source, Path::new("images")).unwrap();
+        assert_eq!(imported, project.path().join("images/figure.svg"));
+        assert!(
+            import_workspace_file_at(project.path(), &source, Path::new("../outside"))
+                .unwrap_err()
+                .contains("inside the active project")
+        );
+    }
+}
+
 fn validate_staged_pdf(path: &Path) -> Result<(), String> {
     let metadata = std::fs::metadata(path)
         .map_err(|error| format!("Could not inspect the compiled PDF: {error}"))?;
@@ -6082,6 +6228,7 @@ pub fn run() {
             create_workspace_dir,
             rename_workspace_file,
             copy_workspace_file,
+            import_workspace_file,
             commit_pdf_export,
             read_workspace_dir,
             move_to_trash,

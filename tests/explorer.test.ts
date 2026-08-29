@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { inlineCreationPlacement, isHiddenWorkspaceEntry, sortFileNodes, workspaceParentDirectories, workspacePathSetContains, type FileNode } from "../src/components/explorer";
 import { deleteConfirmationMessage, duplicateFileName, explorerKeyboardAction, isMainFileCandidate } from "../src/components/contextMenuController";
+import { explorerDropRelativeDirectoryForEntry } from "../src/workspace/fileDropController";
 
 describe("workspace explorer", () => {
   test("sorts folders before files without mutating the source list", () => {
@@ -12,6 +13,21 @@ describe("workspace explorer", () => {
 
     expect(sortFileNodes(nodes).map(node => node.name)).toEqual(["assets", "a.typ", "z.typ"]);
     expect(nodes.map(node => node.name)).toEqual(["z.typ", "assets", "a.typ"]);
+  });
+
+  test("resolves native file-drop destinations from explorer entries", () => {
+    expect(explorerDropRelativeDirectoryForEntry(
+      "C:\\Research",
+      "C:\\Research\\figures",
+      true,
+    )).toBe("figures");
+    expect(explorerDropRelativeDirectoryForEntry(
+      "C:\\Research",
+      "C:\\Research\\chapters\\one.typ",
+      false,
+    )).toBe("chapters");
+    expect(explorerDropRelativeDirectoryForEntry("C:\\Research", "C:\\Outside", true))
+      .toBeNull();
   });
 
   test("maps standard explorer file-operation shortcuts", () => {

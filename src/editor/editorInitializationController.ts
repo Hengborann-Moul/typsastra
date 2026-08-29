@@ -36,6 +36,7 @@ export interface EditorInitializationDependencies {
   syncSelectedSpellingLocation(): void;
   forwardSyncDebounceMs(): number;
   isDeveloperPerformanceLogEnabled(): boolean;
+  insertExplorerImage(path: string, position: number, view: EditorView): void;
 }
 
 export class EditorInitializationController {
@@ -59,6 +60,7 @@ export class EditorInitializationController {
           source: "grapheme pointer",
           message: JSON.stringify(event),
         }),
+        (path, position, view) => deps.insertExplorerImage(path, position, view),
       ),
       deps.spellcheck.extension(),
       EditorView.updateListener.of(update => {

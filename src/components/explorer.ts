@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { join } from "@tauri-apps/api/path";
 import { createAppIcon, type AppIconName } from "../ui/icons";
 import { fileNameFromPath, filePathKey, relativeFilePath } from "../platform/paths";
+import { isSupportedImageReferencePath } from "../platform/fileTypes";
 
 export interface FileNode { name: string; path: string; isDirectory: boolean; children?: FileNode[]; }
 
@@ -68,6 +69,7 @@ export class WorkspaceExplorer {
   private workspaceRootPath: string | null = null;
   private activeFilePath: string | null = null;
   private visibleFilePaths: string[] | null = null;
+  private onImageDragStart: ((path: string, event: PointerEvent) => void) | null = null;
 
   constructor(
     private container: HTMLElement,
@@ -88,6 +90,10 @@ export class WorkspaceExplorer {
     });
     this.container.addEventListener("focus", () => this.ensureKeyboardSelection());
     this.container.addEventListener("keydown", event => void this.handleKeyboardNavigation(event));
+  }
+
+  public setImageDragStartHandler(handler: (path: string, event: PointerEvent) => void): void {
+    this.onImageDragStart = handler;
   }
 
   public selectedEntry(): ExplorerSelection | null {
@@ -391,6 +397,12 @@ export class WorkspaceExplorer {
       label.appendChild(textContainer);
 
       if (!node.isDirectory) {
+        if (isSupportedImageReferencePath(node.path)) {
+          label.classList.add("image-drag-source");
+          label.addEventListener("pointerdown", event => {
+            if (event.button === 0) this.onImageDragStart?.(node.path, event);
+          });
+        }
         label.addEventListener("click", () => {
           this.container.querySelectorAll('.tree-item.selected').forEach(el => el.classList.remove('selected'));
           label.classList.add('selected');
