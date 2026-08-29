@@ -25,14 +25,15 @@ test("Enhanced Unicode v0.4.0 carries forward the published viewer matrix unchan
   const validation = await Bun.file("docs/ENHANCED_UNICODE_ENGINE_VALIDATION.md").text();
   const releaseNotes = await Bun.file("docs/ENHANCED_UNICODE_ENGINE_RELEASE_NOTES_V0.4.0.md").text();
   const rows = [
-    "| Chrome | Pass | Pass | Pass | 12/12 |",
-    "| Brave | Pass | Pass | Pass | 12/12 |",
-    "| Microsoft Edge | Pass | Pass | Pass | 12/12 |",
-    "| Okular | Pass | Pass | Pass | Pass |",
-    "| SumatraPDF | Pass | Pass | Pass | Pass |",
-    "| Adobe Acrobat | Pass | Pass | Pass | 6/12 |",
-    "| Firefox | Pass | Partial | Partial | 0/12 |",
-    "| ONLYOFFICE | Pass | Pass visually | Fail | 0/12 |",
+    "| Chrome | 151.0.7922.174 (Official Build, 64-bit) | Pass | Pass | Pass | 12/12 |",
+    "| Brave | 1.94.117 (Official Build, 64-bit) | Pass | Pass | Pass | 12/12 |",
+    "| Microsoft Edge | 151.0.4129.107 (Official build, 64-bit) | Pass | Pass | Pass | 12/12 |",
+    "| Okular | 25.08.1 | Pass | Pass | Pass | Pass |",
+    "| SumatraPDF | 3.6.1 | Pass | Pass | Pass | Pass |",
+    "| Adobe Acrobat | 2022.001.20085 | Pass | Pass | Pass | 6/12 |",
+    "| Firefox | 154.0.1 (64-bit) | Pass | Partial | Partial | 0/12 |",
+    "| ONLYOFFICE Desktop Editors Community | 9.3.1.8 (x64 exe) | Pass | Pass visually | Fail | 0/12 |",
+    "| Typsastra | 0.8.0 | Pass | Pass | Pass | 12/12 |",
   ];
 
   for (const row of rows) {
@@ -40,7 +41,8 @@ test("Enhanced Unicode v0.4.0 carries forward the published viewer matrix unchan
     expect(releaseNotes).toContain(row);
   }
   expect(releaseNotes).toContain("viewer result is upgraded or downgraded");
-  expect(releaseNotes).toContain("not a new viewer run");
+  expect(releaseNotes).toContain("recording the tested");
+  expect(releaseNotes).toContain("operating systems");
 });
 
 test("Enhanced Unicode fixtures expose directly authored labeled cases", async () => {

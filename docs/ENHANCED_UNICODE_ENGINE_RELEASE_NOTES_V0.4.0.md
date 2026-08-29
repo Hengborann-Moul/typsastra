@@ -38,21 +38,23 @@ v0.4.0 carries forward the same published Khmer viewer compatibility data. No
 viewer result is upgraded or downgraded by the glyph-namespace compaction. The
 source article contains 12 occurrences of the search term `អក្សរ`:
 
-| Viewer | Render | Selection | Copy/paste | Search |
-|---|---|---|---|---|
-| Chrome | Pass | Pass | Pass | 12/12 |
-| Brave | Pass | Pass | Pass | 12/12 |
-| Microsoft Edge | Pass | Pass | Pass | 12/12 |
-| Okular | Pass | Pass | Pass | Pass |
-| SumatraPDF | Pass | Pass | Pass | Pass |
-| Adobe Acrobat | Pass | Pass | Pass | 6/12 |
-| Firefox | Pass | Partial | Partial | 0/12 |
-| ONLYOFFICE | Pass | Pass visually | Fail | 0/12 |
+| Viewer | Tested version | Render | Selection | Copy/paste | Search |
+|---|---|---|---|---|---|
+| Chrome | 151.0.7922.174 (Official Build, 64-bit) | Pass | Pass | Pass | 12/12 |
+| Brave | 1.94.117 (Official Build, 64-bit) | Pass | Pass | Pass | 12/12 |
+| Microsoft Edge | 151.0.4129.107 (Official build, 64-bit) | Pass | Pass | Pass | 12/12 |
+| Okular | 25.08.1 | Pass | Pass | Pass | Pass |
+| SumatraPDF | 3.6.1 | Pass | Pass | Pass | Pass |
+| Adobe Acrobat | 2022.001.20085 | Pass | Pass | Pass | 6/12 |
+| Firefox | 154.0.1 (64-bit) | Pass | Partial | Partial | 0/12 |
+| ONLYOFFICE Desktop Editors Community | 9.3.1.8 (x64 exe) | Pass | Pass visually | Fail | 0/12 |
+| Typsastra | 0.8.0 | Pass | Pass | Pass | 12/12 |
 
 These are the unchanged results from the
 [original published matrix](https://forum.typst.app/t/typsastra-enhanced-unicode-engine-for-better-unicode-in-pdfs/9709).
-They preserve the existing compatibility record; they are not a new viewer run
-with newly recorded application versions or operating systems.
+They preserve the existing compatibility results while recording the tested
+application versions. The operating systems used for the original matrix were
+not recorded.
 
 ## Platform packages
 

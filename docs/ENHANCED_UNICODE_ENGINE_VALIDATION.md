@@ -139,23 +139,24 @@ published a viewer matrix on 2026-08-21. It tested an Enhanced Unicode Engine
 v0.1.0 Khmer article using Khmer OS fonts. The search term `អក្សរ` appears 12
 times in the source:
 
-| Viewer | Render | Selection | Copy/paste | Search |
-|---|---|---|---|---|
-| Chrome | Pass | Pass | Pass | 12/12 |
-| Brave | Pass | Pass | Pass | 12/12 |
-| Microsoft Edge | Pass | Pass | Pass | 12/12 |
-| Okular | Pass | Pass | Pass | Pass |
-| SumatraPDF | Pass | Pass | Pass | Pass |
-| Adobe Acrobat | Pass | Pass | Pass | 6/12 |
-| Firefox | Pass | Partial | Partial | 0/12 |
-| ONLYOFFICE | Pass | Pass visually | Fail | 0/12 |
+| Viewer | Tested version | Render | Selection | Copy/paste | Search |
+|---|---|---|---|---|---|
+| Chrome | 151.0.7922.174 (Official Build, 64-bit) | Pass | Pass | Pass | 12/12 |
+| Brave | 1.94.117 (Official Build, 64-bit) | Pass | Pass | Pass | 12/12 |
+| Microsoft Edge | 151.0.4129.107 (Official build, 64-bit) | Pass | Pass | Pass | 12/12 |
+| Okular | 25.08.1 | Pass | Pass | Pass | Pass |
+| SumatraPDF | 3.6.1 | Pass | Pass | Pass | Pass |
+| Adobe Acrobat | 2022.001.20085 | Pass | Pass | Pass | 6/12 |
+| Firefox | 154.0.1 (64-bit) | Pass | Partial | Partial | 0/12 |
+| ONLYOFFICE Desktop Editors Community | 9.3.1.8 (x64 exe) | Pass | Pass visually | Fail | 0/12 |
+| Typsastra | 0.8.0 | Pass | Pass | Pass | 12/12 |
 
 The same post records exact extraction for all 18 tested Khmer OS fonts with
 PDFium, PyMuPDF, Poppler `pdftotext -raw`, and Poppler `pdftotext -layout`.
 The v0.4.0 release notes carry this matrix forward without changing any result.
-This preserves the published compatibility data; it does not represent a new
-viewer run because exact viewer versions and operating systems were not
-recorded in the original matrix.
+This preserves the published compatibility results and now records the tested
+application versions. The operating systems used for the original matrix were
+not recorded.
 
 ### Verified Typsastra standalone preview
 
