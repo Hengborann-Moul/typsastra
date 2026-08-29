@@ -7,7 +7,7 @@ import type { AppDialogController } from "../ui/appDialog";
 import { isSupportedImageReferencePath, isTypstDocumentPath } from "../platform/fileTypes";
 import { fileNameFromPath, filePathKey, relativeFilePath } from "../platform/paths";
 import {
-  imageInsertionSnippet,
+  imageInsertionSnippets,
   moveImageDropCaret,
   relativeDocumentAssetPath,
   type ImageInsertionStyle,
@@ -153,17 +153,9 @@ export class FileDropController {
       });
       return;
     }
-    if (images.length > 1) {
-      await message("Drop one image at a time so Typsastra can place it at the intended editor position.", {
-        title: "Multiple images selected",
-        kind: "info",
-      });
-      return;
-    }
-
     const view = this.deps.editor();
     const position = moveImageDropCaret(view, point) ?? view.state.selection.main.head;
-    await this.insertImage(images[0], position, view);
+    await this.insertImages(images, position, view);
   }
 
   private async importFilesIntoExplorer(
@@ -195,50 +187,77 @@ export class FileDropController {
   }
 
   private async insertImage(sourcePath: string, position: number, view: EditorView): Promise<void> {
+    await this.insertImages([sourcePath], position, view);
+  }
+
+  private async insertImages(sourcePaths: readonly string[], position: number, view: EditorView): Promise<void> {
     const workspaceRoot = this.deps.workspaceRootPath();
     const documentPath = this.deps.activeFilePath();
     if (!workspaceRoot || !documentPath || !isTypstDocumentPath(documentPath)) return;
-    if (!isSupportedImageReferencePath(sourcePath)) return;
+    const supportedPaths = sourcePaths.filter(isSupportedImageReferencePath);
+    if (supportedPaths.length === 0) return;
 
     const originalDocumentPath = documentPath;
-    let projectImagePath = sourcePath;
-    if (relativeFilePath(workspaceRoot, sourcePath) === null) {
+    const projectImagePaths: string[] = [];
+    const externalPaths = supportedPaths.filter(path => relativeFilePath(workspaceRoot, path) === null);
+    if (externalPaths.length > 0) {
       const imagesDirectory = await join(workspaceRoot, "images");
       const imagesDirectoryExists = await invoke<boolean>("workspace_path_exists", { path: imagesDirectory })
         .catch(() => false);
+      const multiple = externalPaths.length > 1;
       const action = await this.deps.appDialog.show({
-        title: imagesDirectoryExists ? "Copy Image into Project" : "Create Images Folder",
-        subtitle: fileNameFromPath(sourcePath),
+        title: imagesDirectoryExists
+          ? `Copy Image${multiple ? "s" : ""} into Project`
+          : "Create Images Folder",
+        subtitle: multiple ? `${externalPaths.length} images` : fileNameFromPath(externalPaths[0]),
         description: imagesDirectoryExists
-          ? "Images outside the project must be included in the project folder. Copy this image into the project images folder?"
-          : "Images outside the project must be included in the project folder. Create an images folder and copy this image into it?",
+          ? `Images outside the project must be included in the project folder. Copy ${multiple ? "these images" : "this image"} into the project images folder?`
+          : `Images outside the project must be included in the project folder. Create an images folder and copy ${multiple ? "these images" : "this image"} into it?`,
         actions: [
           { id: "cancel", label: "Cancel" },
           {
             id: "import",
-            label: imagesDirectoryExists ? "Copy Image" : "Create Folder and Copy",
+            label: imagesDirectoryExists
+              ? `Copy Image${multiple ? "s" : ""}`
+              : "Create Folder and Copy",
             primary: true,
           },
         ],
         cancelAction: "cancel",
       });
       if (action !== "import") return;
+    }
+
+    const failures: string[] = [];
+    for (const sourcePath of supportedPaths) {
+      if (relativeFilePath(workspaceRoot, sourcePath) !== null) {
+        projectImagePaths.push(sourcePath);
+        continue;
+      }
       try {
-        projectImagePath = await invoke<string>("import_workspace_file", {
+        projectImagePaths.push(await invoke<string>("import_workspace_file", {
           workspaceRootPath: workspaceRoot,
           sourcePath,
           destinationRelativeDirectory: "images",
-        });
-        await this.refreshExplorers();
+        }));
       } catch (error) {
-        await message(String(error), { title: "Image import failed", kind: "error" });
-        return;
+        failures.push(`${fileNameFromPath(sourcePath)}: ${String(error)}`);
       }
     }
+    if (externalPaths.length > failures.length) await this.refreshExplorers();
+    if (failures.length > 0) {
+      await message(failures.join("\n"), {
+        title: projectImagePaths.length > 0 ? "Some images were not imported" : "Image import failed",
+        kind: "error",
+      });
+    }
+    if (projectImagePaths.length === 0) return;
 
-    const relativePath = relativeDocumentAssetPath(workspaceRoot, documentPath, projectImagePath);
-    if (!relativePath) return;
-    const insertion = await this.chooseInsertionStyle(relativePath);
+    const relativePaths = projectImagePaths
+      .map(path => relativeDocumentAssetPath(workspaceRoot, documentPath, path))
+      .filter((path): path is string => Boolean(path));
+    if (relativePaths.length === 0) return;
+    const insertion = await this.chooseInsertionStyle(relativePaths);
     if (!insertion) return;
     if (
       filePathKey(this.deps.activeFilePath() ?? "") !== filePathKey(originalDocumentPath)
@@ -247,7 +266,8 @@ export class FileDropController {
       || position > view.state.doc.length
     ) return;
 
-    const snippet = imageInsertionSnippet(relativePath, insertion);
+    const snippet = imageInsertionSnippets(relativePaths, insertion);
+    if (!snippet) return;
     view.dispatch({
       changes: { from: position, to: position, insert: snippet.text },
       selection: { anchor: position + snippet.selectionOffset },
@@ -257,15 +277,18 @@ export class FileDropController {
     view.focus();
   }
 
-  private async chooseInsertionStyle(relativePath: string): Promise<ImageInsertionStyle | null> {
+  private async chooseInsertionStyle(relativePaths: readonly string[]): Promise<ImageInsertionStyle | null> {
+    const multiple = relativePaths.length > 1;
     const action = await this.deps.appDialog.show({
-      title: "Insert Image",
-      subtitle: relativePath,
-      description: "Insert a plain image, or surround it with a figure function and an editable caption?",
+      title: `Insert Image${multiple ? "s" : ""}`,
+      subtitle: multiple ? `${relativePaths.length} images` : relativePaths[0],
+      description: multiple
+        ? "Insert every image plainly, or wrap each image in a figure function with an editable caption?"
+        : "Insert a plain image, or surround it with a figure function and an editable caption?",
       actions: [
         { id: "cancel", label: "Cancel" },
-        { id: "image", label: "Plain Image" },
-        { id: "figure", label: "Figure with Caption", primary: true },
+        { id: "image", label: multiple ? "Plain Images" : "Plain Image" },
+        { id: "figure", label: multiple ? "Figures with Captions" : "Figure with Caption", primary: true },
       ],
       cancelAction: "cancel",
     });

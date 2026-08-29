@@ -59,6 +59,18 @@ export function imageInsertionSnippet(path: string, style: ImageInsertionStyle):
   return { text, selectionOffset: prefix.length };
 }
 
+export function imageInsertionSnippets(
+  paths: readonly string[],
+  style: ImageInsertionStyle,
+): ImageInsertionSnippet | null {
+  const snippets = paths.map(path => imageInsertionSnippet(path, style));
+  if (snippets.length === 0) return null;
+  const text = snippets.map(snippet => snippet.text).join("\n");
+  return {
+    text,
+    selectionOffset: style === "image" ? text.length : snippets[0].selectionOffset,
+  };
+}
 
 function pathPartEquals(left: string, right: string, root: string): boolean {
   const windowsPath = /^[A-Za-z]:[\\/]/u.test(root) || root.startsWith("\\\\") || root.startsWith("//");

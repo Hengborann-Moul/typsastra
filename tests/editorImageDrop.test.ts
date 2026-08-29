@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   EXPLORER_IMAGE_DRAG_TYPE,
   imageInsertionSnippet,
+  imageInsertionSnippets,
   moveImageDropCaret,
   relativeDocumentAssetPath,
 } from "../src/editor/imageDrop";
@@ -51,6 +52,19 @@ describe("editor image drag and drop", () => {
     expect(figure.text.slice(figure.selectionOffset)).toStartWith("],\n)");
   });
 
+  test("applies one insertion style to every dropped image", () => {
+    const plain = imageInsertionSnippets(["images/a.png", "images/b.png"], "image");
+    expect(plain).toEqual({
+      text: '#image("images/a.png")\n#image("images/b.png")',
+      selectionOffset: 45,
+    });
+
+    const figures = imageInsertionSnippets(["images/a.png", "images/b.png"], "figure");
+    expect(figures?.text).toContain('#figure(\n  image("images/a.png"),');
+    expect(figures?.text).toContain('#figure(\n  image("images/b.png"),');
+    expect(figures?.text.slice(figures.selectionOffset)).toStartWith("],\n)");
+  });
+
   test("wires explorer payloads and native drops to the editor", async () => {
     const explorer = await read("../src/components/explorer.ts");
     const extensions = await read("../src/editor/extensions.ts");
@@ -66,6 +80,8 @@ describe("editor image drag and drop", () => {
     expect(controller).toContain("onDragDropEvent");
     expect(controller).toContain("moveImageDropCaret(this.deps.editor(), point)");
     expect(controller).toContain('destinationRelativeDirectory: "images"');
+    expect(controller).toContain("await this.insertImages(images, position, view)");
+    expect(controller).toContain("imageInsertionSnippets(relativePaths, insertion)");
     expect(controller).toContain('userEvent: "input.drop"');
     expect(EXPLORER_IMAGE_DRAG_TYPE).toBe("application/x-typsastra-explorer-image");
   });
