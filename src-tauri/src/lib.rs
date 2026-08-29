@@ -1750,9 +1750,18 @@ fn atomic_replace_file(staged: &Path, destination: &Path) -> Result<(), String> 
 }
 
 #[tauri::command]
-fn commit_pdf_export(source: String, destination: String) -> Result<(), String> {
+fn commit_pdf_export(
+    state: tauri::State<'_, PdfExportOperations>,
+    operation_id: String,
+    source: String,
+    destination: String,
+) -> Result<(), String> {
     let source = PathBuf::from(source);
-    let result = commit_pdf_export_at(&source, Path::new(&destination));
+    let result = if state.is_cancelled(&operation_id) {
+        Err(PDF_EXPORT_CANCELLED.into())
+    } else {
+        commit_pdf_export_at(&source, Path::new(&destination))
+    };
     let _ = std::fs::remove_file(source);
     result
 }
@@ -3724,6 +3733,137 @@ fn parse_short_typst_diagnostic(line: &str) -> Option<TypstCheckDiagnostic> {
     })
 }
 
+const PDF_EXPORT_CANCELLED: &str = "PDF_EXPORT_CANCELLED";
+
+#[derive(Default)]
+struct PdfExportOperations {
+    operations: Mutex<std::collections::HashSet<String>>,
+    cancelled: Mutex<std::collections::HashSet<String>>,
+    processes: Mutex<HashMap<String, u32>>,
+}
+
+impl PdfExportOperations {
+    fn begin(&self, operation_id: &str) -> Result<(), String> {
+        if operation_id.trim().is_empty() || operation_id.len() > 128 {
+            return Err("Invalid PDF export operation identifier.".into());
+        }
+        let mut operations = self.operations.lock().unwrap();
+        if !operations.insert(operation_id.to_string()) {
+            return Err("PDF export operation is already active.".into());
+        }
+        drop(operations);
+        self.cancelled.lock().unwrap().remove(operation_id);
+        self.processes.lock().unwrap().remove(operation_id);
+        Ok(())
+    }
+
+    fn register_process(&self, operation_id: &str, process_id: u32) -> bool {
+        if !self.operations.lock().unwrap().contains(operation_id)
+            || self.cancelled.lock().unwrap().contains(operation_id)
+        {
+            return false;
+        }
+        self.processes
+            .lock()
+            .unwrap()
+            .insert(operation_id.to_string(), process_id);
+        if self.cancelled.lock().unwrap().contains(operation_id) {
+            self.processes.lock().unwrap().remove(operation_id);
+            return false;
+        }
+        true
+    }
+
+    fn unregister_process(&self, operation_id: &str) {
+        self.processes.lock().unwrap().remove(operation_id);
+    }
+
+    fn cancel(&self, operation_id: &str) -> Option<u32> {
+        if !self.operations.lock().unwrap().contains(operation_id) {
+            return None;
+        }
+        self.cancelled
+            .lock()
+            .unwrap()
+            .insert(operation_id.to_string());
+        self.processes.lock().unwrap().get(operation_id).copied()
+    }
+
+    fn is_cancelled(&self, operation_id: &str) -> bool {
+        self.cancelled.lock().unwrap().contains(operation_id)
+    }
+
+    fn finish(&self, operation_id: &str) {
+        self.operations.lock().unwrap().remove(operation_id);
+        self.processes.lock().unwrap().remove(operation_id);
+        self.cancelled.lock().unwrap().remove(operation_id);
+    }
+}
+
+#[cfg(windows)]
+fn terminate_pdf_export_process(process_id: u32) -> Result<(), String> {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
+
+    let process = unsafe { OpenProcess(PROCESS_TERMINATE, 0, process_id) };
+    if process.is_null() {
+        let error = std::io::Error::last_os_error();
+        if error.raw_os_error() == Some(87) {
+            return Ok(());
+        }
+        return Err(format!(
+            "Could not open the PDF compiler for cancellation: {error}"
+        ));
+    }
+    let terminated = unsafe { TerminateProcess(process, 1) };
+    unsafe { CloseHandle(process) };
+    if terminated == 0 {
+        return Err(format!(
+            "Could not cancel the PDF compiler: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn terminate_pdf_export_process(process_id: u32) -> Result<(), String> {
+    let result = unsafe { libc::kill(process_id as libc::pid_t, libc::SIGKILL) };
+    if result == 0 {
+        return Ok(());
+    }
+    let error = std::io::Error::last_os_error();
+    if error.raw_os_error() == Some(libc::ESRCH) {
+        Ok(())
+    } else {
+        Err(format!("Could not cancel the PDF compiler: {error}"))
+    }
+}
+
+#[tauri::command]
+fn begin_pdf_export_operation(
+    state: tauri::State<'_, PdfExportOperations>,
+    operation_id: String,
+) -> Result<(), String> {
+    state.begin(&operation_id)
+}
+
+#[tauri::command]
+fn cancel_pdf_export(
+    state: tauri::State<'_, PdfExportOperations>,
+    operation_id: String,
+) -> Result<(), String> {
+    if let Some(process_id) = state.cancel(&operation_id) {
+        terminate_pdf_export_process(process_id)?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn finish_pdf_export_operation(state: tauri::State<'_, PdfExportOperations>, operation_id: String) {
+    state.finish(&operation_id);
+}
+
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct TypstCompilerInspection {
@@ -3783,11 +3923,16 @@ async fn inspect_typst_compiler(path: String) -> Result<TypstCompilerInspection,
 #[tauri::command]
 async fn compile_typst_document(
     app_handle: tauri::AppHandle,
+    state: tauri::State<'_, PdfExportOperations>,
+    operation_id: String,
     source_code: String,
     file_path: String,
     compiler_path: Option<String>,
 ) -> Result<String, String> {
     use tauri::Manager;
+    if !state.operations.lock().unwrap().contains(&operation_id) {
+        return Err("PDF export operation was not initialized.".into());
+    }
     let path = std::path::Path::new(&file_path);
     let parent = path.parent().unwrap_or(std::path::Path::new(""));
     let nonce = std::time::SystemTime::now()
@@ -3835,18 +3980,42 @@ async fn compile_typst_document(
     command.arg("compile");
     // A previous interrupted export must never make a failed compile appear successful.
     let _ = std::fs::remove_file(&output_path);
-    let output_result =
-        command
-            .arg("--root")
-            .arg(".")
-            .arg(input_path.file_name().ok_or_else(|| {
+    command
+        .arg("--root")
+        .arg(".")
+        .arg(
+            input_path.file_name().ok_or_else(|| {
                 "Failed to construct the temporary Typst export path.".to_string()
-            })?)
-            .arg(&output_path)
-            .output();
-
+            })?,
+        )
+        .arg(&output_path)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    if state.is_cancelled(&operation_id) {
+        let _ = std::fs::remove_file(&input_path);
+        return Err(PDF_EXPORT_CANCELLED.into());
+    }
+    let child = match command.spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            let _ = std::fs::remove_file(&input_path);
+            return Err(format!("Host binary execution blocked: {error}"));
+        }
+    };
+    let process_id = child.id();
+    if !state.register_process(&operation_id, process_id) {
+        let _ = terminate_pdf_export_process(process_id);
+    }
+    let wait_result = tokio::task::spawn_blocking(move || child.wait_with_output()).await;
+    state.unregister_process(&operation_id);
     let _ = std::fs::remove_file(&input_path);
-    let output = output_result.map_err(|e| format!("Host binary execution blocked: {}", e))?;
+    let output_result =
+        wait_result.map_err(|error| format!("PDF compiler task failed: {error}"))?;
+    if state.is_cancelled(&operation_id) {
+        let _ = std::fs::remove_file(&output_path);
+        return Err(PDF_EXPORT_CANCELLED.into());
+    }
+    let output = output_result.map_err(|e| format!("PDF compiler process failed: {}", e))?;
 
     if !output.status.success() {
         let stderr_string = String::from_utf8_lossy(&output.stderr).to_string();
@@ -3874,7 +4043,8 @@ fn warning_only_pdf_result(output_path: &Path, stderr: &str) -> bool {
 mod export_compile_tests {
     use super::{
         commit_pdf_export_at, commit_pdf_export_at_with_replace, parse_typst_compiler_version,
-        validate_staged_pdf, warning_only_pdf_result,
+        terminate_pdf_export_process, validate_staged_pdf, warning_only_pdf_result,
+        PdfExportOperations,
     };
 
     #[test]
@@ -3949,6 +4119,59 @@ mod export_compile_tests {
         assert!(result.is_err());
         assert_eq!(std::fs::read(&destination).unwrap(), previous);
         assert!(!staged_path.into_inner().unwrap().exists());
+    }
+
+    #[test]
+    fn export_cancellation_is_durable_before_and_after_process_registration() {
+        let operations = PdfExportOperations::default();
+        operations.begin("before-spawn").unwrap();
+        assert_eq!(operations.cancel("before-spawn"), None);
+        assert!(operations.is_cancelled("before-spawn"));
+        assert!(!operations.register_process("before-spawn", 41));
+
+        operations.begin("running").unwrap();
+        assert!(operations.register_process("running", 42));
+        assert_eq!(operations.cancel("running"), Some(42));
+        assert!(operations.is_cancelled("running"));
+        operations.unregister_process("running");
+        operations.finish("running");
+        assert!(!operations.is_cancelled("running"));
+        assert!(!operations.register_process("running", 43));
+    }
+
+    #[test]
+    fn platform_cancellation_terminates_a_running_process() {
+        #[cfg(windows)]
+        let mut child = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-Command", "Start-Sleep -Seconds 30"])
+            .spawn()
+            .unwrap();
+        #[cfg(unix)]
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+
+        if let Err(error) = terminate_pdf_export_process(child.id()) {
+            let _ = child.kill();
+            panic!("failed to terminate test process: {error}");
+        }
+        let status = child.wait().unwrap();
+        assert!(!status.success());
+    }
+
+    #[test]
+    fn export_operation_ids_are_bounded_and_reinitialize_cleanly() {
+        let operations = PdfExportOperations::default();
+        assert!(operations.begin("").is_err());
+        assert!(operations.begin(&"x".repeat(129)).is_err());
+        operations.begin("retry").unwrap();
+        assert!(operations.begin("retry").is_err());
+        operations.cancel("retry");
+        assert!(operations.is_cancelled("retry"));
+        operations.finish("retry");
+        operations.begin("retry").unwrap();
+        assert!(!operations.is_cancelled("retry"));
     }
 
     #[test]
@@ -5445,6 +5668,7 @@ pub fn run() {
         .manage(ProjectImportOperations::default())
         .manage(PdfRangeSources::default())
         .manage(PdfiumPreviewState::default())
+        .manage(PdfExportOperations::default())
         .plugin(tauri_plugin_single_instance::init(
             |app, arguments, _working_directory| {
                 let pending = app.state::<PendingProjectImports>();
@@ -5510,6 +5734,9 @@ pub fn run() {
             save_workspace_metadata,
             inspect_typst_compiler,
             compile_typst_document,
+            begin_pdf_export_operation,
+            cancel_pdf_export,
+            finish_pdf_export_operation,
             check_typst_document,
             read_workspace_file,
             is_probably_plain_text_file,

@@ -29,8 +29,22 @@ type ProjectExportDependencies = {
   setLspStatus: (status: LspStatus) => void;
 };
 
+const PDF_EXPORT_CANCELLED = "PDF_EXPORT_CANCELLED";
+
+class PdfExportCancelled extends Error {
+  constructor() {
+    super(PDF_EXPORT_CANCELLED);
+  }
+}
+
+export function isPdfExportCancellation(error: unknown): boolean {
+  return error instanceof PdfExportCancelled || String(error).includes(PDF_EXPORT_CANCELLED);
+}
+
 export class ProjectExportController {
   private busy = false;
+  private activePdfOperationId: string | null = null;
+  private pdfCancellationRequested = false;
 
   constructor(private readonly deps: ProjectExportDependencies) {}
 
@@ -39,10 +53,16 @@ export class ProjectExportController {
   }
 
   async exportPdf(): Promise<void> {
+    if (this.activePdfOperationId) {
+      await this.cancelPdfExport();
+      return;
+    }
+    if (this.busy) return;
     const activeFilePath = this.deps.activeFilePath();
     if (!activeFilePath) return;
 
     const content = this.deps.activeContents();
+    let operationId: string | null = null;
     this.busy = true;
     try {
       const rootPath = this.deps.previewStandalone()
@@ -62,12 +82,18 @@ export class ProjectExportController {
         return;
       }
 
+      operationId = crypto.randomUUID();
+      this.activePdfOperationId = operationId;
+      this.pdfCancellationRequested = false;
+      this.updatePdfExportAction(true);
+      await invoke("begin_pdf_export_operation", { operationId });
+      this.throwIfPdfExportCancelled();
       const enhancedUnicodeEnginePath = this.deps.enhancedUnicodeEnginePath();
       this.deps.setLspStatus({
         kind: "running",
         message: enhancedUnicodeEnginePath
-          ? "Exporting PDF with Enhanced Unicode Engine..."
-          : "Exporting PDF...",
+          ? "Exporting PDF with Enhanced Unicode Engine... Use Export PDF again to cancel."
+          : "Exporting PDF... Use Export PDF again to cancel.",
       });
       let targetFilePath = rootPath;
       let targetContent = "";
@@ -76,6 +102,7 @@ export class ProjectExportController {
       } else {
         targetContent = await invoke<string>("read_workspace_file", { path: targetFilePath }).catch(() => "");
       }
+      this.throwIfPdfExportCancelled();
 
       const cacheRoot = this.deps.cacheRootPath();
       const workspaceRootPath = this.deps.workspaceRootPath();
@@ -93,6 +120,7 @@ export class ProjectExportController {
         };
 
         const result = await prepareRenderProjectWithCopyGuard<{ generatedEntryFile: string }>(options);
+        this.throwIfPdfExportCancelled();
         const tabsToOverlay = this.deps.openTabs()
           .filter(tab => tab.contentLoaded)
           .filter(tab => tab.path.toLowerCase().endsWith(".typ"))
@@ -108,27 +136,65 @@ export class ProjectExportController {
             filePath: originalTabPath,
             sourceCode
           });
+          this.throwIfPdfExportCancelled();
         }
 
         targetFilePath = result.generatedEntryFile;
         targetContent = await invoke<string>("read_workspace_file", { path: targetFilePath }).catch(() => "");
       }
+      this.throwIfPdfExportCancelled();
 
       const pdfPath = await invoke<string>("compile_typst_document", {
+        operationId,
         sourceCode: targetContent,
         filePath: targetFilePath,
         compilerPath: enhancedUnicodeEnginePath,
       });
-      await invoke("commit_pdf_export", { source: pdfPath, destination: exportPdfPath });
+      this.throwIfPdfExportCancelled();
+      this.activePdfOperationId = null;
+      this.updatePdfExportAction(false);
+      this.deps.setLspStatus({ kind: "running", message: "Finalizing PDF export..." });
+      await invoke("commit_pdf_export", { operationId, source: pdfPath, destination: exportPdfPath });
       this.deps.setLspStatus({ kind: "preview-ready", message: `Exported to ${exportPdfPath}` });
     } catch (error) {
-      if (error instanceof RenderCacheCopyCancelled) {
+      if (error instanceof RenderCacheCopyCancelled || isPdfExportCancellation(error)) {
         this.deps.setLspStatus({ kind: "preview-ready", message: "PDF export cancelled" });
         return;
       }
       this.deps.setLspStatus({ kind: "error", message: `Export failed: ${error}` });
     } finally {
+      if (operationId) {
+        await invoke("finish_pdf_export_operation", { operationId }).catch(() => {});
+      }
+      this.activePdfOperationId = null;
+      this.pdfCancellationRequested = false;
+      this.updatePdfExportAction(false);
       this.busy = false;
+    }
+  }
+
+  private async cancelPdfExport(): Promise<void> {
+    const operationId = this.activePdfOperationId;
+    if (!operationId || this.pdfCancellationRequested) return;
+    this.pdfCancellationRequested = true;
+    this.deps.setLspStatus({ kind: "running", message: "Cancelling PDF export..." });
+    await invoke("cancel_pdf_export", { operationId }).catch(error => {
+      console.error("Failed to terminate PDF export process:", error);
+    });
+  }
+
+  private throwIfPdfExportCancelled(): void {
+    if (this.pdfCancellationRequested) throw new PdfExportCancelled();
+  }
+
+  private updatePdfExportAction(running: boolean): void {
+    const label = running ? "Cancel PDF Export" : "Export PDF";
+    const menuItem = document.getElementById("action-export-pdf");
+    if (menuItem) menuItem.textContent = label;
+    for (const button of document.querySelectorAll<HTMLElement>('[data-tool="export-pdf"]')) {
+      button.title = label;
+      button.setAttribute("aria-label", label);
+      button.classList.toggle("is-cancelling-action", running);
     }
   }
 

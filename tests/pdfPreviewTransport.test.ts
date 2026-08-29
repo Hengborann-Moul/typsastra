@@ -267,7 +267,7 @@ describe("compiled PDF transport", () => {
       new URL("../src/export/projectExportController.ts", import.meta.url),
     ).text();
     const selector = source.indexOf('title: "Export PDF"');
-    const transactionalCommit = source.indexOf('invoke("commit_pdf_export", { source: pdfPath, destination: exportPdfPath })');
+    const transactionalCommit = source.indexOf('invoke("commit_pdf_export", { operationId, source: pdfPath, destination: exportPdfPath })');
     expect(selector).toBeGreaterThan(-1);
     expect(transactionalCommit).toBeGreaterThan(selector);
     expect(source).not.toContain('invoke("copy_workspace_file", { source: pdfPath');
