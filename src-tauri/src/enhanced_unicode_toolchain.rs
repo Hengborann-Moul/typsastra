@@ -16,6 +16,13 @@ const MANIFEST_URL: &str = "https://github.com/Sovichea/typsastra/releases/downl
 const RELEASE_REPOSITORY: &str = "Sovichea/typsastra";
 const RELEASE_TAG: &str = "enhanced-unicode-v0.4.0";
 const ENGINE_VERSION: &str = "0.4.0";
+const ENGINE_NAME: &str = "Typsastra Enhanced Unicode Engine";
+const TYPST_VERSION: &str = "0.15.1";
+const TYPST_REPOSITORY: &str = "Sovichea/typst";
+const TYPST_COMMIT: &str = "821bf1bf6ad099531219647b268342fc87851a8b";
+const KRILLA_REPOSITORY: &str = "Sovichea/krilla";
+const KRILLA_COMMIT: &str = "bb0873416484587814b9ecb682e262056f8effe2";
+const ENGINE_LICENSE: &str = "Apache-2.0";
 const DOWNLOAD_ATTEMPTS: usize = 3;
 const MAX_DOWNLOAD_BYTES: u64 = 128 * 1024 * 1024;
 const DOWNLOAD_STALL_TIMEOUT: Duration = Duration::from_secs(60);
@@ -104,10 +111,25 @@ struct ManifestAsset {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PackagedRelease {
+    schema_version: u32,
+    name: String,
     version: String,
     target: String,
     executable: String,
     typst_version: String,
+    typst_repository: String,
+    typst_commit: String,
+    krilla_repository: String,
+    krilla_commit: String,
+    license: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ManagedEnhancedIdentity {
+    pub engine_version: String,
+    pub compiler_version: String,
+    pub typst_commit: String,
+    pub krilla_commit: String,
 }
 
 #[derive(Clone, Serialize)]
@@ -154,6 +176,87 @@ fn installed_executable(data_dir: &Path, executable: &str) -> PathBuf {
     install_root(data_dir).join(ENGINE_VERSION).join(executable)
 }
 
+fn validate_packaged_release(
+    packaged: &PackagedRelease,
+    target: &str,
+    executable: &str,
+    typst_version: &str,
+) -> Result<(), String> {
+    if packaged.schema_version != 1
+        || packaged.name != ENGINE_NAME
+        || packaged.version != ENGINE_VERSION
+        || packaged.target != target
+        || packaged.executable != executable
+        || packaged.typst_version != typst_version
+        || packaged.typst_repository != TYPST_REPOSITORY
+        || packaged.typst_commit != TYPST_COMMIT
+        || packaged.krilla_repository != KRILLA_REPOSITORY
+        || packaged.krilla_commit != KRILLA_COMMIT
+        || packaged.license != ENGINE_LICENSE
+    {
+        return Err(
+            "The Enhanced Unicode engine metadata does not match Typsastra's pinned release."
+                .into(),
+        );
+    }
+    Ok(())
+}
+
+pub fn inspect_managed_executable(
+    data_dir: &Path,
+    executable: &Path,
+    reported_version: &str,
+) -> Result<Option<ManagedEnhancedIdentity>, String> {
+    let executable = dunce::canonicalize(executable)
+        .map_err(|error| format!("Could not resolve the selected Typst executable: {error}"))?;
+    let root = install_root(data_dir);
+    let canonical_root = match dunce::canonicalize(&root) {
+        Ok(root) => root,
+        Err(_) => return Ok(None),
+    };
+    if !executable.starts_with(&canonical_root) {
+        return Ok(None);
+    }
+
+    let target = platform_target()?;
+    let asset = PINNED_ASSETS
+        .iter()
+        .find(|asset| asset.target == target)
+        .ok_or_else(|| {
+            format!("Enhanced Unicode Engine {ENGINE_VERSION} has no pinned asset for {target}.")
+        })?;
+    let expected =
+        dunce::canonicalize(installed_executable(data_dir, asset.executable)).map_err(|error| {
+            format!("Could not resolve the managed Enhanced Unicode engine: {error}")
+        })?;
+    if executable != expected {
+        return Err("The selected executable is inside the managed Enhanced Unicode directory but is not the pinned engine executable.".into());
+    }
+
+    let metadata_path = expected
+        .parent()
+        .ok_or_else(|| "The managed Enhanced Unicode engine path is invalid.".to_string())?
+        .join("ENGINE_RELEASE.json");
+    let packaged: PackagedRelease =
+        serde_json::from_slice(&std::fs::read(&metadata_path).map_err(|error| {
+            format!("Could not read managed Enhanced Unicode metadata: {error}")
+        })?)
+        .map_err(|error| format!("Could not decode managed Enhanced Unicode metadata: {error}"))?;
+    validate_packaged_release(&packaged, target, asset.executable, TYPST_VERSION)?;
+    if !version_matches(reported_version, TYPST_VERSION) {
+        return Err(format!(
+            "The managed Enhanced Unicode engine reported {reported_version}, expected Typst {TYPST_VERSION}."
+        ));
+    }
+
+    Ok(Some(ManagedEnhancedIdentity {
+        engine_version: packaged.version,
+        compiler_version: packaged.typst_version,
+        typst_commit: packaged.typst_commit,
+        krilla_commit: packaged.krilla_commit,
+    }))
+}
+
 fn client() -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
         .user_agent(format!("Typsastra/{}", env!("CARGO_PKG_VERSION")))
@@ -187,6 +290,7 @@ async fn fetch_manifest(client: &reqwest::Client) -> Result<ReleaseManifest, Str
 fn select_asset(manifest: &ReleaseManifest) -> Result<ManifestAsset, String> {
     if manifest.schema_version != 1
         || manifest.engine.version != ENGINE_VERSION
+        || manifest.engine.typst_version != TYPST_VERSION
         || manifest.release.repository != RELEASE_REPOSITORY
         || manifest.release.tag != RELEASE_TAG
     {
@@ -431,13 +535,15 @@ fn extract_archive(
                 .map_err(|error| format!("Could not read packaged release metadata: {error}"))?,
         )
         .map_err(|error| format!("Could not decode packaged release metadata: {error}"))?;
-        if packaged.version != ENGINE_VERSION
-            || packaged.target != asset.target
-            || packaged.executable != asset.executable
-            || packaged.typst_version != expected_typst_version
-        {
-            return Err("The archive metadata does not match the signed release manifest.".into());
-        }
+        validate_packaged_release(
+            &packaged,
+            &asset.target,
+            &asset.executable,
+            expected_typst_version,
+        )
+        .map_err(|_| {
+            "The archive metadata does not match the signed release manifest.".to_string()
+        })?;
         let executable = staging.join(&asset.executable);
         make_executable(&executable)?;
         let version = compiler_version(&executable)?;
@@ -483,7 +589,11 @@ async fn install_internal(
     let destination = installed_executable(data_dir, &asset.executable);
     if destination.is_file() {
         if let Ok(version) = compiler_version(&destination) {
-            if version_matches(&version, &manifest.engine.typst_version) {
+            if inspect_managed_executable(data_dir, &destination, &version)
+                .ok()
+                .flatten()
+                .is_some()
+            {
                 report(progress, "complete", 0, None);
                 return Ok(EnhancedUnicodeInstallResult {
                     path: dunce::simplified(&destination)
@@ -569,10 +679,80 @@ mod tests {
         assert!(select_asset(&changed).is_err());
     }
 
+    fn write_managed_fixture(data_dir: &Path) -> PathBuf {
+        let target = platform_target().unwrap();
+        let asset = PINNED_ASSETS
+            .iter()
+            .find(|asset| asset.target == target)
+            .unwrap();
+        let executable = installed_executable(data_dir, asset.executable);
+        std::fs::create_dir_all(executable.parent().unwrap()).unwrap();
+        std::fs::write(&executable, b"fixture").unwrap();
+        std::fs::write(
+            executable.parent().unwrap().join("ENGINE_RELEASE.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "schemaVersion": 1,
+                "name": ENGINE_NAME,
+                "version": ENGINE_VERSION,
+                "target": target,
+                "executable": asset.executable,
+                "typstVersion": TYPST_VERSION,
+                "typstRepository": TYPST_REPOSITORY,
+                "typstCommit": TYPST_COMMIT,
+                "krillaRepository": KRILLA_REPOSITORY,
+                "krillaCommit": KRILLA_COMMIT,
+                "license": ENGINE_LICENSE,
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        executable
+    }
+
     #[test]
     fn validates_the_exact_typst_version_token() {
         assert!(version_matches("typst 0.15.1 (enhanced)", "0.15.1"));
         assert!(!version_matches("typst 0.15.10", "0.15.1"));
         assert!(!version_matches("not-typst", "0.15.1"));
+    }
+
+    #[test]
+    fn identifies_only_the_pinned_managed_engine() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let executable = write_managed_fixture(data_dir.path());
+        let identity =
+            inspect_managed_executable(data_dir.path(), &executable, "typst 0.15.1 (enhanced)")
+                .unwrap()
+                .unwrap();
+        assert_eq!(identity.engine_version, ENGINE_VERSION);
+        assert_eq!(identity.typst_commit, TYPST_COMMIT);
+        assert_eq!(identity.krilla_commit, KRILLA_COMMIT);
+    }
+
+    #[test]
+    fn rejects_missing_or_mismatched_managed_metadata() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let executable = write_managed_fixture(data_dir.path());
+        let metadata = executable.parent().unwrap().join("ENGINE_RELEASE.json");
+        std::fs::remove_file(&metadata).unwrap();
+        assert!(inspect_managed_executable(data_dir.path(), &executable, "typst 0.15.1").is_err());
+
+        write_managed_fixture(data_dir.path());
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&metadata).unwrap()).unwrap();
+        value["typstCommit"] = serde_json::Value::String("0".repeat(40));
+        std::fs::write(&metadata, serde_json::to_vec(&value).unwrap()).unwrap();
+        assert!(inspect_managed_executable(data_dir.path(), &executable, "typst 0.15.1").is_err());
+    }
+
+    #[test]
+    fn treats_executables_outside_the_managed_root_as_custom() {
+        let data_dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(install_root(data_dir.path())).unwrap();
+        let outside = tempfile::NamedTempFile::new().unwrap();
+        assert_eq!(
+            inspect_managed_executable(data_dir.path(), outside.path(), "typst 0.15.1").unwrap(),
+            None
+        );
     }
 }

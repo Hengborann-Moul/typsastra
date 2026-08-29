@@ -45,7 +45,7 @@ use segmentation::{
     install_hunspell_dictionary, language_suggestions, list_hunspell_catalog,
     remove_hunspell_dictionary, ProviderCapabilities, SegmentationRegistry,
 };
-use toolchain::active_tinymist;
+use toolchain::{active_tinymist, inspect_active_tinymist, inspect_tinymist_executable};
 
 fn workspace_font_directories(app_local_data_dir: &Path, start: &Path) -> Vec<std::path::PathBuf> {
     let cache_root = scaled_fonts::global_scaled_font_root(app_local_data_dir);
@@ -3735,11 +3735,38 @@ fn parse_short_typst_diagnostic(line: &str) -> Option<TypstCheckDiagnostic> {
 
 const PDF_EXPORT_CANCELLED: &str = "PDF_EXPORT_CANCELLED";
 
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+enum PdfExportCompilerKind {
+    Tinymist,
+    EnhancedManaged,
+    CustomTypst,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PdfExportProvenance {
+    compiler_kind: PdfExportCompilerKind,
+    display_name: String,
+    compiler_version: String,
+    typst_version: Option<String>,
+    engine_version: Option<String>,
+    typst_commit: Option<String>,
+    krilla_commit: Option<String>,
+}
+
+#[derive(Clone)]
+struct PdfExportCompilerSelection {
+    executable: PathBuf,
+    provenance: PdfExportProvenance,
+}
+
 #[derive(Default)]
 struct PdfExportOperations {
     operations: Mutex<std::collections::HashSet<String>>,
     cancelled: Mutex<std::collections::HashSet<String>>,
     processes: Mutex<HashMap<String, u32>>,
+    compilers: Mutex<HashMap<String, PdfExportCompilerSelection>>,
 }
 
 impl PdfExportOperations {
@@ -3754,6 +3781,7 @@ impl PdfExportOperations {
         drop(operations);
         self.cancelled.lock().unwrap().remove(operation_id);
         self.processes.lock().unwrap().remove(operation_id);
+        self.compilers.lock().unwrap().remove(operation_id);
         Ok(())
     }
 
@@ -3778,6 +3806,34 @@ impl PdfExportOperations {
         self.processes.lock().unwrap().remove(operation_id);
     }
 
+    fn bind_compiler(
+        &self,
+        operation_id: &str,
+        selection: PdfExportCompilerSelection,
+    ) -> Result<(), String> {
+        if !self.operations.lock().unwrap().contains(operation_id) {
+            return Err("PDF export operation was not initialized.".into());
+        }
+        if self.is_cancelled(operation_id) {
+            return Err(PDF_EXPORT_CANCELLED.into());
+        }
+        let mut compilers = self.compilers.lock().unwrap();
+        if compilers.contains_key(operation_id) {
+            return Err("PDF export compiler was already selected.".into());
+        }
+        compilers.insert(operation_id.to_string(), selection);
+        Ok(())
+    }
+
+    fn compiler(&self, operation_id: &str) -> Result<PdfExportCompilerSelection, String> {
+        self.compilers
+            .lock()
+            .unwrap()
+            .get(operation_id)
+            .cloned()
+            .ok_or_else(|| "PDF export compiler was not selected.".to_string())
+    }
+
     fn cancel(&self, operation_id: &str) -> Option<u32> {
         if !self.operations.lock().unwrap().contains(operation_id) {
             return None;
@@ -3797,6 +3853,7 @@ impl PdfExportOperations {
         self.operations.lock().unwrap().remove(operation_id);
         self.processes.lock().unwrap().remove(operation_id);
         self.cancelled.lock().unwrap().remove(operation_id);
+        self.compilers.lock().unwrap().remove(operation_id);
     }
 }
 
@@ -3885,12 +3942,12 @@ fn parse_typst_compiler_version(stdout: &[u8], stderr: &[u8]) -> Option<String> 
 fn inspect_typst_compiler_path(path: &str) -> Result<(PathBuf, String), String> {
     let requested = Path::new(path);
     if !requested.is_absolute() {
-        return Err("The Enhanced Unicode engine must use an absolute executable path.".into());
+        return Err("The Typst compiler must use an absolute executable path.".into());
     }
     let executable = dunce::canonicalize(requested)
         .map_err(|error| format!("Could not resolve the selected Typst executable: {error}"))?;
     if !executable.is_file() {
-        return Err("The selected Enhanced Unicode engine is not a file.".into());
+        return Err("The selected Typst compiler is not a file.".into());
     }
 
     let mut command = std::process::Command::new(&executable);
@@ -3920,6 +3977,145 @@ async fn inspect_typst_compiler(path: String) -> Result<TypstCompilerInspection,
     })
 }
 
+fn typst_version_number(reported_version: &str) -> Result<String, String> {
+    let version = reported_version
+        .split_whitespace()
+        .nth(1)
+        .map(|value| value.trim_start_matches('v'))
+        .ok_or_else(|| "The Typst compiler did not report a version number.".to_string())?;
+    semver::Version::parse(version)
+        .map(|version| version.to_string())
+        .map_err(|_| "The Typst compiler reported an invalid version number.".to_string())
+}
+
+fn resolve_pdf_export_compiler(
+    data_dir: &Path,
+    compiler_path: Option<&str>,
+) -> Result<PdfExportCompilerSelection, String> {
+    if let Some(compiler_path) = compiler_path {
+        let (executable, reported_version) = inspect_typst_compiler_path(compiler_path)?;
+        let compiler_version = typst_version_number(&reported_version)?;
+        if let Some(identity) = enhanced_unicode_toolchain::inspect_managed_executable(
+            data_dir,
+            &executable,
+            &reported_version,
+        )? {
+            let display_name = format!("Enhanced Unicode Engine v{}", identity.engine_version);
+            return Ok(PdfExportCompilerSelection {
+                executable,
+                provenance: PdfExportProvenance {
+                    compiler_kind: PdfExportCompilerKind::EnhancedManaged,
+                    display_name,
+                    compiler_version: identity.compiler_version.clone(),
+                    typst_version: Some(identity.compiler_version),
+                    engine_version: Some(identity.engine_version),
+                    typst_commit: Some(identity.typst_commit),
+                    krilla_commit: Some(identity.krilla_commit),
+                },
+            });
+        }
+
+        return Ok(PdfExportCompilerSelection {
+            executable,
+            provenance: PdfExportProvenance {
+                compiler_kind: PdfExportCompilerKind::CustomTypst,
+                display_name: format!("Custom Typst {compiler_version}"),
+                compiler_version: compiler_version.clone(),
+                typst_version: Some(compiler_version),
+                engine_version: None,
+                typst_commit: None,
+                krilla_commit: None,
+            },
+        });
+    }
+
+    let (executable, tinymist_version, typst_version) = inspect_active_tinymist(data_dir)
+        .ok_or_else(|| "No active Tinymist toolchain is installed.".to_string())?;
+    Ok(PdfExportCompilerSelection {
+        executable,
+        provenance: PdfExportProvenance {
+            compiler_kind: PdfExportCompilerKind::Tinymist,
+            display_name: format!("Tinymist {tinymist_version} (Typst {typst_version})"),
+            compiler_version: tinymist_version,
+            typst_version: Some(typst_version),
+            engine_version: None,
+            typst_commit: None,
+            krilla_commit: None,
+        },
+    })
+}
+
+fn revalidate_pdf_export_compiler(
+    data_dir: &Path,
+    selection: &PdfExportCompilerSelection,
+) -> Result<(), String> {
+    match selection.provenance.compiler_kind {
+        PdfExportCompilerKind::Tinymist => {
+            let (tinymist_version, typst_version) =
+                inspect_tinymist_executable(&selection.executable).ok_or_else(|| {
+                    "The selected Tinymist compiler identity could not be revalidated.".to_string()
+                })?;
+            if selection.provenance.compiler_version != tinymist_version
+                || selection.provenance.typst_version.as_deref() != Some(&typst_version)
+            {
+                return Err("The selected Tinymist compiler changed during PDF export.".into());
+            }
+        }
+        PdfExportCompilerKind::EnhancedManaged | PdfExportCompilerKind::CustomTypst => {
+            let path = selection.executable.to_string_lossy();
+            let (executable, reported_version) = inspect_typst_compiler_path(&path)?;
+            if executable != selection.executable {
+                return Err("The selected Typst compiler changed during PDF export.".into());
+            }
+            let managed = enhanced_unicode_toolchain::inspect_managed_executable(
+                data_dir,
+                &executable,
+                &reported_version,
+            )?;
+            match (&selection.provenance.compiler_kind, managed) {
+                (PdfExportCompilerKind::EnhancedManaged, Some(identity))
+                    if selection.provenance.engine_version.as_deref()
+                        == Some(identity.engine_version.as_str())
+                        && selection.provenance.compiler_version == identity.compiler_version
+                        && selection.provenance.typst_commit.as_deref()
+                            == Some(identity.typst_commit.as_str())
+                        && selection.provenance.krilla_commit.as_deref()
+                            == Some(identity.krilla_commit.as_str()) => {}
+                (PdfExportCompilerKind::CustomTypst, None)
+                    if selection.provenance.compiler_version
+                        == typst_version_number(&reported_version)? => {}
+                _ => {
+                    return Err(
+                        "The selected Typst compiler identity changed during PDF export.".into(),
+                    )
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn inspect_pdf_export_compiler(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, PdfExportOperations>,
+    operation_id: String,
+    compiler_path: Option<String>,
+) -> Result<PdfExportProvenance, String> {
+    use tauri::Manager;
+    if !state.operations.lock().unwrap().contains(&operation_id) {
+        return Err("PDF export operation was not initialized.".into());
+    }
+    let data_dir = app_handle
+        .path()
+        .app_local_data_dir()
+        .map_err(|error| format!("Failed to get data dir: {error}"))?;
+    let selection = resolve_pdf_export_compiler(&data_dir, compiler_path.as_deref())?;
+    let provenance = selection.provenance.clone();
+    state.bind_compiler(&operation_id, selection)?;
+    Ok(provenance)
+}
+
 #[tauri::command]
 async fn compile_typst_document(
     app_handle: tauri::AppHandle,
@@ -3927,7 +4123,6 @@ async fn compile_typst_document(
     operation_id: String,
     source_code: String,
     file_path: String,
-    compiler_path: Option<String>,
 ) -> Result<String, String> {
     use tauri::Manager;
     if !state.operations.lock().unwrap().contains(&operation_id) {
@@ -3952,16 +4147,12 @@ async fn compile_typst_document(
         .path()
         .app_local_data_dir()
         .map_err(|e| format!("Failed to get data dir: {}", e))?;
-    let custom_compiler = compiler_path
-        .as_deref()
-        .map(inspect_typst_compiler_path)
-        .transpose()?;
-    let compiler_cmd = if let Some((path, _version)) = custom_compiler.as_ref() {
-        path.clone()
-    } else {
-        active_tinymist(&data_dir)
-            .ok_or_else(|| "No managed Tinymist toolchain is installed.".to_string())?
-    };
+    let compiler = state.compiler(&operation_id)?;
+    revalidate_pdf_export_compiler(&data_dir, &compiler)?;
+    if state.is_cancelled(&operation_id) {
+        return Err(PDF_EXPORT_CANCELLED.into());
+    }
+    let compiler_cmd = compiler.executable;
 
     let mut file = std::fs::OpenOptions::new()
         .write(true)
@@ -4044,7 +4235,8 @@ mod export_compile_tests {
     use super::{
         commit_pdf_export_at, commit_pdf_export_at_with_replace, parse_typst_compiler_version,
         terminate_pdf_export_process, validate_staged_pdf, warning_only_pdf_result,
-        PdfExportOperations,
+        PdfExportCompilerKind, PdfExportCompilerSelection, PdfExportOperations,
+        PdfExportProvenance,
     };
 
     #[test]
@@ -4172,6 +4364,34 @@ mod export_compile_tests {
         operations.finish("retry");
         operations.begin("retry").unwrap();
         assert!(!operations.is_cancelled("retry"));
+    }
+
+    #[test]
+    fn compiler_identity_is_immutable_for_one_export_operation() {
+        let operations = PdfExportOperations::default();
+        operations.begin("provenance").unwrap();
+        let selection = PdfExportCompilerSelection {
+            executable: std::path::PathBuf::from("tinymist"),
+            provenance: PdfExportProvenance {
+                compiler_kind: PdfExportCompilerKind::Tinymist,
+                display_name: "Tinymist 0.13.0 (Typst 0.15.1)".into(),
+                compiler_version: "0.13.0".into(),
+                typst_version: Some("0.15.1".into()),
+                engine_version: None,
+                typst_commit: None,
+                krilla_commit: None,
+            },
+        };
+        operations
+            .bind_compiler("provenance", selection.clone())
+            .unwrap();
+        assert_eq!(
+            operations.compiler("provenance").unwrap().provenance,
+            selection.provenance
+        );
+        assert!(operations.bind_compiler("provenance", selection).is_err());
+        operations.finish("provenance");
+        assert!(operations.compiler("provenance").is_err());
     }
 
     #[test]
@@ -5733,6 +5953,7 @@ pub fn run() {
             load_workspace_metadata,
             save_workspace_metadata,
             inspect_typst_compiler,
+            inspect_pdf_export_compiler,
             compile_typst_document,
             begin_pdf_export_operation,
             cancel_pdf_export,

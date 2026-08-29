@@ -14,6 +14,16 @@ export type ExportableEditorTab = {
   isDirty: boolean;
 };
 
+export type PdfExportProvenance = {
+  compilerKind: "tinymist" | "enhanced-managed" | "custom-typst";
+  displayName: string;
+  compilerVersion: string;
+  typstVersion?: string;
+  engineVersion?: string;
+  typstCommit?: string;
+  krillaCommit?: string;
+};
+
 type ProjectExportDependencies = {
   activeFilePath: () => string | null;
   activeContents: () => string;
@@ -27,6 +37,7 @@ type ProjectExportDependencies = {
   khmerRenderPreparationEnabled: () => boolean;
   enhancedUnicodeEnginePath: () => string | null;
   setLspStatus: (status: LspStatus) => void;
+  log: (kind: "info" | "warning" | "error", message: string) => void;
 };
 
 const PDF_EXPORT_CANCELLED = "PDF_EXPORT_CANCELLED";
@@ -41,9 +52,28 @@ export function isPdfExportCancellation(error: unknown): boolean {
   return error instanceof PdfExportCancelled || String(error).includes(PDF_EXPORT_CANCELLED);
 }
 
+function destinationName(path: string): string {
+  return path.split(/[/\\]/).pop() || "PDF";
+}
+
+export function pdfExportProvenanceLog(
+  provenance: PdfExportProvenance,
+  outcome: "success" | "cancelled" | "failure",
+  destination?: string,
+): string {
+  const details: string[] = [provenance.compilerKind];
+  if (provenance.engineVersion) details.push(`engine ${provenance.engineVersion}`);
+  if (provenance.compilerKind === "tinymist") details.push(`tinymist ${provenance.compilerVersion}`);
+  if (provenance.typstVersion) details.push(`typst ${provenance.typstVersion}`);
+  details.push(`outcome ${outcome}`);
+  if (destination) details.push(destinationName(destination));
+  return details.join(" · ");
+}
+
 export class ProjectExportController {
   private busy = false;
   private activePdfOperationId: string | null = null;
+  private activePdfProvenance: PdfExportProvenance | null = null;
   private pdfCancellationRequested = false;
 
   constructor(private readonly deps: ProjectExportDependencies) {}
@@ -63,6 +93,8 @@ export class ProjectExportController {
 
     const content = this.deps.activeContents();
     let operationId: string | null = null;
+    let provenance: PdfExportProvenance | null = null;
+    let exportPdfPath: string | null = null;
     this.busy = true;
     try {
       const rootPath = this.deps.previewStandalone()
@@ -72,7 +104,7 @@ export class ProjectExportController {
       const defaultPdfPath = (this.deps.previewStandalone()
         ? activeFilePath
         : (this.deps.previewMainPath() ?? activeFilePath)).replace(/\.typ$/i, ".pdf");
-      const exportPdfPath = await save({
+      exportPdfPath = await save({
         title: "Export PDF",
         defaultPath: defaultPdfPath,
         filters: [{ name: "PDF Document", extensions: ["pdf"] }]
@@ -89,11 +121,15 @@ export class ProjectExportController {
       await invoke("begin_pdf_export_operation", { operationId });
       this.throwIfPdfExportCancelled();
       const enhancedUnicodeEnginePath = this.deps.enhancedUnicodeEnginePath();
+      provenance = await invoke<PdfExportProvenance>("inspect_pdf_export_compiler", {
+        operationId,
+        compilerPath: enhancedUnicodeEnginePath,
+      });
+      this.activePdfProvenance = provenance;
+      this.throwIfPdfExportCancelled();
       this.deps.setLspStatus({
         kind: "running",
-        message: enhancedUnicodeEnginePath
-          ? "Exporting PDF with Enhanced Unicode Engine... Use Export PDF again to cancel."
-          : "Exporting PDF... Use Export PDF again to cancel.",
+        message: `Exporting PDF with ${provenance.displayName}... Use Export PDF again to cancel.`,
       });
       let targetFilePath = rootPath;
       let targetContent = "";
@@ -148,25 +184,44 @@ export class ProjectExportController {
         operationId,
         sourceCode: targetContent,
         filePath: targetFilePath,
-        compilerPath: enhancedUnicodeEnginePath,
       });
       this.throwIfPdfExportCancelled();
       this.activePdfOperationId = null;
       this.updatePdfExportAction(false);
-      this.deps.setLspStatus({ kind: "running", message: "Finalizing PDF export..." });
+      this.deps.setLspStatus({
+        kind: "running",
+        message: `Finalizing PDF export with ${provenance.displayName}...`,
+      });
       await invoke("commit_pdf_export", { operationId, source: pdfPath, destination: exportPdfPath });
-      this.deps.setLspStatus({ kind: "preview-ready", message: `Exported to ${exportPdfPath}` });
+      this.deps.setLspStatus({
+        kind: "preview-ready",
+        message: `Exported with ${provenance.displayName} to ${destinationName(exportPdfPath)}`,
+      });
+      this.deps.log("info", pdfExportProvenanceLog(provenance, "success", exportPdfPath));
     } catch (error) {
       if (error instanceof RenderCacheCopyCancelled || isPdfExportCancellation(error)) {
-        this.deps.setLspStatus({ kind: "preview-ready", message: "PDF export cancelled" });
+        this.deps.setLspStatus({
+          kind: "preview-ready",
+          message: provenance ? `${provenance.displayName} export cancelled` : "PDF export cancelled",
+        });
+        if (provenance) this.deps.log("info", pdfExportProvenanceLog(provenance, "cancelled", exportPdfPath ?? undefined));
         return;
       }
-      this.deps.setLspStatus({ kind: "error", message: `Export failed: ${error}` });
+      this.deps.setLspStatus({
+        kind: "error",
+        message: provenance
+          ? `${provenance.displayName} export failed: ${error}`
+          : `PDF export failed before compiler selection: ${error}`,
+      });
+      if (provenance) {
+        this.deps.log("error", pdfExportProvenanceLog(provenance, "failure", exportPdfPath ?? undefined));
+      }
     } finally {
       if (operationId) {
         await invoke("finish_pdf_export_operation", { operationId }).catch(() => {});
       }
       this.activePdfOperationId = null;
+      this.activePdfProvenance = null;
       this.pdfCancellationRequested = false;
       this.updatePdfExportAction(false);
       this.busy = false;
@@ -177,7 +232,12 @@ export class ProjectExportController {
     const operationId = this.activePdfOperationId;
     if (!operationId || this.pdfCancellationRequested) return;
     this.pdfCancellationRequested = true;
-    this.deps.setLspStatus({ kind: "running", message: "Cancelling PDF export..." });
+    this.deps.setLspStatus({
+      kind: "running",
+      message: this.activePdfProvenance
+        ? `Cancelling ${this.activePdfProvenance.displayName} export...`
+        : "Cancelling PDF export...",
+    });
     await invoke("cancel_pdf_export", { operationId }).catch(error => {
       console.error("Failed to terminate PDF export process:", error);
     });

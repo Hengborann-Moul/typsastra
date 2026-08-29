@@ -1246,6 +1246,7 @@ export class TypsastraWorkspaceController {
         : null;
     },
     setLspStatus: status => this.setLspStatus(status),
+    log: (kind, message) => this.appendDeveloperLog({ kind, source: "pdf export", message }),
   });
   private readonly documentPersistenceController = new DocumentPersistenceController({
     activeFilePath: () => this.activeFilePath,

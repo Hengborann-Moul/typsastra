@@ -336,6 +336,21 @@ pub fn active_tinymist(data_dir: &Path) -> Option<PathBuf> {
     resolve_executable(data_dir, &directory, "tinymist")
 }
 
+pub fn inspect_active_tinymist(data_dir: &Path) -> Option<(PathBuf, String, String)> {
+    let executable = active_tinymist(data_dir)?;
+    let (tinymist_version, typst_version) = tinymist_metadata(&executable)?;
+    Some((
+        executable,
+        tinymist_version.to_string(),
+        typst_version.to_string(),
+    ))
+}
+
+pub fn inspect_tinymist_executable(executable: &Path) -> Option<(String, String)> {
+    let (tinymist_version, typst_version) = tinymist_metadata(executable)?;
+    Some((tinymist_version.to_string(), typst_version.to_string()))
+}
+
 #[derive(Clone)]
 struct SystemToolchain {
     path: PathBuf,
