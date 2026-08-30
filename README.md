@@ -61,8 +61,11 @@ reports which compiler produced each export. Compilation is cancellable and
 transactional, so a failed or cancelled export does not replace an existing
 valid PDF.
 
-> **Media placeholder:** Add a screenshot or short video showing engine
-> installation, export selection, progress, and compiler provenance.
+
+
+https://github.com/user-attachments/assets/f4730ab5-437f-4dbb-af4b-cb21c7cde3e3
+
+
 
 ### Unicode-aware standalone PDF viewer
 
@@ -72,8 +75,11 @@ Unicode-aware search, semantic text selection, plain or formatted copy,
 internal and external links, document outlines, and clear errors for
 password-protected, malformed, empty, or unsupported files.
 
-> **Media placeholder:** Add a video demonstrating multilingual search,
-> selection, formatted copy, links, and outline navigation in one PDF.
+
+
+https://github.com/user-attachments/assets/508ff81f-525e-48cf-9674-a60a1e6d52f2
+
+
 
 ### Drag, drop, and paste images
 
@@ -84,8 +90,11 @@ between plain `image(...)` calls and individual `figure(...)` calls with
 editable captions; imported and pasted files receive collision-safe names in
 the project `images` directory.
 
-> **Media placeholder:** Add a video showing multi-image drag-and-drop and
-> clipboard paste with both plain-image and captioned-figure insertion.
+
+
+https://github.com/user-attachments/assets/990277b9-b9df-4154-b6b5-bba293f07dc4
+
+
 
 ### Established authoring workflows
 
