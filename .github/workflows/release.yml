@@ -8,18 +8,26 @@ on:
 
 jobs:
   release:
-    name: Build Release
+    name: Build Release (${{ matrix.name }})
     permissions:
       contents: write
     strategy:
       fail-fast: false
       matrix:
         include:
-          - platform: windows-latest
+          - name: Windows
+            platform: windows-latest
             args: '--bundles msi'
-          - platform: macos-latest
-            args: ''
-          - platform: ubuntu-22.04
+          - name: macOS Apple Silicon
+            platform: macos-latest
+            target: aarch64-apple-darwin
+            args: '--target aarch64-apple-darwin'
+          - name: macOS Intel
+            platform: macos-latest
+            target: x86_64-apple-darwin
+            args: '--target x86_64-apple-darwin'
+          - name: Linux
+            platform: ubuntu-22.04
             args: '--bundles appimage,deb'
 
     runs-on: ${{ matrix.platform }}
@@ -44,6 +52,10 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Add macOS Rust Target
+        if: matrix.platform == 'macos-latest'
+        run: rustup target add ${{ matrix.target }}
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
@@ -97,7 +109,7 @@ jobs:
       - name: Verify macOS DMG
         if: matrix.platform == 'macos-latest'
         run: |
-          dmg_dir="src-tauri/target/release/bundle/dmg"
+          dmg_dir="src-tauri/target/${{ matrix.target }}/release/bundle/dmg"
           dmg=$(find "${dmg_dir}" -name '*.dmg' -print -quit 2>/dev/null || true)
           if [ -z "${dmg}" ]; then
             echo "No DMG found in ${dmg_dir}"
