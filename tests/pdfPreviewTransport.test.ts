@@ -1,13 +1,19 @@
 import { describe, expect, test } from "bun:test";
 
 describe("compiled PDF transport", () => {
-  test("exports previews to a private cache instead of returning Base64 through LSP", async () => {
-    const source = await Bun.file(new URL("../src/compiler/lsp.ts", import.meta.url)).text();
-    expect(source).toContain("this.getPreviewOutputPath()");
-    expect(source).not.toContain('cache/preview/$dir/$name');
-    expect(source).toContain("outputPath: previewOutputPath");
-    expect(source).toContain("arguments: [path, {}, { write: true, open: false }]");
-    expect(source).not.toContain("exportPdfToMemory");
+  test("compiles previews to a private cache instead of returning Base64 through LSP", async () => {
+    const lspSource = await Bun.file(new URL("../src/compiler/lsp.ts", import.meta.url)).text();
+    const renderSource = await Bun.file(
+      new URL("../src/preview/pdfPreviewRenderController.ts", import.meta.url),
+    ).text();
+    const nativeSource = await Bun.file(new URL("../src-tauri/src/lib.rs", import.meta.url)).text();
+
+    expect(renderSource).toContain('invoke<string>("compile_render_preview_pdf"');
+    expect(nativeSource).toContain('let preview_dir = cache_root.join("preview")');
+    expect(nativeSource).toContain('.arg("--root")');
+    expect(nativeSource).toContain(".arg(&paths.render_root)");
+    expect(lspSource).not.toContain('command: "tinymist.exportPdf"');
+    expect(lspSource).not.toContain("exportPdfToMemory");
   });
 
   test("loads compiled previews through raw binary IPC without retaining Base64", async () => {
@@ -19,18 +25,22 @@ describe("compiled PDF transport", () => {
     expect(source).not.toContain("exportBase64Chars");
   });
 
-  test("registers generated preview PDFs before Tinymist writes them", async () => {
+  test("registers native preview PDFs before hashing and staging them", async () => {
     const source = await Bun.file(
       new URL("../src/preview/pdfPreviewRenderController.ts", import.meta.url),
     ).text();
     const workspaceSource = await Bun.file(
       new URL("../src/workspace/externalWorkspaceController.ts", import.meta.url),
     ).text();
-    const registration = source.indexOf("this.managedPdfPathKeysValue.add(anticipatedPdfPathKey)");
-    const exportRequest = source.indexOf("await this.deps.getLspClient()!.exportPdfToFile(previewPath)");
-    expect(registration).toBeGreaterThan(-1);
-    expect(exportRequest).toBeGreaterThan(registration);
-    expect(source).toContain('const anticipatedPdfPath = `${cacheRoot}/preview/${previewPdfName}`');
+    const compileRequest = source.indexOf('await invoke<string>("compile_render_preview_pdf"');
+    const registration = source.indexOf("this.managedPdfPathKeysValue.add(filePathKey(pdfPath))", compileRequest);
+    const hash = source.indexOf("const pdfHash = await this.hashGeneratedPdf(pdfPath)", registration);
+    const staging = source.indexOf('invoke<string>("stage_pdf_preview_generation"', hash);
+
+    expect(compileRequest).toBeGreaterThan(-1);
+    expect(registration).toBeGreaterThan(compileRequest);
+    expect(hash).toBeGreaterThan(registration);
+    expect(staging).toBeGreaterThan(hash);
     expect(workspaceSource).toContain("excludeManagedWorkspacePaths(");
   });
 
@@ -102,38 +112,34 @@ describe("compiled PDF transport", () => {
     expect(source).not.toContain("if (!shouldMirror || !this.workspaceRootPath)");
   });
 
-  test("pins the exact prepared revision transiently while exporting in every render mode", async () => {
+  test("materializes the exact prepared revision before native compilation in every render mode", async () => {
     const source = await Bun.file(
       new URL("../src/preview/pdfPreviewRenderController.ts", import.meta.url),
     ).text();
     const diagnosticsSource = await Bun.file(
       new URL("../src/diagnostics/diagnosticsController.ts", import.meta.url)
     ).text();
+    const preparationSource = await Bun.file(
+      new URL("../src/preview/pdfPreviewPreparationController.ts", import.meta.url),
+    ).text();
     const renderStart = source.indexOf("public async render(");
     const preparedPaths = source.indexOf("const preparedPaths = [...new Set([", renderStart);
     const legacyClose = source.indexOf("await this.deps.preparation.closePreparedDocuments()", preparedPaths);
-    const invalidation = source.indexOf("await this.deps.getLspClient()!.notifyWorkspaceFilesChanged(", preparedPaths);
-    const transientOpen = source.indexOf("await this.deps.preparation.openPreparedDocumentsForExport(preparedPaths)", invalidation);
-    const exportRequest = source.indexOf("await this.deps.getLspClient()!.exportPdfToFile(previewPath)", transientOpen);
-    const transientClose = source.indexOf("await this.deps.preparation.closePreparedDocuments()", exportRequest);
+    const invalidation = source.indexOf("await this.deps.getLspClient()!.notifyWorkspaceFilesChanged(", legacyClose);
+    const nativeCompile = source.indexOf('await invoke<string>("compile_render_preview_pdf"', invalidation);
     const invalidationPrefix = source.slice(preparedPaths, invalidation);
 
     expect(preparedPaths).toBeGreaterThan(renderStart);
     expect(legacyClose).toBeGreaterThan(preparedPaths);
     expect(invalidation).toBeGreaterThan(legacyClose);
-    expect(transientOpen).toBeGreaterThan(invalidation);
-    expect(exportRequest).toBeGreaterThan(transientOpen);
-    expect(transientClose).toBeGreaterThan(exportRequest);
+    expect(nativeCompile).toBeGreaterThan(invalidation);
     expect(invalidationPrefix).not.toContain('renderMode === "on-type"');
-    const preparationSource = await Bun.file(
-      new URL("../src/preview/pdfPreviewPreparationController.ts", import.meta.url),
-    ).text();
     expect(source).toContain("...preparedPreview.changedPaths");
     expect(preparationSource).toContain("changedPaths: result.changedFiles");
-    expect(source).not.toContain("syncPreparedPreviewDocuments");
+    expect(source).not.toContain("openPreparedDocumentsForExport");
+    expect(source).not.toContain("exportPdfToFile(previewPath)");
     expect(diagnosticsSource).toContain("const fromRenderCache = this.port.isRenderCachePath(rawPath)");
     expect(diagnosticsSource).toContain("if (fromRenderCache && diagnostics.length > 0)");
-    expect(source).toContain("Tinymist's watched-file invalidation can complete");
   });
 
   test("uses memory overlays on type and disk snapshots on save", async () => {

@@ -29,11 +29,11 @@ describe("UI responsiveness safeguards", () => {
     const previewSyncSource = await Bun.file(
       new URL("../src/preview/previewSyncController.ts", import.meta.url),
     ).text();
-    const exportComplete = source.indexOf("Tinymist PDF export complete.");
-    const resizeBoundary = source.indexOf("await this.deps.workspaceResume.waitForHorizontalResizeEnd()", exportComplete);
+    const compileComplete = source.indexOf("Tinymist mirror-root PDF compile complete.");
+    const resizeBoundary = source.indexOf("await this.deps.workspaceResume.waitForHorizontalResizeEnd()", compileComplete);
     const presentation = source.indexOf("await this.loadPdfPath(", resizeBoundary);
-    expect(exportComplete).toBeGreaterThan(-1);
-    expect(resizeBoundary).toBeGreaterThan(exportComplete);
+    expect(compileComplete).toBeGreaterThan(-1);
+    expect(resizeBoundary).toBeGreaterThan(compileComplete);
     expect(presentation).toBeGreaterThan(resizeBoundary);
     expect(appSource).toContain("interactionBlocked: this.workspaceResumeController.interactionBlocked");
     expect(previewSyncSource).toContain(
