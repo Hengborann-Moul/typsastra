@@ -4736,6 +4736,201 @@ mod export_compile_tests {
     }
 }
 
+struct RenderPreviewCompilePaths {
+    workspace_root: PathBuf,
+    render_root: PathBuf,
+    entry_file: PathBuf,
+    output_file: PathBuf,
+}
+
+fn resolve_render_preview_compile_paths(
+    app_local_data_dir: &Path,
+    workspace_root_path: &str,
+    cache_root_path: &str,
+    entry_file_path: &str,
+) -> Result<RenderPreviewCompilePaths, String> {
+    let workspace_root = dunce::canonicalize(workspace_root_path)
+        .map_err(|error| format!("Failed to resolve the preview project: {error}"))?;
+    if !workspace_root.is_dir() {
+        return Err("The preview project directory is unavailable.".into());
+    }
+
+    let expected_cache_root = workspace_render_cache_root(app_local_data_dir, &workspace_root);
+    let cache_root = dunce::canonicalize(cache_root_path)
+        .map_err(|error| format!("Failed to resolve the preview cache: {error}"))?;
+    let expected_cache_root = dunce::canonicalize(&expected_cache_root)
+        .map_err(|error| format!("Failed to resolve the managed preview cache: {error}"))?;
+    if cache_root != expected_cache_root {
+        return Err("The PDF preview cache does not belong to the active project.".into());
+    }
+
+    let render_root = dunce::canonicalize(cache_root.join("render"))
+        .map_err(|error| format!("Failed to resolve the render mirror: {error}"))?;
+    let entry_file = dunce::canonicalize(entry_file_path)
+        .map_err(|error| format!("Failed to resolve the mirrored preview entry: {error}"))?;
+    if !entry_file.is_file() || !entry_file.starts_with(&render_root) {
+        return Err(
+            "The PDF preview entry must be a file inside the managed render mirror.".into(),
+        );
+    }
+
+    let preview_dir = cache_root.join("preview");
+    std::fs::create_dir_all(&preview_dir)
+        .map_err(|error| format!("Failed to create the PDF preview cache: {error}"))?;
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let stem = entry_file
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("preview");
+    let output_file = preview_dir.join(format!("{stem}-{}-{nonce:x}.pdf", std::process::id()));
+
+    Ok(RenderPreviewCompilePaths {
+        workspace_root,
+        render_root,
+        entry_file,
+        output_file,
+    })
+}
+
+fn run_render_preview_compile(
+    executable: &Path,
+    paths: &RenderPreviewCompilePaths,
+    configure: impl FnOnce(&mut std::process::Command),
+) -> Result<String, String> {
+    let _ = std::fs::remove_file(&paths.output_file);
+    let mut command = std::process::Command::new(executable);
+    command.current_dir(&paths.render_root);
+    configure(&mut command);
+    #[cfg(windows)]
+    command.creation_flags(CREATE_NO_WINDOW);
+    let output = command
+        .arg("compile")
+        .arg("--root")
+        .arg(&paths.render_root)
+        .arg(&paths.entry_file)
+        .arg(&paths.output_file)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .map_err(|error| format!("Tinymist PDF preview failed to start: {error}"))?;
+
+    if !output.status.success() {
+        let _ = std::fs::remove_file(&paths.output_file);
+        return Err(String::from_utf8_lossy(&output.stderr).to_string());
+    }
+    if let Err(error) = validate_staged_pdf(&paths.output_file) {
+        let _ = std::fs::remove_file(&paths.output_file);
+        return Err(error);
+    }
+    Ok(paths.output_file.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+async fn compile_render_preview_pdf(
+    app_handle: tauri::AppHandle,
+    entry_file_path: String,
+    cache_root_path: String,
+    workspace_root_path: String,
+) -> Result<String, String> {
+    let app_local_data_dir = app_handle
+        .path()
+        .app_local_data_dir()
+        .map_err(|error| format!("Failed to get the application data directory: {error}"))?;
+    let paths = resolve_render_preview_compile_paths(
+        &app_local_data_dir,
+        &workspace_root_path,
+        &cache_root_path,
+        &entry_file_path,
+    )?;
+    let executable = active_tinymist(&app_local_data_dir)
+        .ok_or_else(|| "No managed Tinymist toolchain is installed.".to_string())?;
+    let font_paths =
+        compiler_font_directories(&app_handle, &app_local_data_dir, &paths.workspace_root);
+
+    tauri::async_runtime::spawn_blocking(move || {
+        run_render_preview_compile(&executable, &paths, |command| {
+            if !font_paths.is_empty() {
+                if let Ok(value) = std::env::join_paths(font_paths) {
+                    command.env("TYPST_FONT_PATHS", value);
+                }
+            }
+        })
+    })
+    .await
+    .map_err(|error| format!("Tinymist PDF preview task failed: {error}"))?
+}
+
+#[cfg(test)]
+mod render_preview_compile_tests {
+    use super::{
+        resolve_render_preview_compile_paths, run_render_preview_compile,
+        workspace_render_cache_root,
+    };
+
+    #[test]
+    fn compiles_nested_mirror_entries_with_the_project_mirror_as_root() {
+        if std::process::Command::new("tinymist")
+            .arg("--version")
+            .output()
+            .map_or(true, |output| !output.status.success())
+        {
+            return;
+        }
+
+        let app_data = tempfile::tempdir().expect("create app data");
+        let workspace = tempfile::tempdir().expect("create workspace");
+        let cache_root = workspace_render_cache_root(app_data.path(), workspace.path());
+        let render_root = cache_root.join("render");
+        let entry = render_root.join("nested/book/main.typ");
+        let image = render_root.join("images/example.png");
+        std::fs::create_dir_all(entry.parent().unwrap()).expect("create entry directory");
+        std::fs::create_dir_all(image.parent().unwrap()).expect("create image directory");
+        image::RgbaImage::new(1, 1)
+            .save(&image)
+            .expect("write test image");
+        std::fs::write(&entry, "#image(\"../../images/example.png\")")
+            .expect("write test document");
+
+        let paths = resolve_render_preview_compile_paths(
+            app_data.path(),
+            workspace.path().to_str().unwrap(),
+            cache_root.to_str().unwrap(),
+            entry.to_str().unwrap(),
+        )
+        .expect("resolve managed mirror paths");
+        let output = run_render_preview_compile(Path::new("tinymist"), &paths, |_| {})
+            .expect("compile nested mirror entry");
+
+        assert!(Path::new(&output).is_file());
+        assert!(Path::new(&output).starts_with(cache_root.join("preview")));
+    }
+
+    #[test]
+    fn rejects_preview_entries_outside_the_render_mirror() {
+        let app_data = tempfile::tempdir().expect("create app data");
+        let workspace = tempfile::tempdir().expect("create workspace");
+        let cache_root = workspace_render_cache_root(app_data.path(), workspace.path());
+        std::fs::create_dir_all(cache_root.join("render")).expect("create render mirror");
+        let outside = cache_root.join("outside.typ");
+        std::fs::write(&outside, "Hello").expect("write outside source");
+
+        let error = resolve_render_preview_compile_paths(
+            app_data.path(),
+            workspace.path().to_str().unwrap(),
+            cache_root.to_str().unwrap(),
+            outside.to_str().unwrap(),
+        )
+        .err()
+        .expect("reject outside entry");
+        assert!(error.contains("inside the managed render mirror"));
+    }
+
+    use std::path::Path;
+}
+
 #[tauri::command]
 #[allow(dead_code)]
 async fn compile_typst_preview(
@@ -6280,6 +6475,7 @@ pub fn run() {
             inspect_typst_compiler,
             inspect_pdf_export_compiler,
             compile_typst_document,
+            compile_render_preview_pdf,
             begin_pdf_export_operation,
             cancel_pdf_export,
             finish_pdf_export_operation,

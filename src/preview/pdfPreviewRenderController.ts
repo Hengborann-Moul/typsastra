@@ -10,7 +10,6 @@ import type { PreviewFailureController } from "../diagnostics/previewFailureCont
 import type { PerformanceController } from "../performance/performanceController";
 import { isTypstDocumentPath } from "../platform/fileTypes";
 import {
-  fileNameFromPath,
   filePathKey,
   filePathToUri,
   nativeFilePath,
@@ -365,43 +364,27 @@ export class PdfPreviewRenderController {
           `Render generation ${generation}: invalidated ${preparedPaths.length} disk-backed mirror file(s) and closed ${closedPreparedDocuments} legacy mirror document(s) before export.`,
         );
       }
-      const synchronizedPreparedDocuments = await this.deps.preparation.openPreparedDocumentsForExport(preparedPaths);
       const cacheRoot = this.deps.getCacheRootPath();
       if (!cacheRoot) throw new Error("No PDF preview cache is available.");
-      const previewPdfName = fileNameFromPath(previewPath).replace(/\.typ$/i, ".pdf");
-      const anticipatedPdfPath = `${cacheRoot}/preview/${previewPdfName}`;
-      const anticipatedPdfPathKey = filePathKey(anticipatedPdfPath);
-      this.managedPdfPathKeysValue.add(anticipatedPdfPathKey);
-      let pdfPath: string;
-      try {
-        this.deps.preparation.ensureCurrent(preparationRevision);
-        // Tinymist's watched-file invalidation can complete after its
-        // notification handler returns. Keep the exact prepared revision open
-        // only for this RPC so export cannot observe the previous disk cache.
-        pdfPath = await this.deps.getLspClient()!.exportPdfToFile(previewPath);
-      } finally {
-        const closedPreparedDocuments = await this.deps.preparation.closePreparedDocuments();
-        this.deps.log(
-          "info",
-          "preview scheduler",
-          `Render generation ${generation}: released ${closedPreparedDocuments}/${synchronizedPreparedDocuments} transient mirror document(s) after export.`,
-        );
-      }
-      const actualPdfPathKey = filePathKey(pdfPath);
-      this.managedPdfPathKeysValue.add(actualPdfPathKey);
-      if (actualPdfPathKey !== anticipatedPdfPathKey) {
-        window.setTimeout(() => {
-          if (filePathKey(this.lastPdfPathValue) !== anticipatedPdfPathKey) {
-            this.managedPdfPathKeysValue.delete(anticipatedPdfPathKey);
-          }
-        }, 60_000);
-      }
+      const workspaceRootPath = this.deps.getWorkspaceRootPath();
+      if (!workspaceRootPath) throw new Error("No PDF preview project is available.");
       this.deps.preparation.ensureCurrent(preparationRevision);
-      this.deps.log("info", "preview scheduler", `Render generation ${generation}: Tinymist PDF export complete.`);
+      const pdfPath = await invoke<string>("compile_render_preview_pdf", {
+        entryFilePath: previewPath,
+        cacheRootPath: cacheRoot,
+        workspaceRootPath,
+      });
+      this.managedPdfPathKeysValue.add(filePathKey(pdfPath));
+      this.deps.preparation.ensureCurrent(preparationRevision);
+      this.deps.log(
+        "info",
+        "preview scheduler",
+        `Render generation ${generation}: Tinymist mirror-root PDF compile complete.`,
+      );
       await this.deps.workspaceResume.waitForHorizontalResizeEnd();
       this.deps.preparation.ensureCurrent(preparationRevision);
       await this.deps.performance.logMemoryDiagnostics(
-        `render ${generation}: after Tinymist export`,
+        `render ${generation}: after Tinymist mirror-root compile`,
         { transport: "binary-file" },
       );
       this.deps.performance.record({

@@ -22,6 +22,18 @@ describe("PDF preview render controller", () => {
     expect(source).not.toContain("new Proxy(");
   });
 
+  test("compiles the disk-backed mirror with its project root", async () => {
+    const source = await Bun.file(
+      new URL("../src/preview/pdfPreviewRenderController.ts", import.meta.url),
+    ).text();
+
+    expect(source).toContain('invoke<string>("compile_render_preview_pdf"');
+    expect(source).toContain("entryFilePath: previewPath");
+    expect(source).toContain("cacheRootPath: cacheRoot");
+    expect(source).toContain("workspaceRootPath");
+    expect(source).not.toContain("exportPdfToFile(previewPath)");
+  });
+
   test("keeps an identical generated PDF mounted across live preview session changes", async () => {
     const source = await Bun.file(
       new URL("../src/preview/pdfPreviewRenderController.ts", import.meta.url),

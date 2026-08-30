@@ -81,7 +81,7 @@ This file serves as a consolidated reference for the architectural decisions, pa
 - `start_tinymist_lsp()` kills any prior child, increments a generation guard, resolves the selected validated Tinymist executable, spawns `tinymist lsp`, and forwards stdio JSON-RPC as `lsp-rx`/`lsp-status` events.
 - `send_lsp_message()` pushes JSON strings into an MPSC channel; frontend must send fully serialized JSON-RPC payloads.
 - `check_typst_document()` and `compile_typst_preview()` invoke `tinymist compile` for diagnostics/SVG fallback.
-- `compile_typst_document()` invokes `tinymist compile` and exports a PDF beside the active document.
+- `compile_typst_document()` invokes the selected compiler for explicit PDF exports. `compile_render_preview_pdf()` invokes the active managed Tinymist with `<workspace-cache>/render` as `--root`, rejects entries outside that project mirror, and writes only to the machine-local preview cache.
 
 ### C. LSP/Preview Flow (`src/compiler/lsp.ts`)
 - Frontend does not connect directly to `ws://127.0.0.1:8589`; Rust owns Tinymist stdio and frontend listens to `lsp-rx`.
@@ -97,7 +97,7 @@ This file serves as a consolidated reference for the architectural decisions, pa
 - Typing calls `handleContentMutation()`, queues `pendingLspSyncText`, and debounces `textDocument/didChange` using the configured preview delay.
 - Completion flushes pending text sync before asking Tinymist for completions so server state matches the typed prefix.
 - Manual document formatting sends `textDocument/formatting` to Tinymist and applies returned LSP text edits through CodeMirror. Format-on-save runs only in code mode and is opt-in.
-- Fallback diagnostics and SVG/PDF compilation use the selected Tinymist executable's embedded Typst compiler; no standalone `typst` binary is required.
+- Fallback diagnostics and SVG/PDF compilation use the selected Tinymist executable's embedded Typst compiler; no standalone `typst` binary is required. Live PDFs compile the disk-backed render mirror through the native mirror-root command instead of `tinymist.exportPdf`, whose LSP-global root cannot safely represent a mirrored entry outside the original workspace.
 - LSP diagnostics are ignored for stale versions, package/preview files, placeholder-managed external references, and the known multi-image page-template message.
 - `PreviewSyncController` owns forward/inverse navigation state. `PreviewFrame` owns direct loopback iframe sessions, retains up to five sessions by LRU, and safely hides (rather than destroys) them when rendering fallback SVG compilations for temporary tabs to avoid split-view overlapping bugs.
 - `ctrl+click` on editor text uses a CodeMirror `ViewPlugin` for underline-on-hover and triggers LSP `textDocument/definition` or `textDocument/references` requests, seamlessly navigating across documents using the LSP-provided URI and UTF-16 cursor position.

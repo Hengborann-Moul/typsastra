@@ -12,10 +12,6 @@ type TinymistPreviewResult = {
   dataPlanePort?: number;
 };
 
-export type TinymistPdfExport = {
-  path: string | null;
-  data: string | null;
-};
 
 const LEGACY_PREVIEW_OUTPUT_PATH = "$root/.typsastra/cache/preview/$name";
 
@@ -539,14 +535,6 @@ export class TinymistLspClient {
     }, 5000);
   }
 
-  public async exportPdfToFile(path: string): Promise<string> {
-    const result = await this.request<TinymistPdfExport | null>("workspace/executeCommand", {
-      command: "tinymist.exportPdf",
-      arguments: [path, {}, { write: true, open: false }]
-    }, 30000);
-    if (!result?.path) throw new Error("Tinymist returned no PDF preview path.");
-    return result.path;
-  }
 
   public notifyTextChange(uri: string, text: string, version: number): Promise<void> {
     return this.sendNotification("textDocument/didChange", {

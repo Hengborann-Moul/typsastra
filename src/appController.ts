@@ -557,9 +557,7 @@ export class TypsastraWorkspaceController {
     getPreparationRevision: () => this.pdfPreparationRevision,
     getLspClient: () => this.lspClient,
     listOpenedDocumentUris: () => this.lspDocumentController.listOpenedUris(),
-    addOpenedDocumentUri: uri => this.lspDocumentController.addOpenedUri(uri),
     removeOpenedDocumentUri: uri => this.lspDocumentController.removeOpenedUri(uri),
-    nextDocumentVersion: () => this.lspDocumentController.nextVersion(),
     isRenderCachePath: path => this.isRenderCachePath(path),
     log: (kind, source, message) => this.appendDeveloperLog({ kind, source, message }),
   });

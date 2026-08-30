@@ -27,7 +27,8 @@ describe("PDF preview preparation controller", () => {
     expect(source).toContain("new PdfPreviewPreparationController({");
     expect(renderSource).toContain("this.deps.preparation.prepare(");
     expect(renderSource).toContain("this.deps.preparation.closePreparedDocuments()");
-    expect(renderSource).toContain("this.deps.preparation.openPreparedDocumentsForExport(preparedPaths)");
+    expect(renderSource).toContain('invoke<string>("compile_render_preview_pdf"');
+    expect(renderSource).not.toContain("exportPdfToFile(previewPath)");
     expect(source).toContain("return this.pdfPreviewPreparationController.generatedPreviewText(originalPath);");
     expect(source).toContain("return this.pdfPreviewPreparationController.generatedFiles;");
     expect(source).toContain("return this.pdfPreviewPreparationController.prepareProjectIfNeeded();");

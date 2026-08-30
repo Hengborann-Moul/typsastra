@@ -1,8 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { TinymistLspClient } from "../compiler/lsp";
 import type { EditorTab } from "../editor/editorTab";
-import { isTypstDocumentPath } from "../platform/fileTypes";
-import { filePathFromUri, filePathKey, filePathToUri, relativeFilePath } from "../platform/paths";
+import { filePathFromUri, filePathKey, relativeFilePath } from "../platform/paths";
 import type { PreviewRenderMode } from "../settings";
 import type {
   DraftImageAsset,
@@ -81,9 +80,7 @@ export interface PdfPreviewPreparationDependencies {
   getPreparationRevision(): number;
   getLspClient(): TinymistLspClient | null;
   listOpenedDocumentUris(): readonly string[];
-  addOpenedDocumentUri(uri: string): void;
   removeOpenedDocumentUri(uri: string): void;
-  nextDocumentVersion(): number;
   isRenderCachePath(path: string): boolean;
   log(kind: "info" | "warning" | "error", source: string, message: string): void;
 }
@@ -274,36 +271,6 @@ export class PdfPreviewPreparationController {
     return mirrorUris.length;
   }
 
-  public async openPreparedDocumentsForExport(paths: string[]): Promise<number> {
-    const client = this.deps.getLspClient();
-    if (!client) return 0;
-    const preparedTextByPath = new Map(
-      [...this.generatedFilesValue.values()].map(file => [
-        filePathKey(file.generatedPath),
-        file.preparedText,
-      ]),
-    );
-    const typPaths = [...new Map(
-      paths
-        .filter(path => isTypstDocumentPath(path))
-        .map(path => [filePathKey(path), path]),
-    ).values()];
-    let opened = 0;
-    try {
-      for (const path of typPaths) {
-        const text = preparedTextByPath.get(filePathKey(path))
-          ?? await invoke<string>("read_workspace_file", { path });
-        const uri = filePathToUri(path);
-        await client.openTextDocument(uri, text, this.deps.nextDocumentVersion());
-        this.deps.addOpenedDocumentUri(uri);
-        opened += 1;
-      }
-    } catch (error) {
-      await this.closePreparedDocuments();
-      throw error;
-    }
-    return opened;
-  }
 
   public async generatedPreviewText(originalPath: string): Promise<string> {
     const key = filePathKey(originalPath);
