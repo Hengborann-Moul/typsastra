@@ -6,6 +6,17 @@ export type ReleaseSummary = {
 };
 
 const releaseSummaries: Record<string, ReleaseSummary> = {
+  "0.8.1": {
+    version: "0.8.1",
+    title: "Unicode PDF reliability",
+    highlights: [
+      "The optional Enhanced Unicode Engine v0.4.0 provides verified, transactional PDF export with explicit compiler provenance while Tinymist remains authoritative for live services.",
+      "Standalone PDFium viewing gains Unicode-aware search and selection, formatted copy, links, outlines, clearer invalid-document errors, and more reliable viewport restoration.",
+      "Project and external images can be dragged or pasted into Typst documents with collision-safe imports and plain-image or captioned-figure insertion.",
+      "Global grapheme-aware editing, safer workspace updates, richer image and PDF metadata, and focused preview lifecycle fixes improve everyday authoring."
+    ],
+    detailsUrl: "https://github.com/Sovichea/typsastra/releases/tag/v0.8.1"
+  },
   "0.8.0": {
     version: "0.8.0",
     title: "Unicode PDF reliability",
