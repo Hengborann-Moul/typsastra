@@ -43,86 +43,56 @@ It serves writers and researchers whose languages are not always well supported 
 
 Khmer is the first language with deep support, including tailored cursor and deletion behavior, spellcheck, and word completion. Khmer demonstrates the depth Typsastra aims to provide; it is not the boundary of the project. The editing-policy and language-provider architecture is designed so other languages can add their own behavior without changing or weakening Khmer support.
 
-## v0.7.0 feature showcase
+## v0.8.0 feature showcase
 
-Typsastra v0.7.0 adds resource-aware image workflows, secure Markdown live
-preview, persistent PDF color modes, machine-local render-cache management,
-and clearer search navigation while retaining the Draft Preview, document
-typography, private-font, and source-navigation features introduced throughout
-v0.6.x.
+Typsastra v0.8.0 focuses on reliable multilingual PDF export and standalone
+viewing. It adds the optional Enhanced Unicode Engine v0.4.0, expands direct PDF
+search and selection, preserves preview context across recompilation, and makes
+project image insertion available through drag-and-drop and clipboard paste.
+Tinymist remains authoritative for live preview, diagnostics, completion,
+formatting, and source synchronization.
 
-Choose **Open Examples** from the welcome screen and follow
-`07-v0.7-feature-showcase` for Markdown preview guidance, then use
-`06-v0.6-feature-showcase/01-draft-preview-and-image-guidance` to exercise the
-new Image Tools workspace with bundled raster assets.
+### Enhanced Unicode PDF export
 
-### Markdown live preview
+The optional Enhanced Unicode Engine improves logical text extraction in
+exported Khmer, Arabic, Indic, Thai, Lao, and mixed-script documents. Typsastra
+installs verified platform packages on demand, keeps engine use explicit, and
+reports which compiler produced each export. Compilation is cancellable and
+transactional, so a failed or cancelled export does not replace an existing
+valid PDF.
 
-Opening a `.md` or `.markdown` file activates a separate sanitized preview for
-common GitHub-Flavored Markdown. Local images and workspace links are resolved
-inside the open project, remote resources are not loaded automatically, and
-the existing Typst PDF session remains available when returning to source.
+> **Media placeholder:** Add a screenshot or short video showing engine
+> installation, export selection, progress, and compiler provenance.
 
-<p align="center">
-  <img src="./assets/screenshot-markdown-preview.png" alt="Markdown live preview demonstration" width="800"/>
-</p>
+### Unicode-aware standalone PDF viewer
 
-### Dark and inverted PDF preview
+Directly opened PDFs use the bundled PDFium viewer, while Typst live preview
+continues to use Typsastra's patched PDF.js path. Standalone PDFs support
+Unicode-aware search, semantic text selection, plain or formatted copy,
+internal and external links, document outlines, and clear errors for
+password-protected, malformed, empty, or unsupported files.
 
-Compiled documents and standalone PDFs can use their authored colors, a
-hue-preserving Dark Preview, or an experimental full inversion. Dark Preview
-keeps detected embedded images in their original colors while adapting the rest
-of the page for a dark workspace. The selected mode is remembered, and exported
-PDFs are never altered.
+> **Media placeholder:** Add a video demonstrating multilingual search,
+> selection, formatted copy, links, and outline navigation in one PDF.
 
+### Drag, drop, and paste images
 
+External files can be dropped into Explorer destinations without overwriting
+existing files. Project images, external images, and clipboard images can be
+inserted directly at the editor caret. Multi-image batches share one choice
+between plain `image(...)` calls and individual `figure(...)` calls with
+editable captions; imported and pasted files receive collision-safe names in
+the project `images` directory.
 
-https://github.com/user-attachments/assets/23ddb50f-a6a6-44f8-a8d9-31ec205e2dca
+> **Media placeholder:** Add a video showing multi-image drag-and-drop and
+> clipboard paste with both plain-image and captioned-figure insertion.
 
+### Established authoring workflows
 
-
-### Image Tools
-
-Image Tools inventories project raster images, reports source and decoded
-sizes, finds static Typst references, and prepares bounded resize or re-encoding
-previews. Optimizations are saved as new copies; source images are not silently
-overwritten. Authors may explicitly update the indexed static references to
-the saved copy. Bounded preview results are cached and reused across editor and
-Image Tools views, so inspecting unusually large images does not repeatedly
-decode the full source asset.
-
-
-
-https://github.com/user-attachments/assets/0cfdb910-6f15-4a3a-8904-a5ee0c26416b
-
-
-
-### Machine-local project caches
-
-Live-preview mirrors, generated PDFs, source maps, and temporary compiler files
-are stored in Typsastra's machine-local application data rather than inside the
-project. The Storage panel lists prepared project caches, distinguishes
-hard-linked asset bytes from genuine copies, and can reveal each cache in the
-system file explorer. When an older project-local `.typsastra/cache` is found,
-Typsastra reports its path, file count, and size and asks before removing it and
-switching the project to machine-local storage.
-
-<p align="center">
-  <img src="./assets/screenshot-machine-local-cache-monitor.png" alt="Machine-local monitor found in storage setting" width="800"/>
-</p>
-
-### Search and editor navigation
-
-Search results, selected-text matches, diagnostics, and image guidance appear as
-distinct scrollbar markers that navigate to their exact ranges. Search and
-selection highlights use the active theme, remain aligned across wrapped visual
-lines, and preserve complex-script grapheme boundaries.
-
-
-
-https://github.com/user-attachments/assets/19dd9943-6ce8-470e-bcf6-36b6252de3bf
-
-
+v0.8.0 retains secure Markdown live preview, PDF color modes, Image Tools,
+machine-local project caches, Draft Preview, document typography, language
+tools, and source navigation from earlier releases. Choose **Open Examples**
+from the welcome screen to explore the bundled v0.7 and v0.6 feature guides.
 
 ### Draft Preview
 
@@ -341,6 +311,7 @@ installation is not required for normal use.
 - [Enhanced Unicode Engine v0.3.0 benchmarks](./docs/ENHANCED_UNICODE_ENGINE_BENCHMARKS_V0.3.0.md)
 - [Roadmap](./docs/ROADMAP.md)
 - [Troubleshooting](./docs/TROUBLESHOOTING.md)
+- [Typsastra v0.8.0 release notes](./docs/RELEASE_NOTES_V0.8.0.md)
 - [Typsastra v0.7.0 release notes](./docs/RELEASE_NOTES_V0.7.0.md)
 - [Typsastra v0.6.3 release notes](./docs/RELEASE_NOTES_V0.6.3.md)
 - [Typsastra v0.6.2 release notes](./docs/RELEASE_NOTES_V0.6.2.md)

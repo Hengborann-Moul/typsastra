@@ -31,19 +31,30 @@ Record these values when release qualification begins:
 Record the commit, platform, date, and artifact or log link for each completed
 run.
 
-- [ ] `bun install --frozen-lockfile`
-- [ ] `bun test`
-- [ ] `bun run build`
-- [ ] `bun run conform`
-- [ ] `bun run test:khmer`
-- [ ] `bun run test:lao`
-- [ ] `bun run test:docs`
-- [ ] `bun run validate:examples`
-- [ ] `cargo fmt --manifest-path src-tauri/Cargo.toml --package typsastra -- --check`
-- [ ] `cargo check --manifest-path src-tauri/Cargo.toml --lib`
-- [ ] `cargo test --manifest-path src-tauri/Cargo.toml --lib`
-- [ ] `bun run tauri:build`
-- [ ] `git diff --check`
+Local Windows x64 qualification was completed on August 30, 2026 against the
+v0.8.0 preparation working tree based on `2ea7cad`. GitHub Actions and packaged
+platform runs must still be linked before approval.
+
+- [x] `bun install --frozen-lockfile`
+- [x] `bun test` — 722 passed
+- [x] `bun run build`
+- [x] `bun run conform` — 39 passed
+- [x] `bun run test:khmer` — 117 passed
+- [x] `bun run test:lao` — 39 passed
+- [x] `bun run test:docs` — 2 passed
+- [x] `bun run validate:examples` — 24 bundled entry points compiled
+- [x] `cargo fmt --manifest-path src-tauri/Cargo.toml --package typsastra -- --check`
+- [x] `cargo check --manifest-path src-tauri/Cargo.toml --lib`
+- [x] `cargo test --manifest-path src-tauri/Cargo.toml --lib` — 184 passed,
+  1 platform-side-effect test intentionally ignored
+- [x] `bun run tauri:build` — Windows x64 MSI and NSIS bundles produced
+- [x] `git diff --check`
+
+Additional diagnostic harnesses were run on the same date. Enhanced Unicode
+export produced 8/10 exact logical-text cases with 10/10 bounded PDF.js geometry
+checks. PDFium produced 9/10 exact cases and returned a nonzero status for the
+known Arabic reconstruction mismatch. These are recorded evidence, not passing
+strict Unicode gates.
 
 ### Enhanced Unicode Engine
 
